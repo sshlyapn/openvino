@@ -36,4 +36,5 @@ JitConstants GetTensorFriendlyWorkGroupsJit(const DataTensor& t);
 std::vector<size_t> GetTensorFriendlyWorkGroups(const DataTensor& t);
 std::vector<size_t> GetOptimalLocalWorkGroupSizes(std::vector<size_t> gws, const EngineInfo& info);
 bool CheckInputsOutputNoPitchSameDims(const base_params& params);
+std::vector<std::pair<float, size_t>> GetRatedBlockSizes(size_t width, const std::vector<size_t>& block_sizes);
 }  // namespace kernel_selector

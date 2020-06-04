@@ -75,6 +75,8 @@ protected:
                                      const optional_params& options,
                                      const std::string exeMode = DEFAULT,
                                      int autoTuneIndex = -1) const;
+    virtual size_t ComputeWorkGroupsNumber(const convolution_params& params, size_t block_size) const { return 1; };
+    virtual size_t GetOptimalBlockSize(const Params& params, const std::vector<size_t>& block_sizes) const { return 1; };
 
     Datatype GetPackedType(Datatype dt, size_t pack_size = 4) const;
     Datatype GetPackedInputType(const convolution_params& params) const;

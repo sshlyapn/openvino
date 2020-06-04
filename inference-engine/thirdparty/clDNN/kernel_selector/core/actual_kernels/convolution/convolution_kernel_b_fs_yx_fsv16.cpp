@@ -22,6 +22,54 @@ namespace kernel_selector {
 static const size_t sub_group_size = 16;
 static const size_t feature_block_size = 16;
 
+size_t ConvolutionKernel_b_fs_yx_fsv16::GetInputWidth(const convolution_params& params, size_t blockWidth) const {
+    return std::min(params.stride.x * (blockWidth - 1) + (params.weights.X().v - 1)*params.dilation.x + 1,
+                    params.inputs[0].X().v + params.inputs[0].X().pad.Total());
+}
+
+ConvolutionKernel_b_fs_yx_fsv16::ConvolutionMode ConvolutionKernel_b_fs_yx_fsv16::GetConvolutionMode(const convolution_params& params) const {
+    const auto& input = params.inputs[0];
+    const auto& output = params.output;
+
+    auto outFeaturesPerGroup = output.Feature().v / params.groups;
+    auto inFeaturesPerGroup = input.Feature().v / params.groups;
+    auto multipleGroupsInputPreload = (feature_block_size % outFeaturesPerGroup == 0) &&
+                                      (feature_block_size % inFeaturesPerGroup == 0) &&
+                                      (feature_block_size / outFeaturesPerGroup > 1) &&
+                                      (feature_block_size / inFeaturesPerGroup > 1) &&
+                                      (outFeaturesPerGroup != 1) &&
+                                      (inFeaturesPerGroup != 1);
+
+    auto grouped = inFeaturesPerGroup % sub_group_size == 0 &&
+                   (outFeaturesPerGroup % sub_group_size == 0 || sub_group_size % outFeaturesPerGroup == 0);
+
+    if (params.groups == 1)
+        return ConvolutionMode::SIMPLE;
+    else if (grouped)
+        return ConvolutionMode::SIMPLE_GROUPED;
+    else if (multipleGroupsInputPreload)
+        return ConvolutionMode::GROUPED_WITH_PRELOAD;
+    else
+        return ConvolutionMode::UNSUPPORTED;
+}
+
+size_t ConvolutionKernel_b_fs_yx_fsv16::GetMinRegisterUsage(const convolution_params& params, size_t blockWidth, size_t /*blockHeight*/) const {
+    // size_t weightsRegisters = (GetConvolutionMode(params) == ConvolutionMode::GROUPED_WITH_PRELOAD) ? 8 : 16;
+    // size_t inputRegisters = GetInputWidth(params, blockWidth);
+    // size_t outputRegisters = blockWidth;
+
+    // return weightsRegisters + inputRegisters + outputRegisters;
+    const size_t weightsElements = (GetConvolutionMode(params) == ConvolutionMode::GROUPED_WITH_PRELOAD) ? 128 : 256;
+    const size_t inputElements = GetInputWidth(params, blockWidth) * 16; // 80el, 126el, 192el : 5, 8, 17
+    const size_t outputElements = blockWidth * 16; // 32, 64, 128 : 2 4 8
+    const size_t elementSize = Datatype::F32  == params.inputs[0].GetDType() ? 4 : 2;
+    const size_t totalBytes = (weightsElements + inputElements + outputElements) * elementSize;
+    // printf("(%lu + %lu + %lu) * %lu = %lu\n", weightsElements, inputElements, outputElements, elementSize, totalBytes);
+    const size_t registerSize = 32;
+
+    return CeilDiv(totalBytes, registerSize);
+}
+
 ConvolutionKernel_b_fs_yx_fsv16::ConvolutionKernel_b_fs_yx_fsv16() : ConvolutionKernelBase("convolution_gpu_bfyx_f16") {
     std::vector<size_t> outputBlockWidths = {2, 4, 8};
     std::vector<std::string> executionModes = ConvolutionKernelBase::autoTuneOptions;
@@ -35,24 +83,9 @@ ConvolutionKernel_b_fs_yx_fsv16::ConvolutionKernel_b_fs_yx_fsv16() : Convolution
 
 ConvolutionKernel_b_fs_yx_fsv16::AutoTuneOption ConvolutionKernel_b_fs_yx_fsv16::GetAutoTuneOptions(const Params& params,
                                                                                           int /*autoTuneIndex*/) const {
-    const convolution_params& cp = static_cast<const convolution_params&>(params);
-    auto x = cp.output.X().v;
-    auto f = cp.output.Feature().v;
-    if (x * f <= 256) {
-        if ( x <= 8 || x * f <= 128)
-            return { 2, DEFAULT };
-        else
-            return { 4, DEFAULT };
-    } else if (x * f <= 1536) {
-        return { 4, DEFAULT };
-    } else {
-        if (x >= 8  && x < 12 && x * f < 2600)
-            return { 4, DEFAULT };
-        else if (x < 12 && x * f < 8192)
-            return { 8, DEFAULT };
-        else
-            return { 8, AGE_BASED };
-    }
+    std::vector<size_t> block_sizes {2, 4, 8};
+    auto block_size = GetOptimalBlockSize(params, block_sizes);
+    return { block_size , AGE_BASED };
 }
 
 ParamsKey ConvolutionKernel_b_fs_yx_fsv16::GetSupportedKey() const {
@@ -93,6 +126,12 @@ ConvolutionKernelBase::DispatchData ConvolutionKernel_b_fs_yx_fsv16::SetDefault(
     DispatchData kd = ConvolutionKernelBase::SetDefault(params);
 
     const auto& out = params.output;
+    const auto& in = params.inputs[0];
+
+    auto xi = in.X().v;
+    auto yi = in.Y().v;
+    auto fi = in.Feature().v;
+    auto bi = in.Batch().v;
 
     auto autoTune = GetAutoTuneOptions(params, autoTuneIndex);
     kd.cldnnStyle.blockWidth = autoTune.blockWidth;
@@ -101,6 +140,7 @@ ConvolutionKernelBase::DispatchData ConvolutionKernel_b_fs_yx_fsv16::SetDefault(
     auto y = out.Y().v;
     auto f = out.Feature().v;
     auto b = out.Batch().v;
+    printf("%s (%lux%lux%lux%lu -> %lux%lux%lux%lu)\n%lu/%lu: \n", params.layerID.c_str(), bi, fi, yi, xi, b, f, y, x, autoTune.blockWidth, GetMinRegisterUsage(params, autoTune.blockWidth));
 
     kd.gws0 = CeilDiv(x, autoTune.blockWidth) * y;
     kd.gws1 = Align(f, sub_group_size);
@@ -239,6 +279,62 @@ KernelsData ConvolutionKernel_b_fs_yx_fsv16::GetKernelsDataForAutoTune(const Par
     }
 
     return res;
+}
+
+size_t ConvolutionKernel_b_fs_yx_fsv16::ComputeWorkGroupsNumber(const convolution_params& params, size_t block_size) const {
+    const auto& out = params.output;
+    auto wg_num = 1;
+
+    wg_num *= out.Batch().v;
+    wg_num *= CeilDiv(out.Feature().v, 16);
+    wg_num *= out.Y().v * CeilDiv(out.X().v, block_size);
+
+    return wg_num;
+}
+
+size_t ConvolutionKernel_b_fs_yx_fsv16::GetOptimalBlockSize(const Params& params, const std::vector<size_t>& block_sizes) const {
+    auto& p = static_cast<const convolution_params&>(params);
+    const auto width = p.inputs[0].X().v;
+    const auto max_effective_bs_usage = 3;
+    const auto threads_per_exec_unit = 7;
+    const auto registers_num = 128;
+    const auto register_bytes = 32;
+    const auto max_registers_bytes = registers_num * register_bytes;
+    const auto threads = p.engineInfo.computeUnitsCount * threads_per_exec_unit;
+    auto sorted_block_sizes(block_sizes);
+
+    std::sort(sorted_block_sizes.begin(), sorted_block_sizes.end());
+
+    const auto max_block_size = sorted_block_sizes[sorted_block_sizes.size() - 1];
+
+    auto selected_block_size = 0;
+    if (ComputeWorkGroupsNumber(p, max_block_size) <= 0.5 * threads) {
+        return sorted_block_sizes[0];
+    } else {
+        if (p.stride.x > 2) {
+            for (auto& b : block_sizes)
+                if (b > width) {
+                    selected_block_size = b;
+                    break;
+                }
+        } else {
+            auto rated_block_sizes = GetRatedBlockSizes(width, sorted_block_sizes);
+            for (size_t bs = 0; bs < rated_block_sizes.size(); bs++) {
+                if (bs == 0 && CeilDiv(width, rated_block_sizes[bs].second) <= max_effective_bs_usage) {
+                    selected_block_size = rated_block_sizes[bs].second;
+                    break;
+                } else if (CeilDiv(width, rated_block_sizes[bs].second) <= max_effective_bs_usage + 1) {
+                    selected_block_size = rated_block_sizes[bs].second;
+                    break;
+                }
+            }
+            selected_block_size = max_block_size;
+        }
+    }
+    auto block_size_idx = std::distance(block_sizes.begin(), std::find(block_sizes.begin(), block_sizes.end(), selected_block_size));
+    while (block_size_idx > 0 && GetMinRegisterUsage(p, block_sizes[block_size_idx]) > 0.75 * max_registers_bytes)
+        block_size_idx--;
+    return block_sizes[block_size_idx];
 }
 
 }  // namespace kernel_selector

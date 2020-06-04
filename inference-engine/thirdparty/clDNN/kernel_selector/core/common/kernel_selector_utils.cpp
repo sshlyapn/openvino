@@ -250,4 +250,77 @@ bool CheckInputsOutputNoPitchSameDims(const base_params& params) {
 
     return no_pitch_same_dims;
 }
+
+float CalculateScore(size_t width, size_t block_size, ScoresTypes type) {
+    size_t leftover = width % block_size;
+    size_t effective = block_size - leftover;
+    switch (type) {
+        case ScoresTypes::LEFTOVERS_SCORES:
+            return static_cast<float>(leftover) / static_cast<float>(block_size);
+        case ScoresTypes::EFFICIENCY_SCORES:
+            return static_cast<float>(effective) / static_cast<float>(block_size);
+        case ScoresTypes::LEFTOVERS_RELATIVE_SCORES:
+            return static_cast<float>(leftover) / static_cast<float>(width);
+        case ScoresTypes::EFFICIENCY_RELATIVE_SCORES:
+            return static_cast<float>(effective) / static_cast<float>(width);
+        default:
+            throw std::runtime_error("Unsupported score type: " + static_cast<int>(type));
+    }
+}
+
+std::vector<float> CalculateScoresInCategory(const std::vector<float>& scores, bool bigger_is_better) {
+    std::vector<float> results(scores.size());
+    const float same_value_score = 0;
+    const float zero_value_score = 1;
+    const float sign = bigger_is_better ? 1.f : -1.f;
+
+    for (size_t i = 0; i < scores.size(); i++) {
+        float total_scores = 0.f;
+        for (size_t j = 0; j < scores.size(); j++) {
+            if (j == i)
+                continue;
+            if (scores[i] == scores[j]) {
+                total_scores += same_value_score;
+            } else if (scores[i] > scores[j]) {
+                total_scores += (scores[j] == 0) ? zero_value_score : sign * (scores[i] / scores[j]);
+            } else if (scores[i] < scores[j]) {
+                total_scores += (scores[i] == 0) ? zero_value_score : sign * (scores[j] / scores[i]);
+            }
+        }
+        results.push_back(total_scores);
+    }
+    return results;
+}
+
+bool IsBiggerBetter(ScoresTypes type) {
+    if (type == ScoresTypes::EFFICIENCY_SCORES || type == ScoresTypes::EFFICIENCY_RELATIVE_SCORES)
+        return true;
+    return false;
+}
+
+std::vector<std::pair<float, size_t>> GetRatedBlockSizes(size_t width, const std::vector<size_t>& block_sizes) {
+    std::map<size_t, float> total_scores;
+    std::vector<std::pair<float, size_t>> sorted_total_scores;
+
+    for (size_t type = 0; type < static_cast<size_t>(ScoresTypes::SCORES_NUM); type++) {
+        std::vector<float> results(block_sizes.size());
+        std::vector<float> rated_results(block_sizes.size());
+        ScoresTypes score_type = static_cast<ScoresTypes>(type);
+
+        for (size_t bs = 0; bs < block_sizes.size(); bs++) {
+            results.push_back(CalculateScore(width, block_sizes[bs], score_type));
+        }
+        rated_results = CalculateScoresInCategory(results, IsBiggerBetter(score_type));
+        for (size_t bs = 0; bs < block_sizes.size(); bs++)
+            total_scores[block_sizes[bs]] += rated_results[bs];
+    }
+
+    for (std::map<size_t, float>::iterator it = total_scores.begin(); it != total_scores.end(); it++) {
+        sorted_total_scores.push_back(std::make_pair(it->second, it->first));
+    }
+
+    std::sort(sorted_total_scores.begin(), sorted_total_scores.end());
+    return sorted_total_scores;
+}
+
 }  // namespace kernel_selector

@@ -50,8 +50,12 @@ protected:
     bool Validate(const Params& p, const optional_params& o) const override;
     DispatchData SetDefault(const convolution_params& arg, int autoTuneIndex = -1) const override;
     JitConstants GetJitConstants(const convolution_params& params, const DispatchData& kd) const override;
+    size_t GetMinRegisterUsage(const convolution_params& params, size_t blockWidth = 1, size_t blockHeight = 1) const;
+    size_t ComputeWorkGroupsNumber(const convolution_params& params, size_t block_size) const override;
+    size_t GetOptimalBlockSize(const Params& params, const std::vector<size_t>& block_sizes) const override;
 
 private:
+    enum ConvolutionMode { SIMPLE, SIMPLE_GROUPED, GROUPED_WITH_PRELOAD, UNSUPPORTED };
     struct AutoTuneOption {
         size_t blockWidth;
         std::string exeMode;
@@ -59,5 +63,7 @@ private:
 
     std::vector<AutoTuneOption> autoTuneOptions;
     AutoTuneOption GetAutoTuneOptions(const Params& arg, int autoTuneIndex) const;
+    size_t GetInputWidth(const convolution_params& params, size_t blockWidth) const;
+    ConvolutionMode GetConvolutionMode(const convolution_params& params) const;
 };
 }  // namespace kernel_selector
