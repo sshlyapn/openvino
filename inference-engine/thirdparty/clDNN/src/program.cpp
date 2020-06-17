@@ -365,13 +365,20 @@ void program_impl::build_program(bool is_internal) {
     run_graph_compilation();
     { post_optimize_graph(is_internal); }
     prepare_memory_dependencies();
-    engine->compile_program(*this);
+    apply_opt_pass<compile_program>();
+    // engine->compile_program(*this);
 
     if (!is_internal)
         prim_info = get_current_stage_info();
 
-    if (!is_internal)  transfer_memory_to_device();
-    cleanup();
+    if (!is_internal)  {
+        apply_opt_pass<transfer_memory_to_device_pass>();
+        // transfer_memory_to_device();
+    }
+
+    apply_opt_pass<cleanup_pass>();
+    pm->close();
+    // cleanup();
 }
 
 void program_impl::init_graph() {
