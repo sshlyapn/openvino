@@ -24,6 +24,7 @@
 #include <threading/ie_executor_manager.hpp>
 #include "details/caseless.hpp"
 #include <fstream>
+#include <iostream>
 #include <utility>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -39,8 +40,24 @@ CLDNNGraph::CLDNNGraph(InferenceEngine::ICNNNetwork& network, gpu::ClContext::Pt
     , m_networkName(network.getName())
     , m_config(config)
     , m_stream_id(stream_id) {
+    using ms = std::chrono::duration<double, std::ratio<1, 1000>>;
+    using Time = std::chrono::high_resolution_clock;
+
+    auto start = Time::now();
     m_program = std::make_shared<Program>(network, GetEngine(), m_config);
     Build();
+    auto stop = Time::now();
+    std::chrono::duration<float> fs = stop - start;
+    ms opt_pass_time = std::chrono::duration_cast<ms>(fs);
+    std::fstream graph_opt_log("/tmp/cldnn_graph_optimizer.csv", std::fstream::app);
+    if (graph_opt_log.is_open()) {
+        graph_opt_log << std::setw(4) << "35" << ","
+            << std::setw(5) << "0" << ","
+            << std::setw(4) << "0" << ","
+            << std::setw(8) << opt_pass_time.count() << ","
+            << "Plugin time" << "\n";
+        graph_opt_log.close();
+    }
 }
 
 CLDNNGraph::CLDNNGraph(std::shared_ptr<CLDNNGraph> graph, uint16_t stream_id)
@@ -49,7 +66,23 @@ CLDNNGraph::CLDNNGraph(std::shared_ptr<CLDNNGraph> graph, uint16_t stream_id)
         , m_networkName(graph->m_networkName)
         , m_config(graph->m_config)
         , m_stream_id(stream_id) {
+    using ms = std::chrono::duration<double, std::ratio<1, 1000>>;
+    using Time = std::chrono::high_resolution_clock;
+
+    auto start = Time::now();
     Build();
+    auto stop = Time::now();
+    std::chrono::duration<float> fs = stop - start;
+    ms opt_pass_time = std::chrono::duration_cast<ms>(fs);
+    std::ofstream graph_opt_log("/tmp/cldnn_graph_optimizer.csv", std::ios::app);
+    if (graph_opt_log.is_open()) {
+        graph_opt_log << std::setw(4) << "35" << ","
+            << std::setw(5) << "0" << ","
+            << std::setw(4) << "0" << ","
+            << std::setw(8) << opt_pass_time.count() << ","
+            << "Plugin time" << "\n";
+        graph_opt_log.close();
+    }
 }
 
 void CLDNNGraph::UpdateLayersMaps() {
