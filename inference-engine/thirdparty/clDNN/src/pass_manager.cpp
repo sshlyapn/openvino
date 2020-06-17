@@ -27,32 +27,20 @@
 
 pass_manager::pass_manager(program_impl& p) {
     pass_count = 0;
-    auto path = get_dir_path(p.get_options());
+    std::string path = "/tmp/";
     if (!path.empty()) {
-        graph_opt_log.open(path + std::to_string(p.get_prog_id()) + "_cldnn_graph_optimizer.log");
-        if (graph_opt_log.is_open()) {
-            graph_opt_log.setf(std::ios::fixed, std::ios::floatfield);
-            graph_opt_log << std::setprecision(4);
-            // print graph_opt_log header
-            graph_opt_log << "program number: " << p.get_prog_id() << "\n"
-                << "Pass\t"
-                << "Proc.\t"
-                << "primitives\t"
-                << "Pass\t\t"
-                << "Pass\n"
-
-                << "ID  \t"
-                << "order\t\t"
-                << "optimized\t"
-                << "time,\t\t"
-                << "name\n"
-
-                << "   \t"
-                << "size\t"
-                << "out\t\t\t"
-                << "millisec\t"
-                << "   \n";
-        }
+        graph_opt_log.open(path +  "cldnn_graph_optimizer.csv", std::fstream::app);
+        // if (graph_opt_log.is_open()) {
+        //     graph_opt_log.setf(std::ios::fixed, std::ios::floatfield);
+        //     graph_opt_log << std::setprecision(4);
+        //     // print graph_opt_log header
+        //     graph_opt_log << "PassID,"
+        //         << "Proccesing_order,"
+        //         << "primitives_optimized,"
+        //         << "Pass_time,"
+        //         << "Pass_name"
+        //         << "\n";
+        // }
     }
 }
 
@@ -69,10 +57,10 @@ void pass_manager::run(program_impl& p, base_pass& pass) {
     p.save_pass_info(pass.get_name());
 
     if (graph_opt_log.is_open()) {
-        graph_opt_log << std::setw(4) << get_pass_count() << "\t"
-            << std::setw(5) << p.get_processing_order().size() << "\t"
-            << std::setw(4) << p.get_optimized_out().size() << "\t\t"
-            << std::setw(8) << opt_pass_time.count() << "\t"
+        graph_opt_log << std::setw(4) << get_pass_count() << ","
+            << std::setw(5) << p.get_processing_order().size() << ","
+            << std::setw(4) << p.get_optimized_out().size() << ","
+            << std::setw(8) << opt_pass_time.count() << ","
             << pass.get_name() << "\n";
     }
 
