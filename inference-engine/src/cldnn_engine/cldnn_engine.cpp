@@ -44,6 +44,7 @@
 #include "cldnn_engine.h"
 #include "cldnn_executable_network.h"
 #include "cldnn_custom_layer.h"
+#include <fstream>
 
 #include <low_precision/transformer.hpp>
 #include <low_precision/mat_mul.hpp>
@@ -79,6 +80,10 @@ cldnn::device_info clDNNEngine::GetDeviceInfo(const std::map<std::string, std::s
 }
 
 InferenceEngine::ICNNNetwork::Ptr clDNNEngine::CloneAndTransformNetwork(const InferenceEngine::ICNNNetwork& network, CLDNNPlugin::Config config) const {
+    using ms = std::chrono::duration<double, std::ratio<1, 1000>>;
+    using Time = std::chrono::high_resolution_clock;
+
+    auto start = Time::now();
     std::shared_ptr<ICNNNetwork> clonedNetwork = cloneNetwork(network);
     bool baselineIsFP16 = false;
 
@@ -214,6 +219,18 @@ InferenceEngine::ICNNNetwork::Ptr clDNNEngine::CloneAndTransformNetwork(const In
         }
     }
 
+    auto stop = Time::now();
+    std::chrono::duration<float> fs = stop - start;
+    ms opt_pass_time = std::chrono::duration_cast<ms>(fs);
+    std::ofstream graph_opt_log("/tmp/cldnn_graph_optimizer.csv", std::fstream::app);
+    if (graph_opt_log.is_open()) {
+        graph_opt_log << std::setw(4) << "0" << ","
+            << std::setw(5) << "0" << ","
+            << std::setw(4) << "0" << ","
+            << std::setw(8) << opt_pass_time.count() << ","
+            << "Clone time" << "\n";
+        graph_opt_log.close();
+    }
     return clonedNetwork;
 }
 
@@ -272,6 +289,10 @@ auto check_inputs = [](InferenceEngine::InputsDataMap _networkInputs) {
 
 ExecutableNetworkInternal::Ptr clDNNEngine::LoadExeNetworkImpl(const InferenceEngine::ICNNNetwork &network,
                                                                const std::map<std::string, std::string> &config) {
+    using ms = std::chrono::duration<double, std::ratio<1, 1000>>;
+    using Time = std::chrono::high_resolution_clock;
+
+    auto start = Time::now();
     // verification of supported input
     InferenceEngine::InputsDataMap _networkInputs;
     network.getInputsInfo(_networkInputs);
@@ -316,7 +337,27 @@ ExecutableNetworkInternal::Ptr clDNNEngine::LoadExeNetworkImpl(const InferenceEn
     }
 
     context = m_defaultContext;
-
+    auto stop = Time::now();
+    std::chrono::duration<float> fs = stop - start;
+    ms opt_pass_time = std::chrono::duration_cast<ms>(fs);
+    std::ofstream graph_opt_log("/tmp/cldnn_graph_optimizer.csv");
+    if (graph_opt_log.is_open()) {
+        graph_opt_log.setf(std::ios::fixed, std::ios::floatfield);
+        graph_opt_log << std::setprecision(4);
+        // print graph_opt_log header
+        graph_opt_log << "PassID,"
+            << "Proccesing_order,"
+            << "primitives_optimized,"
+            << "Pass_time,"
+            << "Pass_name"
+            << "\n";
+        graph_opt_log << std::setw(4) << "0" << ","
+            << std::setw(5) << "0" << ","
+            << std::setw(4) << "0" << ","
+            << std::setw(8) << opt_pass_time.count() << ","
+            << "LoadExecNetwork init time (create context and parse config)" << "\n";
+        graph_opt_log.close();
+    }
     return std::make_shared<CLDNNExecNetwork>(*CloneAndTransformNetwork(network, conf), context, conf);
 }
 
