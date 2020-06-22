@@ -95,6 +95,8 @@
 #include <iomanip>
 #include "cldnn_common_utils.h"
 
+#include <chrono>
+
 using namespace InferenceEngine;
 using namespace InferenceEngine::details;
 
@@ -720,6 +722,9 @@ cldnn::primitive_id Program::CreatePrimitiveFromBlob(cldnn::topology& topology,
     auto buf = tmpPointer.data();
     auto bufSize = blobLayout.bytes_count();
 
+    static double total_time = 0;
+    std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
+
     const auto descLayout = pBlob->getTensorDesc().getLayout();
     if ((descLayout != InferenceEngine::OIHW) &&
         (descLayout != InferenceEngine::GOIHW) &&
@@ -770,10 +775,14 @@ cldnn::primitive_id Program::CreatePrimitiveFromBlob(cldnn::topology& topology,
             }
         }
     } else {
-        for (size_t i = 0; i < bufSize; i++) {
-            buf[i] = data[i];
-        }
+        std::memcpy(&buf[0], &data[0], bufSize);
     }
+    std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double, std::milli> time_span = t2 - t1;
+    total_time += time_span.count();
+
+    std::cout << "Took " << time_span.count() << " ms for " << bufSize << " bytes and total " << total_time << " ms.\n";
+
     topology.add(cldnn::data(primID, mem));
     blobMemCache[data] = primID;
     return primID;
