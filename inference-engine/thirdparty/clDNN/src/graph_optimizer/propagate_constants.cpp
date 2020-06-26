@@ -36,7 +36,7 @@ void propagate_constants::run(program_impl& p) {
             handle_constant(p, *node);
     }
 
-    auto&& to_replace = calculate(p.get_engine(), p.get_options());
+    auto&& to_replace = calculate(p, p.get_engine(), p.get_options());
 
     // remove all nodes which are no longer relevant, i.e. nodes which:
     // 1. are constants, and
@@ -119,26 +119,128 @@ bool propagate_constants::has_non_const_user(program_node& node) const {
     return false;
 }
 
-std::list<std::pair<primitive_id, memory_impl::ptr>> propagate_constants::calculate(engine_impl& engine, build_options bo) {
+inline size_t get_os_is_yx_isv16_osv16_index(size_t o, size_t i, size_t y, size_t x, size_t i_size, size_t y_size, size_t x_size) {
+    const size_t idx = o%16 + (o / 16)*i_size*x_size*y_size*16 +
+                       16 *(i+ x*i_size + y*i_size*x_size);
+    return idx;
+}
+
+std::list<std::pair<primitive_id, memory_impl::ptr>> propagate_constants::calculate(program_impl& prog, engine_impl& engine, build_options bo) {
     if (!has_non_trivial_constants)
         return {};
+/*
+build_time took 22120.3 ms
+input_time took 1.03303 ms
+exec_time took 159.505 ms
+output_time took 0.018459 ms
+
+build_time took 8868.78 ms
+input_time took 0.406849 ms
+exec_time took 32.8557 ms
+output_time took 0.018 ms
+
+build_time took 8848.86 ms
+input_time took 0.36911 ms
+exec_time took 33.0224 ms
+output_time took 0.019228 ms
+*/
+
+
+    std::chrono::high_resolution_clock::time_point tt = std::chrono::high_resolution_clock::now();
+    std::list<std::pair<primitive_id, memory_impl::ptr>> ret;
+    // for (auto it = nodes.begin(); it != nodes.end();) {
+    //     // if ((*it)->get_output_layout().format == cldnn::format::os_is_yx_isv16_osv16) {
+    //     //     printf("os_is_yx_isv16_osv16 for %s\n", (*it)->id().c_str());
+    //     // } else {
+    //     //     it++;
+    //     //     printf("%d for %s\n", (int)(*it)->get_output_layout().format,  (*it)->id().c_str());
+    //     // }
+    //     if ((*it)->get_output_layout().format == cldnn::format::os_is_yx_isv16_osv16 && 
+    //         (*it)->get_dependencies().size() != 0 &&
+    //         (*it)->get_dependency(0).is_type<data>()) {
+    //         printf("Dependency is a data!\n");
+    //         auto &original_weights = (*it)->get_dependency(0).template as<data>();
+    //         auto &mem = original_weights.get_attached_memory();
+    //         auto data = static_cast<float*>(mem.lock());
+    //         printf("Dependency is a data! %f\n", data[0]);
+    //         size_t ofm_size = mem.get_layout().size.batch[0];
+    //         size_t ifm_size = mem.get_layout().size.feature[0];
+    //         size_t x_size = mem.get_layout().size.spatial[0];
+    //         size_t y_size = mem.get_layout().size.spatial[1];
+
+    //         memory_impl::ptr data_to_allocate = engine.allocate_memory((*it)->get_output_layout(), 0);
+    //         auto out = static_cast<float*>(data_to_allocate->lock());
+
+    //         size_t oiyx_idx = 0;
+    //         for (size_t ofm = 0; ofm < ofm_size; ofm++) {
+    //             for (size_t ifm = 0; ifm < ifm_size; ifm++) {
+    //                 for (size_t y = 0; y < y_size; y++) {
+    //                     for (size_t x = 0; x < x_size; x++) {
+    //                         float w = data[oiyx_idx];
+    //                         out[get_os_is_yx_isv16_osv16_index(ofm, ifm, y, x, ifm_size, y_size, x_size)] = w;
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //         mem.unlock();
+    //         data_to_allocate->unlock();
+    //         ret.push_back({(*it)->id(), data_to_allocate});
+    //         it++;
+    //     } else {
+    //         it++;
+    //     }
+    // }
+
+    printf("Here\n");
 
     bo.set_option(build_option::optimize_data(false));
     bo.set_option(build_option::outputs(const_outputs));
+    std::chrono::high_resolution_clock::time_point t = std::chrono::high_resolution_clock::now();
+    
     network_impl::ptr net = engine.build_network(nodes, bo, true);
+    
+    std::chrono::high_resolution_clock::time_point t0 = std::chrono::high_resolution_clock::now();
+    
     for (auto& cin : const_inputs) net->set_input_data(cin->id(), cin->get_attached_memory());
+
+    std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
 
     net->execute({});
     net->reset_execution(true);  // wait for computations to complete
     auto outputs = net->get_outputs();
 
-    std::list<std::pair<primitive_id, memory_impl::ptr>> ret;
-    for (auto& out : outputs) ret.push_back({out->id(), (memory_impl::ptr) &out->output_memory()});
+    std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
+
+    for (auto& out : outputs) {
+        // bool check = false;
+        // for (auto& r : ret)
+        //     if (r.first == out->id()) {
+        //         check = true;
+        //         continue;
+        //     }
+        // if (check)
+        //     continue;
+        ret.push_back({out->id(), (memory_impl::ptr) &out->output_memory()});
+    }
+
+    std::chrono::high_resolution_clock::time_point t3 = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double, std::milli> online_time = t - tt;
+    std::chrono::duration<double, std::milli> build_time = t0 - t;
+    std::chrono::duration<double, std::milli> input_time = t1 - t0;
+    std::chrono::duration<double, std::milli> exec_time = t2 - t1;
+    std::chrono::duration<double, std::milli> output_time = t3 - t2;
+
+    std::cout << "online_time took " << online_time.count() << " ms\n";
+    std::cout << "build_time took " << build_time.count() << " ms\n";
+    std::cout << "input_time took " << input_time.count() << " ms\n";
+    std::cout << "exec_time took " << exec_time.count() << " ms\n";
+    std::cout << "output_time took " << output_time.count() << " ms\n";
 
     return ret;
 }
 
 void propagate_constants::handle_constant(program_impl& prog, program_node& node) {
+    // printf("Handle constant: %s %d - %d\n", node.id().c_str(), (bool)node.is_type<data>(), (bool)node.is_type<generic_layer>());
     if (!node.is_type<data>()) {
         add_constant(prog, node);
         if (has_non_const_user(node))
@@ -149,6 +251,12 @@ void propagate_constants::handle_constant(program_impl& prog, program_node& node
 void propagate_constants::add_constant(program_impl& prog, program_node& node) {
     if (node.is_type<data>())
         return;
+    if (node.get_output_layout().format == cldnn::format::os_is_yx_isv16_osv16 && 
+            node.get_dependencies().size() != 0 &&
+            node.get_dependency(0).is_type<data>()) {
+        online_nodes.insert(prog.get_node_ptr(node.get_primitive()->id));
+        printf("Online\n");
+    }
     nodes.insert(prog.get_node_ptr(node.get_primitive()->id));
     has_non_trivial_constants = true;
 

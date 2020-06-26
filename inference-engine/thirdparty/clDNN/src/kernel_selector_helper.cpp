@@ -344,6 +344,16 @@ kernel_selector::weights_layout to_weights_layout(format f) {
     }
 }
 
+tensor from_weights_tensor2(const kernel_selector::weights_tensor& t) {
+    size_t G = t.G().v;
+    size_t OFM = t.OFM().v;
+    size_t IFM = t.IFM().v;
+    size_t Z = t.Z().v;
+    size_t Y = t.Y().v;
+    size_t X = t.X().v;
+    return cldnn::tensor(group(G), batch(OFM), feature(IFM), spatial(X, Y, Z));
+}
+
 cldnn::format::type from_weights_layout(kernel_selector::weights_layout l) {
     switch (l) {
         case kernel_selector::weights_layout::oi:
@@ -462,6 +472,8 @@ cldnn::format::type from_weights_layout(kernel_selector::weights_layout l) {
             return cldnn::format::g_os_zyx_is_osv32_isv16;
         case kernel_selector::weights_layout::g_os_zyx_is_osv32_isv32:
             return cldnn::format::g_os_zyx_is_osv32_isv32;
+        case kernel_selector::weights_layout::os_is_yx_isv16_osv16:
+            return cldnn::format::os_is_yx_isv16_osv16;
         default:
             return cldnn::format::bfyx;
     }

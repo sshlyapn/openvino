@@ -91,7 +91,10 @@ std::vector<std::pair<std::shared_ptr<primitive>, bool>> reorder_factory::get_we
 
     auto new_dtype = from_weights_type(reorder_params.dest.GetDType());
     const auto bpp = data_type_traits::size_of(new_dtype);
-    tensor expected_size = { 1, 1, 1, (tensor::value_type)(reorder_params.dest.PhysicalSizeInBytes() / bpp) };
+    tensor expected_size = from_weights_tensor2(reorder_params.dest);
+    if (reorder_params.dest.GetLayout() != kernel_selector::Tensor::WeightsLayout::os_is_yx_isv16_osv16) 
+        expected_size = { 1, 1, 1, (tensor::value_type)(reorder_params.dest.PhysicalSizeInBytes() / bpp) };
+        
 
     bool toImageType = IsImageType(reorder_params.dest.GetLayout());
     bool toDynamicLSTMType = IsDynamicLSTMType(reorder_params.dest.GetLayout());
@@ -99,18 +102,24 @@ std::vector<std::pair<std::shared_ptr<primitive>, bool>> reorder_factory::get_we
         expected_size = old_layout.size;
 
     layout expected_layout = { new_dtype,
+                              from_weights_layout(reorder_params.dest.GetLayout()),
+                              expected_size };
+    if (reorder_params.dest.GetLayout() != kernel_selector::Tensor::WeightsLayout::os_is_yx_isv16_osv16) 
+        expected_layout = { new_dtype,
                               toImageType ? from_weights_layout(reorder_params.dest.GetLayout())
-                                          : format::bfyx,  // simple linear format (flatten to x channel)
+                                          : format::bfyx,  // simple linear format (flatten to x channel),
                               expected_size };
 
     cache_key ckey{ input_id, expected_layout };
     auto itr = _cached_generic_reorders.find(ckey);
     if (itr != _cached_generic_reorders.end()) {
+        // printf("0. Layout optimizer %d: %s %d\n", (int)expected_layout.format, input_id.c_str(), (int)reorder_params.dest.GetLayout());
         ret.push_back(std::make_pair(itr->second, true));
     } else {
         auto count = _cached_generic_reorders.size();
         std::stringstream ss;
         ss << input_id << "_generic_layer_" << count;
+        // printf("1. Layout optimizer %d: %s %d\n", (int)expected_layout.format, ss.str().c_str(), (int)reorder_params.dest.GetLayout());
 
         auto reorder = std::make_shared<cldnn::generic_layer>(ss.str(), input_id, expected_layout, reorder_params);
         _cached_generic_reorders[ckey] = reorder;
