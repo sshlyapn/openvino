@@ -110,6 +110,7 @@ std::string to_host_version(const cldnn::version_t& version);
 kernel_selector::data_tensor convert_data_tensor(const layout& l, uint32_t split = 1, const tensor view_offset = tensor {});
 kernel_selector::weights_tensor convert_weights_tensor(const layout& l);
 layout from_weights_tensor(const kernel_selector::weights_tensor& t);
+tensor from_weights_tensor2(const kernel_selector::weights_tensor& t);
 kernel_selector::activation_function get_kernel_selector_activation_param(activation_func activation_func);
 kernel_selector::activation_function get_kernel_selector_activation_grad_param(
     activation_grad_func activation_grad_func);

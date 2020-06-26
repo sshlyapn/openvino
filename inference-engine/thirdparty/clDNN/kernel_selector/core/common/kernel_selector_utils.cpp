@@ -121,6 +121,8 @@ bool UpdateWeightsParams(weight_bias_params& newParams,
                 return false;
             }
 
+            // printf("Reorder for %s\n", newParams.layerID.c_str());
+
             auto& reorderKS = ReorderWeightsKernelSelctor::Instance();
             reorder_weights_params r_params;
 
@@ -140,7 +142,7 @@ bool UpdateWeightsParams(weight_bias_params& newParams,
                                          (rotate ? " with rotate" : ""));
             }
 
-            weightsReorderParams.engine = WeightsReorderParams::Engine::GPU;
+            weightsReorderParams.engine = WeightsReorderParams::Engine::CPU;
             weightsReorderParams.clKernel = std::make_shared<clKernelData>(kernels_data[0].kernels[0]);
             weightsReorderParams.dest = r_params.output;
 

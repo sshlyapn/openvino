@@ -85,6 +85,7 @@ static primitive_impl* create(const generic_layer_node& arg) {
     if (arg.get_primitive()->generic_params.engine == kernel_selector::generic_kernel_params::Engine::GPU) {
         return new generic_layer_gpu(arg);
     } else {
+        printf("Create CPU\n");
         return new generic_layer_cpu(arg);
     }
 }
