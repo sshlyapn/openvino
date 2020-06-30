@@ -70,9 +70,14 @@ std::vector<std::pair<std::shared_ptr<primitive>, bool>> reorder_factory::get_we
     std::vector<std::pair<std::shared_ptr<primitive>, bool>> ret;
 
     if (reorder_params.engine == kernel_selector::weights_reorder_params::Engine::CPU &&
-        reorder_params.cpuKernel != nullptr) {
+        reorder_params.cpuKernel != nullptr && false) {
         const auto intermediate_format = from_weights_layout(reorder_params.cpuKernel->GetExpectedInputLayout());
         const auto intermediate_type = from_weights_type(reorder_params.cpuKernel->GetExpectedInputType());
+        
+        if (intermediate_format == format::os_is_yx_isv16_osv16 && intermediate_type == data_types::f32)
+            printf("CPU Kernel\n");
+        else
+            printf("Not a CPU Kernel\n");
         if (intermediate_format != old_layout.format || intermediate_type != old_layout.data_type) {
             const layout intermediate_layout = { intermediate_type,
                                                 intermediate_format,
@@ -82,6 +87,9 @@ std::vector<std::pair<std::shared_ptr<primitive>, bool>> reorder_factory::get_we
             if (reorder.first) {
                 ret.push_back(reorder);
                 input_id = reorder.first->id;
+                printf("reorder.first optimizer.cpp\n");
+            } else {
+                printf("Not reorder.first optimizer.cpp\n");
             }
         }
     }

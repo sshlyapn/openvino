@@ -94,7 +94,7 @@ struct reorder_weights_params : public Params {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ReorderKernelBase
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-class ReorderKernelBase : public common_kernel_base {
+class ReorderKernelBase : public common_kernel_base, public CPUKernel {
 public:
     using common_kernel_base::common_kernel_base;
     virtual ~ReorderKernelBase() {}
@@ -110,5 +110,10 @@ protected:
                                      const optional_params&,
                                      float estimated_time) const;
     KernelsData GetCommonKernelsData(const reorder_params& params, const optional_params&, float estimated_time) const;
+
+    virtual std::shared_ptr<ReorderKernelBase> GetCPUKernel() const;
+    virtual WeightsType GetExpectedInputType();
+    virtual WeightsLayout GetExpectedInputLayout() const;
+    virtual void Execute(void* input, size_t input_size, void* output, size_t output_size) const;
 };
 }  // namespace kernel_selector

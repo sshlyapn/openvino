@@ -235,6 +235,8 @@ KernelsData ReorderKernelBase::GetCommonKernelsData(const reorder_weights_params
 
     kernel.arguments = GetArgsDesc(1, false, false);
 
+    kd.weightsReorderParams.cpuKernel = GetCPUKernel();
+
     kd.estimatedTime = estimated_time;
 
     return {kd};
@@ -270,4 +272,12 @@ KernelsData ReorderKernelBase::GetCommonKernelsData(const reorder_params& params
 
     return {kd};
 }
+
+    std::shared_ptr<ReorderKernelBase> ReorderKernelBase::GetCPUKernel() const {return std::shared_ptr<ReorderKernelBase>(nullptr);
+        // return std::make_shared<ReorderKernelBase>(*this);
+        };
+    WeightsType ReorderKernelBase::GetExpectedInputType() {return WeightsType::F32;};
+    WeightsLayout ReorderKernelBase::GetExpectedInputLayout() const {return WeightsLayout::os_is_yx_isv16_osv16;};
+    void ReorderKernelBase::Execute(void* input, size_t input_size, void* output, size_t output_size) const { printf("Default execute\n"); };
+
 }  // namespace kernel_selector

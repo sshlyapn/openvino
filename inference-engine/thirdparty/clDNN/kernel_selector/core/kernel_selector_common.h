@@ -169,8 +169,10 @@ struct clKernelData {
 // CPUKernel
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 struct CPUKernel {
-    virtual WeightsType GetExpectedInputType() = 0;
-    virtual WeightsLayout GetExpectedInputLayout() const { return WeightsLayout::oiyx; }
+    WeightsTensor input;
+    WeightsTensor output;
+    virtual WeightsType GetExpectedInputType() { return output.GetDType(); }
+    virtual WeightsLayout GetExpectedInputLayout() const { return output.GetLayout(); }
     virtual void Execute(void* input, size_t input_size, void* output, size_t output_size) const = 0;
 };
 
