@@ -25,5 +25,12 @@ public:
 
     KernelsData GetKernelsData(const Params& params, const optional_params& options) const override;
     ParamsKey GetSupportedKey() const override;
+
+    WeightsType GetExpectedInputType() override;
+    WeightsLayout GetExpectedInputLayout() const override;
+    void Execute(void* input, size_t input_size, void* output, size_t output_size) const override;
+    std::shared_ptr<ReorderKernelBase> GetCPUKernel() const override {
+        return std::make_shared<ReorderWeightsKernel>(*this);
+    }
 };
 }  // namespace kernel_selector
