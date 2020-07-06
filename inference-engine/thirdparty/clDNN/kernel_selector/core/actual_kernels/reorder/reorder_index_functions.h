@@ -24,11 +24,11 @@ namespace kernel_selector {
     inline size_t get_index(size_t ofm, size_t ifm, size_t y, size_t x, WeightsTensor tensor) {
         if (tensor.GetLayout() == WeightsLayout::oi) {
             size_t ifm_pitch = 1;
-            size_t ofm_pitch = tensor.OFM().v * ifm_pitch;
+            size_t ofm_pitch = tensor.IFM().v * ifm_pitch;
             return ofm * ofm_pitch + ifm * ifm_pitch;
         } else if (tensor.GetLayout() == WeightsLayout::io) {
             size_t ofm_pitch = 1;
-            size_t ifm_pitch = tensor.IFM().v * ofm_pitch;
+            size_t ifm_pitch = tensor.OFM().v * ofm_pitch;
             return ofm * ofm_pitch + ifm * ifm_pitch;
         } else if (tensor.GetLayout() == WeightsLayout::oiyx) {
             size_t x_pitch = 1;
@@ -39,7 +39,7 @@ namespace kernel_selector {
         } else if (tensor.GetLayout() == WeightsLayout::os_is_yx_isv16_osv16) {
             const size_t block_size = 16;
             const size_t idx = ofm%block_size + (ofm / block_size)*tensor.IFM().v*tensor.X().v*tensor.Y().v*block_size +
-                       block_size *(ifm+ x*tensor.IFM().v + y*tensor.IFM().v*tensor.X().v);
+                               block_size *(ifm+ x*tensor.IFM().v + y*tensor.IFM().v*tensor.X().v);
             return idx;
         } else {
             return 0;
