@@ -17,6 +17,9 @@
 #include "reorder_weights_kernel.h"
 #include "kernel_selector_utils.h"
 #include "reorder_index_functions.h"
+#include "inference-engine/include/ie_parallel.hpp"
+#include <chrono>
+#include <iostream>
 
 namespace kernel_selector {
 ParamsKey ReorderWeightsKernel::GetSupportedKey() const {
@@ -50,8 +53,9 @@ WeightsLayout ReorderWeightsKernel::GetExpectedInputLayout() const {
 }
 
 void ReorderWeightsKernel::Execute(void* input, size_t input_size, void* output, size_t output_size) const {
-    printf("Hi from specific Reroder input %d and outptu %d: %lu -> %lu\n", (int)this->input.GetLayout(), (int)this->output.GetLayout(), 
-    get_index(10,0,0,0, this->input), get_index(10,0,0,0, this->output));
+    // printf("Hi from specific Reroder input %d and outptu %d: %lu -> %lu\n", (int)this->input.GetLayout(), (int)this->output.GetLayout(), 
+    // get_index(10,0,0,0, this->input), get_index(10,0,0,0, this->output));
+    // std::chrono::high_resolution_clock::time_point t = std::chrono::high_resolution_clock::now();
     size_t g_in = this->input.G().v;
     size_t ofm_in = this->input.OFM().v;
     size_t ifm_in = this->input.IFM().v;
@@ -59,6 +63,8 @@ void ReorderWeightsKernel::Execute(void* input, size_t input_size, void* output,
     size_t x_in = this->input.X().v;
     auto input_ptr = static_cast<float*>(input);
     auto output_ptr = static_cast<float*>(output);
+    // if (this->input.GetLayout() == WeightsLayout::io || this->output.GetLayout() == WeightsLayout::io)
+    //     printf("Input or output is ::io: %lu %lu %lu %lu %lu\n", g_in, ofm_in, ifm_in, y_in, x_in);
     for (size_t g = 0; g < g_in; g++) {
         for (size_t ofm = 0; ofm < ofm_in; ofm++) {
             for (size_t ifm = 0; ifm < ifm_in; ifm++) {
@@ -72,6 +78,9 @@ void ReorderWeightsKernel::Execute(void* input, size_t input_size, void* output,
             }
         }
     }
+    // std::chrono::high_resolution_clock::time_point t0 = std::chrono::high_resolution_clock::now();
+    // std::chrono::duration<double, std::milli> execute_time = t0 - t;
+    // std::cout << "Kernel execution took " << execute_time.count() << " ms\n";
 }
 
 }  // namespace kernel_selector
