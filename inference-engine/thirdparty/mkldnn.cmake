@@ -108,6 +108,8 @@ include_directories(
         ${CMAKE_BINARY_DIR}/include/
 )
 
+message("MSG: ${CMAKE_BINARY_DIR}/include/")
+
 if(WIN32)
     add_definitions(-D_WIN)
     add_definitions(-DNOMINMAX)
@@ -118,6 +120,7 @@ if(WIN32)
 endif()
 
 add_library(${TARGET} STATIC ${HDR} ${SRC})
+message("add_library ${TARGET} STATIC ${HDR} ${SRC}")
 set_ie_threading_interface_for(${TARGET})
 
 if(GEMM STREQUAL "OPENBLAS")
@@ -145,3 +148,4 @@ endif()
 add_definitions(-DMKLDNN_ENABLE_CONCURRENT_EXEC)
 
 target_link_libraries(${TARGET} PRIVATE ${${TARGET}_LINKER_LIBS})
+message("MSG: ${TARGET} or ${mkldnn_LINKER_LIBS} ")
