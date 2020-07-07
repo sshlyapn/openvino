@@ -118,7 +118,25 @@ void ReorderWeightsKernel::Execute(void* input, size_t input_size, void* output,
                 }
             }
         }
+    } else if (this->output.GetLayout() == WeightsLayout::io && this->input.GetLayout() == WeightsLayout::oiyx) {
+        printf("IO OI HERE\n");
+        for (size_t g = 0; g < g_in; g++) {
+            for (size_t y = 0; y < y_in; y++) {
+                for (size_t x = 0; x < x_in; x++) {
+                    InferenceEngine::parallel_for(ifm_in, [&](size_t ifm) {
+                        size_t input_idx = get_index(0, ifm, y, x, this->input);
+                        size_t output_idx = get_index(0, ifm, y, x, this->output);
+                        for (size_t ofm = 0; ofm < ofm_in; ofm++) {
+                            output_ptr[output_idx] = input_ptr[input_idx];
+                            output_idx++;
+                            input_idx += this->input.OFM().pitch;
+                        }
+                    });
+                }
+            }
+        }
     } else {
+        printf("IO OI %d %d\n", (int)this->output.GetLayout(), (int)this->input.GetLayout());
         for (size_t g = 0; g < g_in; g++) {
             for (size_t y = 0; y < y_in; y++) {
                 for (size_t x = 0; x < x_in; x++) {
