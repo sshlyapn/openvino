@@ -148,21 +148,24 @@ include_directories(
 add_library("${CLDNN_BUILD__PROJ}" STATIC
     ${__CLDNN_AllSources}
   )
+set_ie_threading_interface_for(${CLDNN_BUILD__PROJ})
 
 set_property(TARGET "${CLDNN_BUILD__PROJ}" PROPERTY PROJECT_LABEL "${CLDNN_BUILD__PROJ_LABEL}")
 set_property(TARGET "${CLDNN_BUILD__PROJ}" PROPERTY OUTPUT_NAME   "${CLDNN_BUILD__PROJ_OUTPUT_NAME}")
 
 
 target_link_libraries("${CLDNN_BUILD__PROJ}"
+    PUBLIC
     clDNN_OpenCL
   )
 
 if(WIN32)
-  target_link_libraries("${CLDNN_BUILD__PROJ}" setupapi)
+  target_link_libraries("${CLDNN_BUILD__PROJ}" PUBLIC setupapi)
 elseif((NOT ANDROID) AND (UNIX))
-  target_link_libraries("${CLDNN_BUILD__PROJ}" pthread)
+  target_link_libraries("${CLDNN_BUILD__PROJ}" PUBLIC pthread)
 endif()
-target_link_libraries("${CLDNN_BUILD__PROJ}" ${CLDNN__SYSTEM_LINK_LIBRARIES})
+target_link_libraries("${CLDNN_BUILD__PROJ}" PUBLIC ${CLDNN__SYSTEM_LINK_LIBRARIES})
+target_include_directories(${CLDNN_BUILD__PROJ} PRIVATE ${IE_MAIN_SOURCE_DIR}/include)
 
 # =================================== Custom pre- and post-steps =======================================
 add_custom_command(OUTPUT "${__CLDNN_CGDirectory__cg_cache}/${__CLDNN_File__cg_cache__prim_db}"

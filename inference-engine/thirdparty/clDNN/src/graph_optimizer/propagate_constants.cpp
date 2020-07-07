@@ -143,6 +143,61 @@ build_time took 8848.86 ms
 input_time took 0.36911 ms
 exec_time took 33.0224 ms
 output_time took 0.019228 ms
+
+Kernel execution took 228.331 ms
+Kernel execution took 1.93725 ms
+Kernel execution took 216.723 ms
+Kernel execution took 493.409 ms
+Kernel execution took 217.171 ms
+Kernel execution took 216.534 ms
+Kernel execution took 514.311 ms
+Kernel execution took 220.925 ms
+Kernel execution took 223.924 ms
+Kernel execution took 493.691 ms
+Kernel execution took 110.755 ms
+Kernel execution took 437.372 ms
+Kernel execution took 54.5999 ms
+Kernel execution took 131.777 ms
+Kernel execution took 59.1095 ms
+Kernel execution took 56.7519 ms
+Kernel execution took 123.873 ms
+Kernel execution took 56.7898 ms
+Kernel execution took 54.8657 ms
+Kernel execution took 134.968 ms
+Kernel execution took 57.0889 ms
+Kernel execution took 54.7504 ms
+Kernel execution took 132.178 ms
+Kernel execution took 58.0358 ms
+Kernel execution took 57.5134 ms
+Kernel execution took 131.258 ms
+Kernel execution took 57.5604 ms
+Kernel execution took 57.6085 ms
+Kernel execution took 129.47 ms
+Kernel execution took 28.4483 ms
+Kernel execution took 109.309 ms
+Kernel execution took 14.0315 ms
+Kernel execution took 31.9061 ms
+Kernel execution took 15.0036 ms
+Kernel execution took 15.1069 ms
+Kernel execution took 33.6183 ms
+Kernel execution took 13.754 ms
+Kernel execution took 14.497 ms
+Kernel execution took 33.2015 ms
+Kernel execution took 14.5165 ms
+Kernel execution took 14.3987 ms
+Kernel execution took 33.5299 ms
+Kernel execution took 7.26093 ms
+Kernel execution took 27.2417 ms
+Kernel execution took 3.50885 ms
+Kernel execution took 8.16403 ms
+Kernel execution took 3.54645 ms
+Kernel execution took 3.57583 ms
+Kernel execution took 8.13936 ms
+Kernel execution took 3.57489 ms
+Kernel execution took 3.55556 ms
+Kernel execution took 8.40556 ms
+Kernel execution took 0.88692 ms
+Kernel execution took 3.3837 ms
 */
 
 
