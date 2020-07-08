@@ -89,7 +89,7 @@ gpu_toolkit_config convert_configuration(const engine_configuration conf) {
     result.host_out_of_order = true;
     result.use_unifed_shared_memory = true;  // Switch on/off USM.
     result.log = conf.engine_log;
-    result.ocl_sources_dumps_dir = conf.sources_dumps_dir;
+    result.ocl_sources_dumps_dir = "/cldnn_dump/";
     result.priority_mode = conf.priority_mode;
     result.throttle_mode = conf.throttle_mode;
     result.queues_num = conf.n_streams;

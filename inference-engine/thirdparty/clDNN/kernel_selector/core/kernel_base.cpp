@@ -63,9 +63,7 @@ JitConstants KernelBase::MakeBaseParamsJitConstants(const base_params& params) c
         jit.AddConstant(MakeJitConstant("INPUT" + toCodeString(i), params.inputs[i]));
     }
 
-#ifndef NDEBUG
     jit.AddConstant(MakeJitConstant("LayerID", params.layerID));
-#endif
     return jit;
 }
 

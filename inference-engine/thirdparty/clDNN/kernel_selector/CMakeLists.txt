@@ -159,6 +159,7 @@ target_link_libraries("${CLDNN_BUILD__PROJ}"
     clDNN_OpenCL
   )
 
+
 if(WIN32)
   target_link_libraries("${CLDNN_BUILD__PROJ}" PUBLIC setupapi)
 elseif((NOT ANDROID) AND (UNIX))
