@@ -41,15 +41,17 @@
 #include <utility>
 #include <map>
 
-// #define DEBUG_DUMP_PATH "cldnn_dump/"
+#define DEBUG_DUMP_PATH "/cldnn_dump/"
 
 #ifdef DEBUG_DUMP_PATH
 #include <iomanip>
 #include <fstream>
 
 #define DUMP_VERBOSE 0
-#define DUMP_SINGLE_LAYER 0
-#define DUMP_LAYER_NAME ""
+#define DUMP_SINGLE_LAYER 1
+#define DUMP_LAYER_NAME "reorder:prob_cldnn_output_postprocess"
+// #define DUMP_LAYER_NAME "pooling:pool1"
+// #define DUMP_LAYER_NAME "convolution:conv1/Fused_Add_"
 #endif
 
 namespace cldnn {

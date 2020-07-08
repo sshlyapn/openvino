@@ -20,26 +20,60 @@
 #include <vector>
 
 namespace kernel_selector {
+    inline size_t get_index_oiyx(size_t o, size_t i, size_t y, size_t x, size_t ifm_size, size_t y_size, size_t x_size) {
+        const size_t x_pitch = 1;
+        const size_t y_pitch = x_size * x_pitch;
+        const size_t ifm_pitch = y_size * y_pitch;
+        const size_t ofm_pitch = ifm_size * ifm_pitch;
+        const size_t idx = o * ofm_pitch + i * ifm_pitch + y * y_pitch + x * x_pitch;
+        return idx;
+    }
 
-    inline size_t get_index(size_t ofm, size_t ifm, size_t y, size_t x, WeightsTensor tensor) {
+    inline size_t get_index_os_iyx_osv16(size_t o, size_t i, size_t y, size_t x, size_t ofm_pitch, size_t ifm_pitch, size_t y_pitch, size_t x_pitch) {
+        const size_t block_size = 16;
+        const size_t idx = (o % block_size) + block_size * (x * x_pitch +
+                                                            y * y_pitch +
+                                                            i * ifm_pitch +
+                                                            (o / block_size) * ofm_pitch);
+        return idx;
+    }
+
+    inline size_t get_index_os_is_yx_isv16_osv16(size_t o, size_t i, size_t y, size_t x, size_t ofm_pitch, size_t ifm_pitch, size_t y_pitch, size_t x_pitch) {
+        const size_t block_size = 16;
+        const size_t idx = (o % block_size) + block_size * (x * block_size * x_pitch +
+                                                            y * block_size * y_pitch +
+                                                            (i % block_size) +
+                                                            (i / block_size) * block_size * ifm_pitch +
+                                                            (o / block_size) * ofm_pitch);
+        return idx;
+    }
+
+    inline size_t get_index_io(size_t o, size_t i, size_t ofm_size) {
+        const size_t ofm_pitch = 1;
+        const size_t ifm_pitch = ofm_size * ofm_pitch;
+        const size_t idx = o * ofm_pitch + i * ifm_pitch;
+        return idx;
+    }
+
+    inline size_t get_index(size_t o, size_t i, size_t y, size_t x, const WeightsTensor& tensor) {
         if (tensor.GetLayout() == WeightsLayout::oi) {
             size_t ifm_pitch = 1;
             size_t ofm_pitch = tensor.IFM().v * ifm_pitch;
-            return ofm * ofm_pitch + ifm * ifm_pitch;
+            return o * ofm_pitch + i * ifm_pitch;
         } else if (tensor.GetLayout() == WeightsLayout::io) {
             size_t ofm_pitch = 1;
             size_t ifm_pitch = tensor.OFM().v * ofm_pitch;
-            return ofm * ofm_pitch + ifm * ifm_pitch;
+            return o * ofm_pitch + i * ifm_pitch;
         } else if (tensor.GetLayout() == WeightsLayout::oiyx) {
             size_t x_pitch = 1;
             size_t y_pitch = tensor.X().v * x_pitch;
             size_t ifm_pitch = tensor.Y().v * y_pitch;
             size_t ofm_pitch = tensor.IFM().v * ifm_pitch;
-            return ofm * ofm_pitch + ifm * ifm_pitch + y * y_pitch + x * x_pitch; 
+            return o * ofm_pitch + i * ifm_pitch + y * y_pitch + x * x_pitch; 
         } else if (tensor.GetLayout() == WeightsLayout::os_is_yx_isv16_osv16) {
             const size_t block_size = 16;
-            const size_t idx = ofm%block_size + (ofm / block_size)*tensor.IFM().v*tensor.X().v*tensor.Y().v*block_size +
-                               block_size *(ifm+ x*tensor.IFM().v + y*tensor.IFM().v*tensor.X().v);
+            const size_t idx = o%block_size + (o / block_size)*tensor.IFM().v*tensor.X().v*tensor.Y().v*block_size +
+                               block_size *(i+ x*tensor.IFM().v + y*tensor.IFM().v*tensor.X().v);
             return idx;
         } else {
             return 0;
