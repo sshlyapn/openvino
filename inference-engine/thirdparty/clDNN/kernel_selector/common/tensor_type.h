@@ -177,6 +177,7 @@ struct Pad {
 struct Dim {
     size_t v;
     size_t pitch;
+    // size_t pitch_block;
     Pad pad;
 
     size_t LogicalDimPadded() const { return v + pad.Total(); }
@@ -331,7 +332,11 @@ public:
                 totalSize = std::max(totalSize, d.pitch * (d.LogicalDimPadded()));
             }
 
+            printf("Total size = %lu + %lu\n", totalSize, viewOffset);
+
             totalSize += viewOffset;
+        } else {
+            printf("Total size is %lu\n", totalSize);
         }
 
         size_t minimalPitch = 1;
@@ -494,10 +499,10 @@ struct DataTensor : public TensorBaseT<Datatype, DataLayout> {
     DataTensor& operator=(const DataTensor&) = default;
 
     DataTensor(const NDims& nd, Datatype dt, DataLayout l, size_t of = 0, size_t sz = 0, float pv = 0.f)
-        : TensorBaseT(nd, dt, l, of, sz, pv) {}
+        : TensorBaseT(nd, dt, l, of, sz, pv) { printf("NDims data\n"); }
 
     DataTensor(const std::vector<size_t>& d, Datatype dt, DataLayout l)
-        : TensorBaseT<Datatype, DataLayout>(GetSimpleDims(d, l), dt, l) {}
+        : TensorBaseT<Datatype, DataLayout>(GetSimpleDims(d, l), dt, l) { printf("GetSimpleDims data\n"); }
 
     Dim X() const { return Extract(layout, DataChannelName::X, dims); }
     Dim Y() const { return Extract(layout, DataChannelName::Y, dims); }
@@ -536,10 +541,10 @@ struct WeightsTensor : TensorBaseT<WeightsType, WeightsLayout> {
     WeightsTensor& operator=(const WeightsTensor&) = default;
 
     WeightsTensor(const NDims& nd, WeightsType dt, WeightsLayout l, size_t of = 0, size_t sz = 0, float pv = 0.f)
-        : TensorBaseT(nd, dt, l, of, sz, pv) {}
+        : TensorBaseT(nd, dt, l, of, sz, pv) { printf("NDims Weights\n"); }
 
     WeightsTensor(const std::vector<size_t>& d, WeightsType dt, WeightsLayout l)
-        : TensorBaseT<WeightsType, WeightsLayout>(GetSimpleDims(d, l), dt, l) {}
+        : TensorBaseT<WeightsType, WeightsLayout>(GetSimpleDims(d, l), dt, l) { printf("GetSimpleDims weights\n"); }
 
     WeightsTensor TransformIgnorePadding(WeightsLayout l) const { return TransformIgnorePadding(l, dtype); }
     WeightsTensor TransformIgnorePadding(WeightsLayout l, WeightsType t, size_t g = 1, bool should_split = true) const;
@@ -568,9 +573,13 @@ struct WeightsTensor : TensorBaseT<WeightsType, WeightsLayout> {
     static inline uint32_t ChannelsCount(WeightsLayout l) { return TensorBaseT::ChannelsCount(weightsChannelArray, l); }
 
 private:
+    struct WeightsChannelDesc {
+
+    }
+
     using WeightsChannelDesc =
         std::pair<WeightsLayout, std::array<int, static_cast<size_t>(WeightsChannelName::COUNT)>>;
-    using WeightsChannelArray = std::array<WeightsChannelDesc, WeightsLayout::WeightsLayoutCount>;
+    using WeightsChannelArray = std::map<WeightsLayout, WeightsChannelDesc>;
     static WeightsChannelArray weightsChannelArray;
     static NDims GetSimpleDims(const std::vector<size_t>& d, WeightsLayout l);
 };

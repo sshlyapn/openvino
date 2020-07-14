@@ -57,9 +57,12 @@ void ReorderWeightsKernel::Execute(void* input, size_t input_size, void* output,
     auto input_ptr = static_cast<float*>(input);
     auto output_ptr = static_cast<float*>(output);
 
+    printf("Logical size: %lu (%d -> %d)\n", this->input.LogicalSize(), (int)this->input.GetLayout(), (int)this->output.GetLayout());
+
     const size_t input_g_size = this->input.G().v;
     const size_t input_ofm_size = this->input.OFM().v;
     const size_t input_ifm_size = this->input.IFM().v;
+    const size_t input_z_size = this->input.Z().v;
     const size_t input_y_size = this->input.Y().v;
     const size_t input_x_size = this->input.X().v;
     const size_t input_ofm_pitch = this->input.OFM().pitch;
@@ -80,6 +83,7 @@ void ReorderWeightsKernel::Execute(void* input, size_t input_size, void* output,
 
         size_t ofm_leftover = input_ofm_size % block_size;
         size_t ifm_leftover = input_ifm_size % block_size;
+        printf("Leftovers os_is_yx_isv16_osv16 %lu %lu %lu %lu (%lu %lu)\n", input_ofm_size, input_ifm_size, input_y_size, input_x_size, ifm_leftover, ofm_leftover);
         if (ofm_leftover == 0 && ifm_leftover == 0) {
             InferenceEngine::parallel_for4d(ofm_blocks_num, ifm_blocks_num, input_y_size, input_x_size, [&](size_t ofm_block, size_t ifm_block, size_t y, size_t x) {
                 const size_t ifm_idx = ifm_block * block_size;
@@ -93,7 +97,6 @@ void ReorderWeightsKernel::Execute(void* input, size_t input_size, void* output,
                 }
             });
         } else {
-            printf("Leftovers i16o16 %lu %lu %lu %lu\n", input_ofm_size, input_ifm_size, input_y_size, input_x_size);
             InferenceEngine::parallel_for4d(ofm_blocks_num, ifm_blocks_num, input_y_size, input_x_size, [&](size_t ofm_block, size_t ifm_block, size_t y, size_t x) {
                 const size_t ifm_idx = ifm_block * block_size;
                 const size_t ofm_idx = ofm_block * block_size;
@@ -116,6 +119,7 @@ void ReorderWeightsKernel::Execute(void* input, size_t input_size, void* output,
 
         size_t ofm_leftover = input_ofm_size % block_size;
         size_t ifm_leftover = input_ifm_size % block_size;
+        printf("Leftovers os_iyx_osv16 %lu %lu %lu %lu (%lu %lu)\n", input_ofm_size, input_ifm_size, input_y_size, input_x_size, ifm_leftover, ofm_leftover);
         if (ofm_leftover == 0 && ifm_leftover == 0) {
             InferenceEngine::parallel_for4d(ofm_blocks_num, ifm_blocks_num, input_y_size, input_x_size, [&](size_t ofm_block, size_t ifm_block, size_t y, size_t x) {
                 const size_t ifm_idx = ifm_block * block_size;
@@ -129,7 +133,6 @@ void ReorderWeightsKernel::Execute(void* input, size_t input_size, void* output,
                 }
             });
         } else {
-            printf("Leftovers get_index_os_iyx_osv16 %lu %lu %lu %lu\n", input_ofm_size, input_ifm_size, input_y_size, input_x_size);
             InferenceEngine::parallel_for4d(ofm_blocks_num, ifm_blocks_num, input_y_size, input_x_size, [&](size_t ofm_block, size_t ifm_block, size_t y, size_t x) {
                 const size_t ifm_idx = ifm_block * block_size;
                 const size_t ofm_idx = ofm_block * block_size;
@@ -153,6 +156,7 @@ void ReorderWeightsKernel::Execute(void* input, size_t input_size, void* output,
         size_t ofm_leftover = input_ofm_size % block_size;
         size_t ifm_leftover = input_ifm_size % block_size;
 
+        printf("Leftovers io %lu %lu %lu %lu (%lu %lu)\n", input_ofm_size, input_ifm_size, input_y_size, input_x_size, ifm_leftover, ofm_leftover);
         if (ofm_leftover == 0 && ifm_leftover == 0) {
             InferenceEngine::parallel_for2d(ofm_blocks_num, ifm_blocks_num, [&](size_t ofm_block, size_t ifm_block) {
                 const size_t ifm_idx = ifm_block * block_size;
@@ -181,7 +185,22 @@ void ReorderWeightsKernel::Execute(void* input, size_t input_size, void* output,
             });
         }
     } else {
-        printf("Default value %d %d\n", (int) input_g_size, (int)this->input.GetLayout());
+        printf("Default value %d -> %d\n", (int)this->input.GetLayout(), (int)this->output.GetLayout());
+        size_t x_block = 32;
+        size_t x_blocks_num = CeilDiv(input_x_size, x_block);
+        InferenceEngine::parallel_for5d(input_g_size, input_ofm_size, input_ifm_size, input_z_size, input_y_size, x_blocks_num, [&](size_t g, size_t ofm, size_t ifm, size_t z, size_t y, size_t x_blocks) {
+            // const size_t ifm_idx = ifm_block * block_size;
+            // const size_t ofm_idx = ofm_block * block_size;
+            // const size_t ofm_block_size = (ofm_leftover != 0 && ofm_block == ofm_blocks_num - 1) ? ofm_leftover : block_size;
+            // const size_t ifm_block_size = (ifm_leftover != 0 && ifm_block == ifm_blocks_num - 1) ? ifm_leftover : block_size;
+            // for (size_t ifm = ifm_idx; ifm < ifm_idx + ifm_block_size; ifm++) {
+            //     size_t output_idx = get_index_io(ofm_idx, ifm, input_ofm_size);
+            //     size_t input_idx = get_index_oiyx(ofm_idx, ifm, 0, 0, input_ifm_size, input_y_size, input_x_size);
+            //     for (size_t ofm = 0; ofm < ofm_block_size; ofm++, input_idx += input_ofm_pitch) {
+            //         output_ptr[output_idx + ofm] = input_ptr[input_idx];
+            //     }
+            // }
+        });
         // for (size_t g = 0; g < input_g_size; g++) {
         //     for (size_t y = 0; y < input_y_size; y++) {
         //         for (size_t x = 0; x < input_x_size; x++) {
