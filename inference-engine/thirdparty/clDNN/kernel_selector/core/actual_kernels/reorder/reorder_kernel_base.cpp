@@ -107,6 +107,18 @@ JitConstants ReorderKernelBase::GetJitConstants(const reorder_weights_params& pa
 
     mem_consts.AddConstant(MakeJitConstant("SUB_GROUP_SIZE", SubGroupSize(params.output.GetLayout())));
 
+    int i_b = 1;
+    std::vector<size_t> valid_bs = {8, 4, 2, 1};
+    if (params.output.GetLayout() == WeightsLayout::os_is_yx_isv16_osv16) {
+        for (auto v : valid_bs) {
+            if (params.output.IFM().v % v == 0) {
+                i_b = v;
+                break;
+            }
+        }
+        mem_consts.AddConstant(MakeJitConstant("OUTPUT_IFM_BLOCK_SIZE", i_b));
+    }
+
     return mem_consts;
 }
 
@@ -157,6 +169,20 @@ ReorderKernelBase::DispatchData ReorderKernelBase::SetDefault(const reorder_weig
 
     global = {out.G().v * out.OFM().v, out.IFM().v, out.X().v * out.Y().v * out.Z().v};
     auto local = GetOptimalLocalWorkGroupSizes(global, params.engineInfo);
+
+    int i_b = 1;
+    std::vector<size_t> valid_bs = {8, 4, 2, 1};
+    if (params.output.GetLayout() == WeightsLayout::os_is_yx_isv16_osv16) {
+        for (auto v: valid_bs) {
+            if (params.output.IFM().v % v == 0) {
+                i_b = v;
+                break;
+            }
+        }
+        global = {(out.X().v) * out.Y().v, out.IFM().v / i_b, Align(out.OFM().v, 16)};
+        local = {1, 1, 16};
+        printf("WorkGroup GPU setting %d\n", i_b);
+    }
 
     kd.gws0 = global[0];
     kd.gws1 = global[1];

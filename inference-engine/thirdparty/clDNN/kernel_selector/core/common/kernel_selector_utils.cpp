@@ -142,7 +142,7 @@ bool UpdateWeightsParams(weight_bias_params& newParams,
                                          (rotate ? " with rotate" : ""));
             }
 
-            weightsReorderParams.engine = WeightsReorderParams::Engine::CPU;
+            weightsReorderParams.engine = WeightsReorderParams::Engine::GPU;
             weightsReorderParams.clKernel = std::make_shared<clKernelData>(kernels_data[0].kernels[0]);
             weightsReorderParams.cpuKernel = kernels_data[0].weightsReorderParams.cpuKernel;
             weightsReorderParams.cpuKernel->input = r_params.input;

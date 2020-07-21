@@ -443,7 +443,7 @@ std::string toString(const IndexSelectAxis& axis) {
 
 std::string toString(const Tensor::Dim& dim) {
     std::stringstream s;
-    s << "v" << dim.v << "_p" << dim.pitch << "_" << dim.pad.before << "_" << dim.pad.after;
+    s << "v" << dim.v << "_p" << dim.Pitch() << "_" << dim.pad.before << "_" << dim.pad.after;
     return s.str();
 }
 

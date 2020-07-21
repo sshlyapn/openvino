@@ -251,6 +251,22 @@ inline uint FUNC(get_output_index)(uint g, uint o, uint i, uint z, uint y, uint 
 #endif
 }
 
+#if OUTPUT_TYPE_SIZE == 2
+#   define OUTPUT_BLOCK_WRITE(ptr, offset, val)    intel_sub_group_block_write_us((__global ushort*)(ptr) + (offset), as_ushort(val))
+#   define OUTPUT_BLOCK_WRITE2(ptr, offset, val)   intel_sub_group_block_write_us2((__global ushort*)(ptr) + (offset), as_ushort2(val))
+#   define OUTPUT_BLOCK_WRITE4(ptr, offset, val)   intel_sub_group_block_write_us4((__global ushort*)(ptr) + (offset), as_ushort4(val))
+#   define OUTPUT_BLOCK_WRITE8(ptr, offset, val)   intel_sub_group_block_write_us8((__global ushort*)(ptr) + (offset), as_ushort8(val))
+#elif OUTPUT_TYPE_SIZE == 4
+#   define OUTPUT_BLOCK_WRITE(ptr, offset, val)    intel_sub_group_block_write((__global uint*)(ptr) + (offset), as_uint(val))
+#   define OUTPUT_BLOCK_WRITE2(ptr, offset, val)   intel_sub_group_block_write2((__global uint*)(ptr) + (offset), as_uint2(val))
+#   define OUTPUT_BLOCK_WRITE4(ptr, offset, val)   intel_sub_group_block_write4((__global uint*)(ptr) + (offset), as_uint4(val))
+#   define OUTPUT_BLOCK_WRITE8(ptr, offset, val)   intel_sub_group_block_write8((__global uint*)(ptr) + (offset), as_uint8(val))
+#else
+#   error convolution_gpu_bfyx_f16.cl - unsupported output type.
+#endif
+
+#define INPUT_TYPE_VEC    MAKE_VECTOR_TYPE(INPUT0_TYPE, OUTPUT_X_BLOCK_SIZE)
+
 #if OUTPUT_LAYOUT_IMAGE_2D_WEIGHTS_C1_B_FYX
 KERNEL (reorder_weights)(const __global INPUT0_TYPE* input, write_only image2d_t output)
 {
@@ -269,6 +285,37 @@ KERNEL (reorder_weights)(const __global INPUT0_TYPE* input, write_only image2d_t
 #else
 KERNEL (reorder_weights)(const __global INPUT0_TYPE* input, __global OUTPUT_TYPE* output)
 {
+#if OUTPUT_LAYOUT_OS_IS_YX_ISV16_OSV16 && 0
+    const int o_block = get_group_id(1) * SUB_GROUP_SIZE;
+    const int lid = get_sub_group_local_id();
+    const int o = o_block + lid;
+    const int i = (uint)get_global_id(1) * OUTPUT_IFM_BLOCK_SIZE;
+
+    const int xy = get_global_id(0);
+    const int x = (xy % OUTPUT_SIZE_X);
+    const int y = (xy / OUTPUT_SIZE_X);
+    const int input_idx = GET_FILTER_INDEX(INPUT0, 0, o, i, y, x);
+    const int output_idx = GET_FILTER_OS_IS_YX_ISV16_OSV16_INDEX(OUTPUT, o_block, i, y, x, SUB_GROUP_SIZE);
+    const INPUT_TYPE_VEC in_data;
+    for (int i = 0; i < OUTPUT_X_BLOCK_SIZE; i++) {
+        in_data[i] = input[input_idx];
+        input_idx += INPUT0_IFM_PITCH;
+    }
+    // if (o_block == 0 && i == 0 && xy == 0)
+    //     printf("%f\n", in_data);
+#if OUTPUT_X_BLOCK_SIZE == 8
+            OUTPUT_BLOCK_WRITE8(output, output_idx, in_data);
+#elif OUTPUT_X_BLOCK_SIZE == 4
+            OUTPUT_BLOCK_WRITE4(output, output_idx, in_data);
+#elif OUTPUT_X_BLOCK_SIZE == 2
+            OUTPUT_BLOCK_WRITE2(output, output_idx, in_data);
+#elif OUTPUT_X_BLOCK_SIZE == 1
+            OUTPUT_BLOCK_WRITE(output, output_idx, in_data);
+#else
+#   error convolution_gpu_bfyx_f16.cl: Unsupported output x block size.
+#endif
+    OUTPUT_BLOCK_WRITE(output, output_idx, in_data);
+#else
 #if OUTPUT_GROUPS_NUM > 1
     const unsigned g = (uint)get_global_id(0) / OUTPUT_OFM_NUM;
     const unsigned o = (uint)get_global_id(0) % OUTPUT_OFM_NUM;
@@ -293,7 +340,6 @@ KERNEL (reorder_weights)(const __global INPUT0_TYPE* input, __global OUTPUT_TYPE
     const unsigned y = (zyx / OUTPUT_SIZE_X) % OUTPUT_SIZE_Y;
     const unsigned z = (zyx / OUTPUT_SIZE_X) / OUTPUT_SIZE_Y;
 #endif
-
 #if OUTPUT_GROUPS_NUM > 1 //  Add grouped macro instead this check
     uint8 ir = RESHAPE_WEIGHT_DIMS_WITH_GROUPS(OUTPUT, INPUT0, g, o, i, 0, z, y, x);
 #else
@@ -308,5 +354,6 @@ KERNEL (reorder_weights)(const __global INPUT0_TYPE* input, __global OUTPUT_TYPE
 #endif
 
     output[output_idx] = TO_OUTPUT_TYPE(input[input_idx]);
+#endif
 }
 #endif

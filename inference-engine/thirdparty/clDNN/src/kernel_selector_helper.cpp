@@ -547,7 +547,7 @@ kernel_selector::data_tensor convert_data_tensor(const layout& l, uint32_t split
 
         auto& elm = vec[i];
         elm.v = static_cast<size_t>(d - add_offsets[tensor_index]);
-        elm.pitch = pitch;
+        elm.pitches = {{pitch, 1}};
         elm.pad.before = lp;
         elm.pad.after = up;
 
@@ -555,12 +555,12 @@ kernel_selector::data_tensor convert_data_tensor(const layout& l, uint32_t split
     }
 
     if (ks_layout == kernel_selector::Tensor::bs_fs_yx_bsv16_fsv16) {
-        vec[2].pitch = (vec[0].v * vec[1].v) * 16;
-        vec[3].pitch = vec[2].pitch * vec[2].v;
+        vec[2].pitches = {{(vec[0].v * vec[1].v) * 16, 1}};
+        vec[3].pitches = {{vec[2].Pitch() * vec[2].v, 1}};
     }
     if (ks_layout == kernel_selector::Tensor::bs_fs_zyx_bsv16_fsv16) {
-        vec[3].pitch = (vec[0].v * vec[1].v * vec[2].v) * 16;
-        vec[4].pitch = vec[3].pitch * vec[3].v;
+        vec[3].pitches = {{(vec[0].v * vec[1].v * vec[2].v) * 16, 1}};
+        vec[4].pitches = {{vec[3].Pitch() * vec[3].v, 1}};
     }
 
     const int feature_index =
@@ -571,16 +571,28 @@ kernel_selector::data_tensor convert_data_tensor(const layout& l, uint32_t split
 }
 
 kernel_selector::weights_tensor convert_weights_tensor(const layout& l) {
-    const auto& t = l.size.sizes(l.format);
+    const auto& t = l.size.sizes(l.format);  // usage ascending order
     const auto ks_type = to_weights_type(l.data_type);
     const auto ks_layout = to_weights_layout(l.format);
     std::vector<size_t> vec(kernel_selector::WeightsTensor::ChannelsCount(ks_layout));
+
+    // for (auto channelName : kernel_selector::Tensor::WeightsChannelNames) {
+    //     const auto channelIndex = kernel_selector::WeightsTensor::Channelndex(ks_layout, channelName);
+    //     if (channelIndex != -1) {
+    //         vec[channelIndex] = t[t.size() - 1 - channelIndex] / findBlockedChannel(channelName);
+    //         vecBlocked[blocked_channels_num + channelIndex] = t[t.size() - 1 - channelIndex] / findBlockedChannel(channelName);
+    //     }
+    // }
 
     for (size_t i = 0; i < vec.size(); i++) {
         const size_t tensor_index = t.size() - 1 - i;
         const auto d = t[tensor_index];
         vec[i] = static_cast<size_t>(d);
     }
+
+    // printf("Convert func: old %lu vs new %lu vs blocked %lu (%d, %d)\n", vec_old.size(), vec.size(), vecBlocked.size(), blocked_channels_num,
+    // ks_layout == kernel_selector::Tensor::WeightsLayout::os_is_yx_isv16_osv16);
+
     return kernel_selector::weights_tensor(vec, ks_type, ks_layout);
 }
 

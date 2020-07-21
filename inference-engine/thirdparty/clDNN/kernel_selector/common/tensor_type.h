@@ -18,6 +18,7 @@
 #include "common_types.h"
 #include "common_tools.h"
 #include <vector>
+#include <map>
 #include <assert.h>
 #include <numeric>
 #include <cstddef>
@@ -26,6 +27,7 @@
 #include <string>
 #include <utility>
 #include <stdexcept>
+#include <sstream>
 
 namespace kernel_selector {
 #define KERNEL_SELECTOR_TENSOR_DIM_MAX 9
@@ -176,14 +178,15 @@ struct Pad {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 struct Dim {
     size_t v;
-    size_t pitch;
-    // size_t pitch_block;
+    std::vector<std::pair<size_t, size_t>> pitches;  // from often to rare (Pair is a Pitch and corresponding Block Size)
     Pad pad;
 
     size_t LogicalDimPadded() const { return v + pad.Total(); }
+    size_t Pitch() const { return pitches.back().first; }
 };
 
 using NDims = std::vector<Dim>;
+using BlockSizes = std::vector<std::pair<int, size_t>>;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // extract code
@@ -191,6 +194,9 @@ using NDims = std::vector<Dim>;
 enum class DataChannelName { X = 0, Y = 1, Z = 2, W = 3, FEATURE = 4, BATCH = 5, COUNT = 6 };
 
 enum class WeightsChannelName { X = 0, Y = 1, Z = 2, IFM = 3, OFM = 4, LX = 5, LY = 6, G = 7, COUNT = 8 };
+
+static const std::array<WeightsChannelName, static_cast<size_t>(WeightsChannelName::COUNT)> WeightsChannelNames = { WeightsChannelName::X, WeightsChannelName::Y, WeightsChannelName::Z, WeightsChannelName::IFM,
+                                                                           WeightsChannelName::OFM, WeightsChannelName::LX, WeightsChannelName::LY, WeightsChannelName::G };
 
 inline bool SimpleLayout(WeightsLayout l) {
     switch (l) {
@@ -308,6 +314,8 @@ inline bool IsDynamicLSTMType(WeightsLayout l) {
 struct TensorBase {
 protected:
     NDims dims;
+    NDims blockedDims;
+    BlockSizes blockSizes;
     size_t viewOffset = 0;  // in elements
     size_t firstElementOffset = 0;
     size_t totalSize = 0;  // in elements
@@ -318,31 +326,111 @@ public:
     TensorBase(const TensorBase&) = default;
     TensorBase& operator=(const TensorBase&) = default;
 
-    TensorBase(const NDims& nd, size_t viewOf, size_t sz, float pv)
+    TensorBase(const NDims& nd, const BlockSizes& blockSizes, size_t viewOf, size_t sz, float pv)
         : dims(nd),
+          blockSizes(blockSizes),
           viewOffset(viewOf),
           firstElementOffset(std::accumulate(nd.cbegin(),
                                              nd.cend(),
                                              viewOf,
-                                             [](size_t val, const Dim& d) { return val + d.pitch * d.pad.before; })),
+                                             [](size_t val, const Dim& d) { return val + d.Pitch() * d.pad.before; })),
           totalSize(sz),
           paddedVal(pv) {
         if (totalSize == 0) {
             for (const auto& d : dims) {
-                totalSize = std::max(totalSize, d.pitch * (d.LogicalDimPadded()));
+                totalSize = std::max(totalSize, d.Pitch() * (d.LogicalDimPadded()));
             }
 
-            printf("Total size = %lu + %lu\n", totalSize, viewOffset);
+            // printf("Total size = %lu + %lu BLOCK SIZES %lu\n", totalSize, viewOffset, blockSizes.size());
 
             totalSize += viewOffset;
         } else {
-            printf("Total size is %lu\n", totalSize);
+            // printf("Total size is %lu\n", totalSize);
+        }
+
+        size_t blocksNum = blockSizes.size();
+        if (blocksNum > 0) {
+            std::vector<size_t> dimsBlocked(dims.size() + blocksNum);
+            std::vector<size_t> pitchesBlocked(dims.size() + blocksNum);
+            for (size_t i = 0; i < blockSizes.size(); i++) {
+                dimsBlocked[i] = blockSizes[i].second;  // add to dimsBlocked the most often changed values first
+            }
+            for (size_t i = 0; i < dims.size(); i++) {
+                dimsBlocked[blocksNum + i] = dims[i].v;  // add to dimsBlocked other tensor values
+            }
+            for (size_t i = 0; i < blocksNum; i++) {
+                size_t blockChannelIdx = blockSizes[i].first;
+                size_t simpleDim = dimsBlocked[blocksNum + blockChannelIdx];
+                size_t blockedDim = blockSizes[i].second;
+                dimsBlocked[blocksNum + blockChannelIdx] = (simpleDim + blockedDim - 1) / blockedDim;  // CeilDiv blocked channels by BlockSize
+            }
+
+            pitchesBlocked[0] = 1;
+            for (size_t i = 1; i < pitchesBlocked.size(); i++) {
+                pitchesBlocked[i] = pitchesBlocked[i - 1] * dimsBlocked[i - 1];  // calculate correct pitches
+            }
+
+            // NDims ret(dims.size());
+
+            // for (size_t i = 0; i < dims.size(); i++) {
+            //     ret[i] = {dims[i].v, pitchesBlocked[blocksNum + i], {}, dims[i].pad};
+            // }
+
+            for (size_t i = 0; i < blocksNum; i++) {
+                size_t idx = blocksNum - i - 1;
+                dims[blockSizes[idx].first].pitches.insert(dims[blockSizes[idx].first].pitches.begin(), {pitchesBlocked[idx], blockSizes[idx].second});  // add blocked pitches to original dims
+            }
+
+            for (size_t i = 0; i < dims.size(); i++) {
+                size_t totalBlockSize = std::accumulate(dims[i].pitches.begin(), dims[i].pitches.end(), (size_t)1, [](size_t val, const std::pair<size_t, size_t>& d) {
+                    return val * d.second;
+                });
+                size_t lastPitchIdx = dims[i].pitches.size() - 1;
+                // for (auto& p : dims[i].pitches)
+                //     totalSize *= p.second;
+                dims[i].pitches[lastPitchIdx] = {pitchesBlocked[blocksNum + i], totalBlockSize};  // update pitches in original dims
+            }
+
+            for (size_t i = 0; i < dimsBlocked.size(); i++) {
+                int dimIdx = i - blocksNum;
+                std::pair<size_t, size_t> pitch = {pitchesBlocked[i], 1};
+                blockedDims.push_back({ dimsBlocked[i], {pitch}, dimIdx >= 0 ? dims[dimIdx].pad : Pad{0,0} });  // add new Dim to blockedDims (from often to rare)
+            }
+
+            std::stringstream ss;
+            for (size_t i = 0; i < dimsBlocked.size(); i++) {
+                ss << dimsBlocked[i] << " ";
+            }
+            
+            std::stringstream sss;
+            for (size_t i = 0; i < dims.size(); i++) {
+                sss << dims[i].v << " ";
+            }
+            
+            std::stringstream ssss;
+            for (size_t i = 0; i < pitchesBlocked.size(); i++) {
+                ssss << pitchesBlocked[i] << " ";
+            }
+            
+            std::stringstream sssss;
+            for (size_t i = 0; i < dimsBlocked.size(); i++) {
+                sssss << dimsBlocked[i] << " ";
+            }
+            sssss << "[";
+            for (size_t i = 0; i < pitchesBlocked.size(); i++) {
+                sssss << pitchesBlocked[i] << " ";
+            }
+            sssss << "]";
+
+            // dims = ret;
+
+            printf("Original dims: %s Modified: %s (%s). Blocked %s\n", ss.str().c_str(), sss.str().c_str(), ssss.str().c_str(), sssss.str().c_str());
         }
 
         size_t minimalPitch = 1;
 
         for (const auto& d : dims) {
-            if (d.pitch < minimalPitch) {
+            if (d.Pitch() < minimalPitch) {
                 throw std::runtime_error("Tensor pitches didn't set correctly");
             }
 
@@ -358,6 +446,8 @@ public:
     size_t GetFirstElementOffset() const { return firstElementOffset; }
     size_t GetViewOffset() const { return viewOffset; }
     const NDims& GetDims() const { return dims; }
+    const NDims& GetBlockedDims() const { return blockedDims; }
+    const BlockSizes& GetBlockSizes() const { return blockSizes; }
 
     virtual uint32_t ElementSize() const = 0;
 
@@ -388,7 +478,7 @@ public:
 
         size_t calc_pitch = 1;
         for (const auto& d : dims) {
-            differ |= (d.pitch != calc_pitch);
+            differ |= (d.Pitch() != calc_pitch);
             calc_pitch *= d.v;
         }
 
@@ -411,7 +501,7 @@ protected:
 
         for (auto& entry : channelArr) {
             if (entry.first == l)
-                return entry.second[channel];
+                return entry.second.channelsOrder[channel];
         }
 
         return -1;
@@ -420,23 +510,70 @@ protected:
     template <typename ArrayT, typename ChannelName>
     static inline Dim Extract(const ArrayT& channelArr, Layout l, ChannelName channelName, const NDims& dims) {
         const int i = ChannelIndex(channelArr, l, channelName);
-        return ((i < 0) || (i >= static_cast<int>(dims.size()))) ? Dim{1, 1, {0, 0}} : dims[i];
+        return ((i < 0) || (i >= static_cast<int>(dims.size()))) ? Dim{1, {{1, 1}}, {0, 0}} : dims[i];
     }
+
+    // HERE SHOULD BE GET_ORDERED_CHANNELS
 
     template <typename ArrayT>
     static inline uint32_t ChannelsCount(const ArrayT& channelArr, Layout l) {
-        const auto& entry =
-            std::find_if(std::begin(channelArr),
-                         std::end(channelArr),
-                         [&](typename std::tuple_element<0, ArrayT>::type entry) { return entry.first == l; });
+        const auto& entry = channelArr.find(l);
+            // std::find_if(std::begin(channelArr),
+            //              std::end(channelArr),
+            //              [&](typename std::tuple_element<0, ArrayT>::type entry) { return entry.first == l; });
 
         if (entry == channelArr.end())
             throw std::invalid_argument("Failed to get channels count for layout " +
                                         std::to_string(static_cast<uint32_t>(l)));
 
-        return std::accumulate(entry->second.begin(), entry->second.end(), 0U, [](uint32_t count, int v) {
+        return std::accumulate(entry->second.channelsOrder.begin(), entry->second.channelsOrder.end(), 0U, [](uint32_t count, int v) {
             return count + ((v != -1) ? 1 : 0);
         });
+    }
+
+    template <typename ArrayT>
+    static inline uint32_t BlockedChannelsCount(const ArrayT& channelArr, Layout l) {
+        const auto& entry = channelArr.find(l);
+            // std::find_if(std::begin(channelArr),
+            //              std::end(channelArr),
+            //              [&](typename std::tuple_element<0, ArrayT>::type entry) { return entry.first == l; });
+
+        if (entry == channelArr.end())
+            throw std::invalid_argument("Failed to get channels count for layout " +
+                                        std::to_string(static_cast<uint32_t>(l)));
+
+        return entry->second.blockedChannels.size();
+    }
+
+    template <typename ArrayT, typename ChannelName>
+    static inline BlockSizes GetBlockedChannels(const ArrayT& channelArr, Layout l) {
+        const auto& entry = channelArr.find(l);
+            // std::find_if(std::begin(channelArr),
+            //              std::end(channelArr),
+            //              [&](typename std::tuple_element<0, ArrayT>::type entry) { return entry.first == l; });
+
+        const auto& blockedChannels = entry->second.blockedChannels;
+        BlockSizes res(blockedChannels.size());
+        std::transform(blockedChannels.begin(), blockedChannels.end(), res.begin(), [&](const std::pair<ChannelName, size_t>& p) {
+            return std::make_pair(ChannelIndex(channelArr, l, p.first), p.second);
+        });
+        // std::vector<std::pair<DataChannelName, size_t>>
+        if (entry == channelArr.end())
+            throw std::invalid_argument("Failed to get blocked channels for layout " +
+                                        std::to_string(static_cast<uint32_t>(l)));
+
+        return res;
+    }
+
+    template <typename ArrayT, typename ChannelName>
+    static inline std::vector<int> GetSortedDimsIndicesT(const ArrayT& channelArr, Layout l) {
+        std::vector<int> res;
+        for (size_t i = 0; i < static_cast<size_t>(ChannelName::COUNT); i++) {
+            int idx = ChannelIndex(channelArr, l, static_cast<ChannelName>(i));
+            if (idx != -1)
+                res.push_back(idx);
+        }
+        return res;
     }
 
 public:
@@ -444,8 +581,8 @@ public:
     TensorBaseT(const TensorBaseT&) = default;
     TensorBaseT& operator=(const TensorBaseT&) = default;
 
-    TensorBaseT(const NDims& nd, DType dt, Layout l, size_t of = 0, size_t sz = 0, float pv = 0.f)
-        : TensorBase(nd, of, sz, pv), dtype(dt), layout(l) {}
+    TensorBaseT(const NDims& nd, const BlockSizes& ndBlocked, DType dt, Layout l, size_t of = 0, size_t sz = 0, float pv = 0.f)
+        : TensorBase(nd, ndBlocked, of, sz, pv), dtype(dt), layout(l) {}
 
     DType GetDType() const { return dtype; }
     Layout GetLayout() const { return layout; }
@@ -460,7 +597,7 @@ public:
         if (same) {
             for (size_t i = 0; i < dims.size(); i++) {
                 same &= dims[i].v == t.dims[i].v && dims[i].pad.before == t.dims[i].pad.before &&
-                        dims[i].pad.after == t.dims[i].pad.after && dims[i].pitch == t.dims[i].pitch;
+                        dims[i].pad.after == t.dims[i].pad.after && dims[i].Pitch() == t.dims[i].Pitch();
             }
         }
 
@@ -499,10 +636,12 @@ struct DataTensor : public TensorBaseT<Datatype, DataLayout> {
     DataTensor& operator=(const DataTensor&) = default;
 
     DataTensor(const NDims& nd, Datatype dt, DataLayout l, size_t of = 0, size_t sz = 0, float pv = 0.f)
-        : TensorBaseT(nd, dt, l, of, sz, pv) { printf("NDims data\n"); }
+        : TensorBaseT(nd, GetBlocked(l), dt, l, of, sz, pv) { // printf("NDims data\n"); 
+        }
 
     DataTensor(const std::vector<size_t>& d, Datatype dt, DataLayout l)
-        : TensorBaseT<Datatype, DataLayout>(GetSimpleDims(d, l), dt, l) { printf("GetSimpleDims data\n"); }
+        : TensorBaseT<Datatype, DataLayout>(GetSimpleDims(d, l), GetBlocked(l), dt, l) { // printf("GetSimpleDims data\n"); 
+        }
 
     Dim X() const { return Extract(layout, DataChannelName::X, dims); }
     Dim Y() const { return Extract(layout, DataChannelName::Y, dims); }
@@ -523,11 +662,24 @@ struct DataTensor : public TensorBaseT<Datatype, DataLayout> {
         return TensorBaseT::ChannelIndex(dataChannelArray, l, channel);
     }
 
+    static inline BlockSizes GetBlocked(DataLayout l) {
+        return TensorBaseT::GetBlockedChannels<DataChannelArray, DataChannelName>(dataChannelArray, l);
+    }
+
     static inline uint32_t ChannelsCount(DataLayout l) { return TensorBaseT::ChannelsCount(dataChannelArray, l); }
 
+    static inline uint32_t BlockedChannelsCount(DataLayout l) { return TensorBaseT::BlockedChannelsCount(dataChannelArray, l); }
+
+    static inline std::vector<int> GetSortedDimsIndices(DataLayout l) {
+        return TensorBaseT::GetSortedDimsIndicesT<DataChannelArray, DataChannelName>(dataChannelArray, l);
+    }
 private:
-    using DataChannelDesc = std::pair<DataLayout, std::array<int, static_cast<size_t>(DataChannelName::COUNT)>>;
-    using DataChannelArray = std::array<DataChannelDesc, DataLayout::DataLayoutCount>;
+    struct DataChannelDes1c {
+        std::array<int, static_cast<size_t>(DataChannelName::COUNT)> channelsOrder;
+        std::vector<std::pair<DataChannelName, size_t>> blockedChannels;
+    };
+
+    using DataChannelArray = std::map<DataLayout, DataChannelDes1c>;
     static DataChannelArray dataChannelArray;
     static NDims GetSimpleDims(const std::vector<size_t>& d, DataLayout l);
 };
@@ -541,10 +693,12 @@ struct WeightsTensor : TensorBaseT<WeightsType, WeightsLayout> {
     WeightsTensor& operator=(const WeightsTensor&) = default;
 
     WeightsTensor(const NDims& nd, WeightsType dt, WeightsLayout l, size_t of = 0, size_t sz = 0, float pv = 0.f)
-        : TensorBaseT(nd, dt, l, of, sz, pv) { printf("NDims Weights\n"); }
+        : TensorBaseT(nd, GetBlocked(l), dt, l, of, sz, pv) { // printf("NDims Weights\n"); 
+        }
 
     WeightsTensor(const std::vector<size_t>& d, WeightsType dt, WeightsLayout l)
-        : TensorBaseT<WeightsType, WeightsLayout>(GetSimpleDims(d, l), dt, l) { printf("GetSimpleDims weights\n"); }
+        : TensorBaseT<WeightsType, WeightsLayout>(GetSimpleDims(d, l), GetBlocked(l), dt, l) { // printf("GetSimpleDims weights\n"); 
+        }
 
     WeightsTensor TransformIgnorePadding(WeightsLayout l) const { return TransformIgnorePadding(l, dtype); }
     WeightsTensor TransformIgnorePadding(WeightsLayout l, WeightsType t, size_t g = 1, bool should_split = true) const;
@@ -570,15 +724,24 @@ struct WeightsTensor : TensorBaseT<WeightsType, WeightsLayout> {
         return TensorBaseT::ChannelIndex(weightsChannelArray, l, WeightsChannelName::G) != -1;
     }
 
+    static inline BlockSizes GetBlocked(WeightsLayout l) {
+        return TensorBaseT::GetBlockedChannels<WeightsChannelArray, WeightsChannelName>(weightsChannelArray, l);
+    }
+
     static inline uint32_t ChannelsCount(WeightsLayout l) { return TensorBaseT::ChannelsCount(weightsChannelArray, l); }
+
+    static inline uint32_t BlockedChannelsCount(WeightsLayout l) { return TensorBaseT::BlockedChannelsCount(weightsChannelArray, l); }
+
+    static inline std::vector<int> GetSortedDimsIndices(WeightsLayout l) {
+        return TensorBaseT::GetSortedDimsIndicesT<WeightsChannelArray, WeightsChannelName>(weightsChannelArray, l);
+    }
 
 private:
     struct WeightsChannelDesc {
+        std::array<int, static_cast<size_t>(WeightsChannelName::COUNT)> channelsOrder;
+        std::vector<std::pair<WeightsChannelName, size_t>> blockedChannels;
+    };
 
-    }
-
-    using WeightsChannelDesc =
-        std::pair<WeightsLayout, std::array<int, static_cast<size_t>(WeightsChannelName::COUNT)>>;
     using WeightsChannelArray = std::map<WeightsLayout, WeightsChannelDesc>;
     static WeightsChannelArray weightsChannelArray;
     static NDims GetSimpleDims(const std::vector<size_t>& d, WeightsLayout l);

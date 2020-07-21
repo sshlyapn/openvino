@@ -37,7 +37,7 @@ public:
 
 protected:
     WeightsLayout GetPreferredWeightsLayout(const convolution_params &p) const override {
-        return (p.groups > 1) ? WeightsLayout::g_os_is_yx_isv16_osv16 : WeightsLayout::os_is_yx_isv16_osv16;
+        return (p.groups > 1) ? WeightsLayout::g_os_is_yx_isv16_osv16 : WeightsLayout::yxio;
     }
     std::vector<FusedOpType> GetSupportedFusedOps() const override {
         return { FusedOpType::ELTWISE,
