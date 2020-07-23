@@ -20,6 +20,7 @@
 #include "reorder_weights_image_fyx_b_kernel.h"
 #include "reorder_weights_image_winograd_6x3_kernel.h"
 #include "reorder_weights_binary_kernel.h"
+#include "reorder_weights_kernel_isv16_osv16.h"
 
 namespace kernel_selector {
 
@@ -30,6 +31,7 @@ ReorderWeightsKernelSelctor::ReorderWeightsKernelSelctor() {
     Attach<ReorderWeightsImage_fyx_b_Kernel>();
     Attach<ReorderWeightsImageWinograd6x3Kernel>();
     Attach<ReorderWeightsBinaryKernel>();
+    Attach<ReorderWeightsKernel_isv16_osv16>();
 }
 
 KernelsData ReorderWeightsKernelSelctor::GetBestKernels(const Params& params, const optional_params& options) const {

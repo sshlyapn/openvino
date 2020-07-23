@@ -510,6 +510,7 @@ void program_impl::mark_if_data_flow(program_node& node) {
 }
 
 void program_impl::transfer_memory_to_device() {
+    std::chrono::high_resolution_clock::time_point t0 = std::chrono::high_resolution_clock::now();
     for (auto& node : processing_order) {
         if (node->is_type<data>() && !node->need_lockable_memory()) {
             auto& data_node = node->as<data>();
@@ -526,6 +527,10 @@ void program_impl::transfer_memory_to_device() {
             }
         }
     }
+    std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double, std::milli> output_time = t1 - t0;
+
+    std::cout << "transfer took " << output_time.count() << " ms\n";
 }
 
 void program_impl::cleanup() {

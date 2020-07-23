@@ -31,6 +31,7 @@ using namespace cldnn;
 
 // ToDo remove friendship relation from  program_node and program_impl
 void propagate_constants::run(program_impl& p) {
+    std::chrono::high_resolution_clock::time_point t0 = std::chrono::high_resolution_clock::now();
     for (auto& node : p.get_processing_order()) {
         if (node->is_constant())
             handle_constant(p, *node);
@@ -107,6 +108,10 @@ void propagate_constants::run(program_impl& p) {
                               curr_node.users.end());
         p.replace(curr_node, new_node);
     }
+    std::chrono::high_resolution_clock::time_point t3 = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double, std::milli> output_time = t3 - t0;
+
+    std::cout << "Propagation took " << output_time.count() << " ms\n";
 }
 
 bool propagate_constants::has_non_const_user(program_node& node) const {
@@ -128,13 +133,17 @@ std::list<std::pair<primitive_id, memory_impl::ptr>> propagate_constants::calcul
     network_impl::ptr net = engine.build_network(nodes, bo, true);
     for (auto& cin : const_inputs) net->set_input_data(cin->id(), cin->get_attached_memory());
 
+    std::chrono::high_resolution_clock::time_point t0 = std::chrono::high_resolution_clock::now();
     net->execute({});
+    std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
     net->reset_execution(true);  // wait for computations to complete
     auto outputs = net->get_outputs();
 
     std::list<std::pair<primitive_id, memory_impl::ptr>> ret;
     for (auto& out : outputs) ret.push_back({out->id(), (memory_impl::ptr) &out->output_memory()});
+    std::chrono::duration<double, std::milli> calc_time = t1 - t0;
 
+    std::cout << "Calculation took " << calc_time.count() << " ms\n";
     return ret;
 }
 

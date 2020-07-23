@@ -52,6 +52,35 @@
 #define DUMP_LAYER_NAME ""
 #endif
 
+#ifdef __linux__
+#include <sys/time.h>
+#include <sys/resource.h>
+#include <iostream>
+#include <fstream>
+#endif
+
+void printMemoryConsumption(std::string msg = "") {
+#ifdef __linux__
+    std::ifstream status("/proc/self/status");
+    std::string line;
+    while (std::getline(status, line)) {
+        std::string title;
+        std::istringstream iss(line);
+        iss >> title;
+        if (title == "VmPeak:") {
+            size_t val;
+            iss >> val;
+            std::cout << msg << "Peak Virtual Memory (VmPeak) Size, kBytes: " << val << std::endl;
+        } else if (title == "VmHWM:") {
+            size_t val;
+            iss >> val;
+            std::cout << msg << "Peak Resident Memory (VmHWM) Size, kBytes:  " << val << std::endl;
+        }
+    }
+#else
+    printf("Memory consumption monitoring is not available\n");
+#endif
+}
 namespace cldnn {
 
 network::network(program const& program, uint16_t stream_id)
@@ -585,6 +614,7 @@ void network_impl::execute(const std::vector<refcounted_obj_ptr<event_impl>>& ev
     // provide proper event to execution. Flushing pipeline should prevent this kind of issues.
     // In scenarios with a big number of very small networks it can provide performance drop.
     get_engine().flush_network(get_id());
+    printMemoryConsumption("Execute ");
 }
 
 std::vector<primitive_id> network_impl::get_input_ids() const {
