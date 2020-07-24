@@ -177,9 +177,14 @@ struct Pad {
 // Dim
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 struct Dim {
+    using PitchDesc = std::pair<size_t, size_t>;
     size_t v;
-    std::vector<std::pair<size_t, size_t>> pitches;  // from often to rare (Pair is a Pitch and corresponding Block Size)
+    std::vector<PitchDesc> pitches;  // from often to rare (Pair is a Pitch and corresponding Block Size)
     Pad pad;
+
+    Dim(size_t v, size_t pitch, Pad pad) : v(v), pitches({{pitch, 1}}), pad(pad) {}
+    Dim(size_t v, std::vector<PitchDesc> pitches, Pad pad) : v(v), pitches(pitches), pad(pad) {}
+    void SetLinearPitch(size_t pitch, size_t devider = 1) { pitches = {{pitch, devider}}; }
 
     size_t LogicalDimPadded() const { return v + pad.Total(); }
     size_t Pitch() const { return pitches.back().first; }

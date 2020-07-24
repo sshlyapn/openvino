@@ -217,16 +217,16 @@ NDims DataTensor::GetSimpleDims(const std::vector<size_t>& d, DataLayout l) {
 
     for (size_t i = 0; i < newDims.size(); i++) {
         Pad p = {0, newDims[i] - d[i]};
-        ret[i] = {d[i], {{pitch, 1}}, p}; // BLOCK_FIX: add blocked pitch
+        ret[i] = {d[i], pitch, p}; // BLOCK_FIX: add blocked pitch
         pitch *= newDims[i];
     }
 
     if (l == byxf_af32 || l == fs_bs_yx_bsv4_fsv32 || l == byx8_f4) {
-        ret[0].pitches = {{1, 1}};
-        ret[1].pitches = {{ret[0].Pitch() * newDims[0], 1}};
-        ret[2].pitches = {{ret[1].Pitch() * newDims[1], 1}};
-        ret[3].pitches = {{ret[2].Pitch() * newDims[2], 1}};
-        ret[4].pitches = {{ret[3].Pitch() * newDims[3], 1}};
+        ret[0].SetLinearPitch(1);
+        ret[1].SetLinearPitch(ret[0].Pitch() * newDims[0]);
+        ret[2].SetLinearPitch(ret[1].Pitch() * newDims[1]);
+        ret[3].SetLinearPitch(ret[2].Pitch() * newDims[2]);
+        ret[4].SetLinearPitch(ret[3].Pitch() * newDims[3]);
     }
 
     return ret;
@@ -691,7 +691,7 @@ NDims WeightsTensor::GetSimpleDims(const std::vector<size_t>& d, WeightsLayout l
 
     for (size_t i = 0; i < newDims.size(); i++) {
         Pad p = {0, newDims[i] - d[i]};
-        ret[i] = {d[i], {{pitch, 1}},  p}; // BLOCK_FIX: add blocked pitch
+        ret[i] = {d[i], pitch,  p}; // BLOCK_FIX: add blocked pitch
         pitch *= newDims[i];
     }
 
