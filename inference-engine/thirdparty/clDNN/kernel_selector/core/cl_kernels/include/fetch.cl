@@ -248,7 +248,7 @@ inline uint FUNC(get_b_fs_yx_fsv_index_safe)(uint b, uint f, uint y, uint x,
         ((o) / (sub_group_size))*CAT(prefix, _OFM_PITCH)                              \
     )
 
-#define GET_FILTER_IS_OS_ZYX_OSV16_ISV16_INDEX(prefix, o, i, z, y, x, sub_group_size) \
+#define GET_FILTER_IS_OS_ZYX_ISV16_OSV16_INDEX(prefix, o, i, z, y, x, sub_group_size) \
     CAT(prefix, _OFFSET) +                                                            \
     ((o) % (sub_group_size)) +                                                        \
     (sub_group_size)*(                                                                \
@@ -260,7 +260,7 @@ inline uint FUNC(get_b_fs_yx_fsv_index_safe)(uint b, uint f, uint y, uint x,
         ((i) / (sub_group_size))*CAT(prefix, _IFM_PITCH)                              \
     )
 
-#define GET_FILTER_IS_OS_YX_OSV16_ISV16_INDEX(prefix, o, i, y, x, sub_group_size) \
+#define GET_FILTER_IS_OS_YX_ISV16_OSV16_INDEX(prefix, o, i, y, x, sub_group_size) \
     CAT(prefix, _OFFSET) +                                                        \
     ((o) % (sub_group_size)) +                                                    \
     (sub_group_size)*(                                                            \
@@ -1431,7 +1431,7 @@ inline uint FUNC(get_os_i_yxs_osv_yxsv4_index)(uint o, uint i, uint y, uint x, u
         ((o) / (sub_group_size))*CAT(prefix, _OFM_PITCH)                            \
     )
 
-#define GET_FILTER_G_IS_OS_ZYX_OSV16_ISV16_INDEX(prefix, g, o, i, z, y, x, sub_group_size) \
+#define GET_FILTER_G_IS_OS_ZYX_ISV16_OSV16_INDEX(prefix, g, o, i, z, y, x, sub_group_size) \
     CAT(prefix, _OFFSET) +                                                                 \
     (g)*CAT(prefix, _GROUPS_PITCH) +                                                       \
     ((o) % (sub_group_size)) +                                                             \
@@ -1444,7 +1444,7 @@ inline uint FUNC(get_os_i_yxs_osv_yxsv4_index)(uint o, uint i, uint y, uint x, u
         ((i) / (sub_group_size))*CAT(prefix, _IFM_PITCH)                                   \
     )
 
-#define GET_FILTER_G_IS_OS_YX_OSV16_ISV16_INDEX(prefix, g, o, i, y, x, sub_group_size) \
+#define GET_FILTER_G_IS_OS_YX_ISV16_OSV16_INDEX(prefix, g, o, i, y, x, sub_group_size) \
     CAT(prefix, _OFFSET) +                                                             \
     (g)*CAT(prefix, _GROUPS_PITCH) +                                                   \
     ((o) % (sub_group_size)) +                                                         \
