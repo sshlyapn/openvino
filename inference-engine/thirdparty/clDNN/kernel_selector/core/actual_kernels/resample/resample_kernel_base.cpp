@@ -17,6 +17,16 @@
 #include <string>
 #include <algorithm>
 #include <vector>
+#include <unordered_map>
+
+namespace {
+struct InterpolateAxisHash {
+    template <typename T>
+    size_t operator()(T t) const {
+        return static_cast<size_t>(t);
+    }
+};
+}  // namespace
 
 namespace kernel_selector {
 
@@ -48,6 +58,8 @@ ResampleKernelBase::DispatchData ResampleKernelBase::SetDefault(const kernel_sel
         global = {Align(out.X().v, 32), out.Y().v, out.Batch().v};
     else if (arg.resampleType == ResampleType::CAFFE_BILINEAR_INTERP)
         global = {out.X().v * out.Y().v, CeilDiv(out.Feature().v, GetFeatureBlockSize(arg)), out.Batch().v * out.Z().v};
+    else
+        global = {out.X().v, out.Y().v * out.Z().v, out.Feature().v * out.Batch().v};
 
     local = GetOptimalLocalWorkGroupSizes(global, arg.engineInfo);
 
@@ -104,40 +116,78 @@ JitConstants ResampleKernelBase::GetJitConstants(const resample_params& params) 
     const auto align_corners = params.align_corners;
     const auto pad_begin = params.pad_begin;
     const auto pad_end = params.pad_end;
+    const auto b_size_padded = pad_begin + input.Batch().v + pad_end;
+    const auto f_size_padded = pad_begin + input.Feature().v + pad_end;
     const auto x_size_padded = pad_begin + input.X().v + pad_end;
     const auto y_size_padded = pad_begin + input.Y().v + pad_end;
     const auto z_size_padded = pad_begin + input.Z().v + pad_end;
+    const auto out_b_size_padded = pad_begin + output.Batch().v + pad_end;
+    const auto out_f_size_padded = pad_begin + output.Feature().v + pad_end;
     const auto out_x_size_padded = pad_begin + output.X().v + pad_end;
     const auto out_y_size_padded = pad_begin + output.Y().v + pad_end;
     const auto out_z_size_padded = pad_begin + output.Z().v + pad_end;
-    float x_ratio = 0;
-    float y_ratio = 0;
-    float z_ratio = 0;
+    std::unordered_map<InterpolateAxis, float, InterpolateAxisHash> scales;
 
     if (align_corners) {
-        x_ratio = (out_x_size_padded) > 1 ? static_cast<float>(x_size_padded - 1) / static_cast<float>(out_x_size_padded - 1) : 0.0f;
-        y_ratio = (out_y_size_padded) > 1 ? static_cast<float>(y_size_padded - 1) / static_cast<float>(out_y_size_padded - 1) : 0.0f;
-        z_ratio = (out_z_size_padded) > 1 ? static_cast<float>(z_size_padded - 1) / static_cast<float>(out_z_size_padded - 1) : 0.0f;
+        scales[InterpolateAxis::BATCH] =
+            (out_b_size_padded) > 1 ? static_cast<float>(b_size_padded - 1) / static_cast<float>(out_b_size_padded - 1)
+                                    : 0.0f;
+        scales[InterpolateAxis::FEATURE] =
+            (out_f_size_padded) > 1 ? static_cast<float>(f_size_padded - 1) / static_cast<float>(out_f_size_padded - 1)
+                                    : 0.0f;
+        scales[InterpolateAxis::X] =
+            (out_x_size_padded) > 1 ? static_cast<float>(x_size_padded - 1) / static_cast<float>(out_x_size_padded - 1)
+                                    : 0.0f;
+        scales[InterpolateAxis::Y] =
+            (out_y_size_padded) > 1 ? static_cast<float>(y_size_padded - 1) / static_cast<float>(out_y_size_padded - 1)
+                                    : 0.0f;
+        scales[InterpolateAxis::Z] =
+            (out_z_size_padded) > 1 ? static_cast<float>(z_size_padded - 1) / static_cast<float>(out_z_size_padded - 1)
+                                    : 0.0f;
     } else {
-        x_ratio = static_cast<float>(x_size_padded) / static_cast<float>(out_x_size_padded);
-        y_ratio = static_cast<float>(y_size_padded) / static_cast<float>(out_y_size_padded);
-        z_ratio = static_cast<float>(z_size_padded) / static_cast<float>(out_z_size_padded);
+        scales[InterpolateAxis::BATCH] = static_cast<float>(b_size_padded) / static_cast<float>(out_b_size_padded);
+        scales[InterpolateAxis::FEATURE] = static_cast<float>(f_size_padded) / static_cast<float>(out_f_size_padded);
+        scales[InterpolateAxis::X] = static_cast<float>(x_size_padded) / static_cast<float>(out_x_size_padded);
+        scales[InterpolateAxis::Y] = static_cast<float>(y_size_padded) / static_cast<float>(out_y_size_padded);
+        scales[InterpolateAxis::Z] = static_cast<float>(z_size_padded) / static_cast<float>(out_z_size_padded);
+    }
+    if (params.shapeCalculationMode == kernel_selector::ShapeCalculationMode::SCALES) {
+        for (const auto& it : params.axesAndScales) {
+            scales[it.first] = 1.f / it.second;
+        }
     }
 
     jit.AddConstants({
         MakeJitConstant(toString(params.resampleType), ""),
-        MakeJitConstant("X_RATIO", x_ratio),
-        MakeJitConstant("Y_RATIO", y_ratio),
-        MakeJitConstant("Z_RATIO", z_ratio),
-        MakeJitConstant("X_RATIO_HALF", x_ratio / 2.0f),
-        MakeJitConstant("Y_RATIO_HALF", y_ratio / 2.0f),
-        MakeJitConstant("Z_RATIO_HALF", z_ratio / 2.0f),
+        MakeJitConstant(toString(params.nearestMode), "NEAREST_ROUND_PREFER_FLOOR"),
+        MakeJitConstant(toString(params.coordTransMode), "COORD_TRANS_MODE_HALF_PIXEL"),
+        MakeJitConstant("B_RATIO", scales[InterpolateAxis::BATCH]),
+        MakeJitConstant("F_RATIO", scales[InterpolateAxis::FEATURE]),
+        MakeJitConstant("X_RATIO", scales[InterpolateAxis::X]),
+        MakeJitConstant("Y_RATIO", scales[InterpolateAxis::Y]),
+        MakeJitConstant("Z_RATIO", scales[InterpolateAxis::Z]),
         MakeJitConstant("PAD_BEGIN", pad_begin),
         MakeJitConstant("PAD_END", pad_end),
         MakeJitConstant("ALIGN_CORNERS", align_corners),
         MakeJitConstant("KERNEL_W", 2),
-        MakeJitConstant("ANTIALIAS", 0)
+        MakeJitConstant("ANTIALIAS", params.antialias),
+        MakeJitConstant("CUBE_COEFF", params.cube_coeff),
     });
+    if (params.resampleType == ResampleType::CUBIC) {
+        jit.AddConstants({
+            MakeJitConstant("CUBIC_COEF_COUNT", 4),
+            MakeJitConstant("INDICES_B_START", 0),
+            MakeJitConstant("INDICES_F_START", 0),
+            MakeJitConstant("INDICES_X_START", 0),
+            MakeJitConstant("INDICES_Y_START", 0),
+            MakeJitConstant("INDICES_Z_START", 0),
+            MakeJitConstant("INDICES_B_END", std::max(1, (int)(scales[InterpolateAxis::BATCH] != 1.0) * 4)),
+            MakeJitConstant("INDICES_F_END", std::max(1, (int)(scales[InterpolateAxis::FEATURE] != 1.0) * 4)),
+            MakeJitConstant("INDICES_X_END", std::max(1, (int)(scales[InterpolateAxis::X] != 1.0) * 4)),
+            MakeJitConstant("INDICES_Y_END", std::max(1, (int)(scales[InterpolateAxis::Y] != 1.0) * 4)),
+            MakeJitConstant("INDICES_Z_END", std::max(1, (int)(scales[InterpolateAxis::Z] != 1.0) * 4)),
+        });
+    }
 
     size_t feature_block_size = GetFeatureBlockSize(params);
 

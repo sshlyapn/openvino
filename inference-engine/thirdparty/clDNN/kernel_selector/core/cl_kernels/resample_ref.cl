@@ -38,6 +38,48 @@ inline uint FUNC(get_output_index)(uint b, uint f, uint z, uint y, uint x)
 #endif
 }
 
+inline int FUNC(get_nearest_val)(float num, bool is_downsample)
+{
+#if defined(NEAREST_ROUND_PREFER_FLOOR)
+    return (num == (int)num + 0.5f) ? (int)floor(num) : (int) round(num);
+#elif defined(NEAREST_ROUND_PREFER_CEIL)
+    return (int)round(num);
+#elif defined(NEAREST_FLOOR)
+    return (int)floor(num);
+#elif defined(NEAREST_CEIL)
+    return (int)ceil(num);
+#elif defined(NEAREST_SIMPLE)
+    return is_downsample ? (int)ceil(num) : (int)num;
+#else
+#error [clDNN resample_ref.cl]: nearest mode - not supported
+#endif
+}
+
+inline float FUNC(get_original_coordinate)(float num, float scale, int length_resized, int length_original)
+{
+#if defined(COORD_TRANS_MODE_HALF_PIXEL)
+    return (num + 0.5f) * scale - 0.5f;
+#elif defined(COORD_TRANS_MODE_PYTORCH_HALF_PIXEL)
+    return (length_resized > 1) ? (num + 0.5f) * scale - 0.5f : 0.f;
+#elif defined(COORD_TRANS_MODE_ASYMMETRIC)
+    return num * scale;
+#elif defined(COORD_TRANS_MODE_TF_HALF_PIXEL_FOR_NN)
+    return (num + 0.5f) * scale;
+#elif defined(COORD_TRANS_MODE_ALIGN_CORNERS)
+    return (length_resized != 1) ? num * (length_original - 1) / (length_resized - 1) : 0.f;
+#else
+#error [clDNN resample_ref.cl]: coordinate transformation mode - not supported
+#endif
+}
+
+inline void FUNC(get_cubic_coeff)(float* cubic_coef, float coord, float coef)
+{
+    float abs_num = fabs(coord);
+    cubic_coef[0] = coef * (abs_num - 1.0) * (abs_num - 1.0) * abs_num;
+    cubic_coef[1] = ((coef + 2.0) * abs_num - (coef + 3.0)) * abs_num * abs_num + 1.0;
+    cubic_coef[2] = (((-coef - 2.0) * abs_num + (2.0 * coef + 3.0)) * abs_num - coef) * abs_num;
+    cubic_coef[3] = -coef * abs_num * abs_num * (abs_num - 1.0);
+}
 
 #define TRIANGLE_COEFF(x) (ACCUMULATOR_MAX_FUNC(ACCUMULATOR_VAL_ZERO, ACCUMULATOR_VAL_ONE - ACCUMULATOR_ABS_FUNC(x)))
 #define unroll_for __attribute__((opencl_unroll_hint)) for
@@ -49,73 +91,133 @@ KERNEL (resample_gpu_ref)(__global INPUT0_TYPE* input,
 #endif
 )
 {
+    const float scale[5] = { B_RATIO, F_RATIO, Z_RATIO, Y_RATIO, X_RATIO };
+    const int in_size[5] = { INPUT0_BATCH_NUM, INPUT0_FEATURE_NUM, INPUT0_SIZE_Z, INPUT0_SIZE_Y, INPUT0_SIZE_X };
+    const int out_size[5] = { OUTPUT_BATCH_NUM, OUTPUT_FEATURE_NUM, OUTPUT_SIZE_Z, OUTPUT_SIZE_Y, OUTPUT_SIZE_X };
 #if defined(SAMPLE_TYPE_NEAREST) && FEATURE_PACKED_MODE
     typedef MAKE_VECTOR_TYPE(INPUT0_TYPE, PACK_SIZE) in_pack_t;
     typedef MAKE_VECTOR_TYPE(OUTPUT_TYPE, PACK_SIZE) out_pack_t;
 
-    const int ox = get_global_id(0);
+    int out_coords[5];
+    out_coords[4] = get_global_id(0);
 #if OUTPUT_DIMS <= 4
-    const int oy = get_global_id(1);
-    const int oz = 0;
-#else
-    const int oy = (int)get_global_id(1) % OUTPUT_SIZE_Y;
-    const int oz = (int)get_global_id(1) / OUTPUT_SIZE_Y;
-#endif
-    const int feature = ((int)get_global_id(2) * PACK_SIZE) % OUTPUT_FEATURE_NUM;
-    const int batch = ((int)get_global_id(2) * PACK_SIZE) / OUTPUT_FEATURE_NUM;
-    const int ix = floor(ox * X_RATIO);
-    const int iy = floor(oy * Y_RATIO);
-    const int iz = floor(oz * Z_RATIO);
+    out_coords[3] = get_global_id(1);
+    out_coords[2] = 0;
+#else // OUTPUT_DIMS <= 4
+    out_coords[3] = (int)get_global_id(1) % OUTPUT_SIZE_Y;
+    out_coords[2] = (int)get_global_id(1) / OUTPUT_SIZE_Y;
+#endif //  OUTPUT_DIMS <= 4
+    out_coords[1] = ((int)get_global_id(2) * PACK_SIZE) % OUTPUT_FEATURE_NUM;
+    out_coords[0] = ((int)get_global_id(2) * PACK_SIZE) / OUTPUT_FEATURE_NUM;
+    int in_coords[5];
+    unroll_for (int i = 0; i < 5; ++i) {
+        const float orig_coord = FUNC_CALL(get_original_coordinate)(out_coords[i], scale[i], out_size[i], in_size[i]);
+        const int nearest_pixel = FUNC_CALL(get_nearest_val)(orig_coord, scale[i] > 1);
+        in_coords[i] = max(0, min(nearest_pixel, in_size[i] - 1));
+    }
 
-    uint input_idx = FUNC_CALL(get_input_index)(batch, feature, iz, iy, ix);
-    uint output_idx = FUNC_CALL(get_output_index)(batch, feature, oz, oy, ox);
+    uint input_idx = FUNC_CALL(get_input_index)(in_coords[0], in_coords[1], in_coords[2], in_coords[3], in_coords[4]);
+    uint output_idx = FUNC_CALL(get_output_index)(out_coords[0], out_coords[1], out_coords[2], out_coords[3], out_coords[4]);
 
     in_pack_t interp_val_pack = ((const __global in_pack_t*)(input + input_idx))[0];
     out_pack_t res;
     unroll_for (uint pi = 0; pi < PACK_SIZE; ++pi) {
         INPUT0_TYPE interp_val = interp_val_pack[pi];
     #if HAS_FUSED_OPS
-        #define OF_ID (feature + pi)
+        #define OF_ID (out_coords[1] + pi)
         FUSED_OPS;
         res[pi] = FUSED_OPS_RESULT;
-    #else
+    #else // HAS_FUSED_OPS
         res[pi] = ACTIVATION(interp_val, ACTIVATION_PARAMS);
-    #endif
+    #endif // HAS_FUSED_OPS
     }
     ((__global out_pack_t*)(output + output_idx))[0] = res;
 
-#elif defined(SAMPLE_TYPE_NEAREST)
-    const int ox = get_global_id(0);
+#elif defined(SAMPLE_TYPE_NEAREST) // defined(SAMPLE_TYPE_NEAREST) && FEATURE_PACKED_MODE
+    int out_coords[5];
+    out_coords[4] = get_global_id(0);
 #if OUTPUT_DIMS <= 4
-    const int oy = get_global_id(1);
-    const int oz = 0;
-#else
-    const int oy = (int)get_global_id(1) % OUTPUT_SIZE_Y;
-    const int oz = (int)get_global_id(1) / OUTPUT_SIZE_Y;
-#endif
-    const int feature = (int)get_global_id(2) % OUTPUT_FEATURE_NUM;
-    const int batch = (int)get_global_id(2) / OUTPUT_FEATURE_NUM;
-    const int ix = floor(ox * X_RATIO);
-    const int iy = floor(oy * Y_RATIO);
-    const int iz = floor(oz * Z_RATIO);
+    out_coords[3] = get_global_id(1);
+    out_coords[2] = 0;
+#else // OUTPUT_DIMS <= 4
+    out_coords[3] = (int)get_global_id(1) % OUTPUT_SIZE_Y;
+    out_coords[2] = (int)get_global_id(1) / OUTPUT_SIZE_Y;
+#endif // OUTPUT_DIMS <= 4
+    out_coords[1] = (int)get_global_id(2) % OUTPUT_FEATURE_NUM;
+    out_coords[0] = (int)get_global_id(2) / OUTPUT_FEATURE_NUM;
+    int in_coords[5];
+    unroll_for (int i = 0; i < 5; ++i) {
+        const float orig_coord = FUNC_CALL(get_original_coordinate)(out_coords[i], scale[i], out_size[i], in_size[i]);
+        const int nearest_pixel = FUNC_CALL(get_nearest_val)(orig_coord, scale[i] > 1);
+        in_coords[i] = max(0, min(nearest_pixel, in_size[i] - 1));
+    }
 
-    INPUT0_TYPE interp_val = input[FUNC_CALL(get_input_index)(batch, feature, iz, iy, ix)];
+    INPUT0_TYPE interp_val = input[FUNC_CALL(get_input_index)(in_coords[0], in_coords[1], in_coords[2], in_coords[3], in_coords[4])];
 #if HAS_FUSED_OPS
-    #define OF_ID (feature)
+    #define OF_ID (out_coords[1])
     FUSED_OPS;
     OUTPUT_TYPE res = FUSED_OPS_RESULT;
-#else
+#else // HAS_FUSED_OPS
     OUTPUT_TYPE res = ACTIVATION(interp_val, ACTIVATION_PARAMS);
-#endif
-    output[FUNC_CALL(get_output_index)(batch, feature, oz, oy, ox)] = res;
+#endif // HAS_FUSED_OPS
+    output[FUNC_CALL(get_output_index)(out_coords[0], out_coords[1], out_coords[2], out_coords[3], out_coords[4])] = res;
+#elif defined(SAMPLE_TYPE_CUBIC) // defined(SAMPLE_TYPE_NEAREST) && FEATURE_PACKED_MODE
+    int out_coords[5];
+    out_coords[4] = get_global_id(0);
+#if OUTPUT_DIMS <= 4
+    out_coords[3] = get_global_id(1);
+    out_coords[2] = 0;
+#else // OUTPUT_DIMS <= 4
+    out_coords[3] = (int)get_global_id(1) % OUTPUT_SIZE_Y;
+    out_coords[2] = (int)get_global_id(1) / OUTPUT_SIZE_Y;
+#endif // OUTPUT_DIMS <= 4
+    out_coords[1] = (int)get_global_id(2) % OUTPUT_FEATURE_NUM;
+    out_coords[0] = (int)get_global_id(2) / OUTPUT_FEATURE_NUM;
+    int in_coords[5];
+    float cubic_coeff[5][CUBIC_COEF_COUNT];
+    unroll_for (int i = 0; i < 5; ++i) {
+        float orig_coord = FUNC_CALL(get_original_coordinate)(out_coords[i], scale[i], out_size[i], in_size[i]);
+        in_coords[i] = floor(orig_coord);
+        FUNC_CALL(get_cubic_coeff)(cubic_coeff[i], orig_coord - in_coords[i], CUBE_COEFF);
+    }
 
-#elif defined(SAMPLE_TYPE_INTERP)
+    INPUT0_TYPE interp_val = INPUT0_VAL_ZERO;
+    int index[5];
+    unroll_for (index[0] = INDICES_B_START; index[0] < INDICES_B_END; ++index[0]) {
+        unroll_for (index[1] = INDICES_F_START; index[1] < INDICES_F_END; ++index[1]) {
+            unroll_for (index[2] = INDICES_Z_START; index[2] < INDICES_Z_END; ++index[2]) {
+                unroll_for (index[3] = INDICES_Y_START; index[3] < INDICES_Y_END; ++index[3]) {
+                    unroll_for (index[4] = INDICES_X_START; index[4] < INDICES_X_END; ++index[4]) {
+                        int coords_sum[5] =  { in_coords[0], in_coords[1], in_coords[2], in_coords[3], in_coords[4] };
+                        float coeff_prod = 1.0f;
+                        unroll_for (int i = 0; i < 5; ++i) {
+                            int should_scale = (scale[i] != 1);
+                            coords_sum[i] = max(0, min(in_coords[i] + index[i] - should_scale, in_size[i] - 1));
+                            float coeff = (scale[i] == 1) ? 1.f : cubic_coeff[i][index[i]];
+                            coeff_prod *= coeff;
+                        }
+                        interp_val += coeff_prod * input[FUNC_CALL(get_input_index)(coords_sum[0], coords_sum[1], coords_sum[2], coords_sum[3], coords_sum[4])];
+                    }
+                }
+            }
+        }
+    }
+
+#if HAS_FUSED_OPS
+    #define OF_ID (out_coords[1])
+    FUSED_OPS;
+    OUTPUT_TYPE res = FUSED_OPS_RESULT;
+#else // HAS_FUSED_OPS
+    OUTPUT_TYPE res = ACTIVATION(interp_val, ACTIVATION_PARAMS);
+#endif // HAS_FUSED_OPS
+    output[FUNC_CALL(get_output_index)(out_coords[0], out_coords[1], out_coords[2], out_coords[3], out_coords[4])] = res;
+#elif defined(SAMPLE_TYPE_INTERP) // defined(SAMPLE_TYPE_NEAREST) && FEATURE_PACKED_MODE
     const int ox = get_global_id(0);
     const int oy = get_global_id(1);
     const int feature = 0;
     const int batch = get_global_id(2);
-    const float ix = X_RATIO * ox;
-    const float iy = Y_RATIO * oy;
+    const float ix = FUNC_CALL(get_original_coordinate)(ox, X_RATIO, OUTPUT_SIZE_X, INPUT0_SIZE_X);
+    const float iy = FUNC_CALL(get_original_coordinate)(oy, Y_RATIO, OUTPUT_SIZE_Y, INPUT0_SIZE_Y);
 
 #ifdef LEFTOVERS
     if (ox >= OUTPUT_SIZE_X)
@@ -150,7 +252,7 @@ KERNEL (resample_gpu_ref)(__global INPUT0_TYPE* input,
 #endif
         output[OUTPUT_GET_INDEX(batch, in_f, oy, ox)] = res;
     }
-#elif defined(SAMPLE_TYPE_CAFFE_INTERP)
+#elif defined(SAMPLE_TYPE_CAFFE_INTERP) // defined(SAMPLE_TYPE_NEAREST) && FEATURE_PACKED_MODE
     const int ox = (int)get_global_id(0) % OUTPUT_SIZE_X;
     const int oy = (int)get_global_id(0) / OUTPUT_SIZE_X;
     const int feature_block_nun = get_global_id(1);
@@ -163,9 +265,9 @@ KERNEL (resample_gpu_ref)(__global INPUT0_TYPE* input,
     const int oz    = (int)get_global_id(2) / OUTPUT_BATCH_NUM;
 #endif
 
-    const ACCUMULATOR_TYPE ix = ox * X_RATIO + X_RATIO_HALF - 0.5f;
-    const ACCUMULATOR_TYPE iy = oy * Y_RATIO + Y_RATIO_HALF - 0.5f;
-    const ACCUMULATOR_TYPE iz = oz * Z_RATIO + Z_RATIO_HALF - 0.5f;
+    const ACCUMULATOR_TYPE ix = FUNC_CALL(get_original_coordinate)(ox, X_RATIO, OUTPUT_SIZE_X, INPUT0_SIZE_X);
+    const ACCUMULATOR_TYPE iy = FUNC_CALL(get_original_coordinate)(oy, Y_RATIO, OUTPUT_SIZE_Y, INPUT0_SIZE_Y);
+    const ACCUMULATOR_TYPE iz = FUNC_CALL(get_original_coordinate)(oz, Z_RATIO, OUTPUT_SIZE_Z, INPUT0_SIZE_Z);
 
     const int ix_r = (int)ix;
     const int iy_r = (int)iy;
@@ -239,7 +341,7 @@ KERNEL (resample_gpu_ref)(__global INPUT0_TYPE* input,
 #endif
         output[FUNC_CALL(get_output_index)(batch, feature + f, oz, oy, ox)] = res;
     }
-#endif
+#endif // defined(SAMPLE_TYPE_NEAREST) && FEATURE_PACKED_MODE
 }
 
 #undef unroll_for
