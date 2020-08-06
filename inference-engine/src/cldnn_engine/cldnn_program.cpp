@@ -3563,9 +3563,79 @@ void Program::CreateConvolutionPrimitive(cldnn::topology& topology, InferenceEng
     auto convLayer = as<InferenceEngine::ConvolutionLayer*>(layer);
     std::string convLayerName = layer_type_name_ID(layer);
 
-    std::vector<cldnn::primitive_id> weightPrimID;
-    std::vector<cldnn::primitive_id> biasPrimID;
-    CreateWeightAndBiasPrimitives(topology, layer, weightPrimID, biasPrimID);
+    std::vector<cldnn::primitive_id> indices;
+    std::vector<cldnn::primitive_id> updates;
+
+    auto CreateFakePrimitives = [&] (cldnn::topology& topology,
+                                    const InferenceEngine::CNNLayerPtr& layer,
+                                    std::vector<cldnn::primitive_id>& indicesIDs,
+                                    std::vector<cldnn::primitive_id>& updatesIDs) {
+        std::vector<cldnn::tensor::value_type> indicesDimsVec, updatesDimsVec;  // BFZYX order
+        InferenceEngine::Blob::Ptr dataBlob;
+
+        size_t b = 2;
+        size_t f = 1;
+        size_t y = 1;
+        size_t x = 1;
+
+        indicesDimsVec = { TensorValue(b), TensorValue(f), TensorValue(y), TensorValue(x) };
+        updatesDimsVec = { TensorValue(b), TensorValue(f), TensorValue(y), TensorValue(x) };
+
+        dataBlob = getBlobOrNull(layer, "weights");
+
+        // create weights primitive
+        cldnn::format dataFmt = m_defaultFormat;
+        switch (indicesDimsVec.size()) {
+            case 4: dataFmt = cldnn::format::bfyx; break;
+            case 5: dataFmt = cldnn::format::bfzyx; break;
+            default:
+                THROW_IE_EXCEPTION << "Unsupported weights format for layer " + layer->name;
+        }
+
+        if (dataBlob == nullptr) {
+            auto wei_name = layer_type_name_ID(getCreatorLayer(layer->insData[1].lock()).lock());
+            if (primitiveIDs.find(wei_name) != primitiveIDs.end()) {
+                indicesIDs.push_back(primitiveIDs.at(wei_name));
+            } else {
+                indicesIDs.push_back(wei_name);
+            }
+        } else {
+            cldnn::layout indicesLayout = cldnn::layout(
+                DataTypeFromPrecision(dataBlob->getTensorDesc().getPrecision()),
+                dataFmt,
+                cldnn::tensor(dataFmt, indicesDimsVec));
+            cldnn::primitive_id indicesID = layer_type_name_ID(layer) + m_weightsTag;
+            indicesID = CreatePrimitiveFromBlob(topology,
+                                               indicesID,
+                                               dataBlob,
+                                               indicesLayout,
+                                               0);
+            indicesIDs.push_back(indicesID);
+        }
+
+        // create bias primitive
+        if (dataBlob != nullptr) {
+            cldnn::layout updatesLayout = cldnn::layout(
+                DataTypeFromPrecision(dataBlob->getTensorDesc().getPrecision()),
+                dataFmt,
+                cldnn::tensor(dataFmt, updatesDimsVec));
+            cldnn::primitive_id updatesID = layer_type_name_ID(layer) + m_biasesTag;
+            updatesID = CreatePrimitiveFromBlob(topology,
+                                            updatesID,
+                                            dataBlob,
+                                            updatesLayout);
+            updatesIDs.push_back(updatesID);
+        } else if (layer->insData.size() == 1) {
+            auto updates_name = layer_type_name_ID(getCreatorLayer(layer->insData[1].lock()).lock());
+            if (primitiveIDs.find(updates_name) != primitiveIDs.end()) {
+                updatesIDs.push_back(primitiveIDs.at(updates_name));
+            } else {
+                updatesIDs.push_back(updates_name);
+            }
+        }
+    };
+
+    CreateFakePrimitives(topology, layer, indices, updates);
 
     auto allPads = getPaddings(*convLayer);
     int x_pad = allPads.begin[X_AXIS], y_pad = allPads.begin[Y_AXIS];
@@ -3592,16 +3662,11 @@ void Program::CreateConvolutionPrimitive(cldnn::topology& topology, InferenceEng
             cldnn::spatial(convLayer->_dilation[X_AXIS], convLayer->_dilation[Y_AXIS]));
     }
 
-    auto convPrim = cldnn::convolution(convLayerName,
-                                       inputPrimitives[0],
-                                       weightPrimID,
-                                       biasPrimID,
-                                       convLayer->_group,
-                                       stride,
-                                       padding,
-                                       dilation,
-                                       CldnnTensorFromIEDims(convLayer->outData[0]->getTensorDesc().getDims()),
-                                       DataTypeFromPrecision(convLayer->outData[0]->getTensorDesc().getPrecision()));
+    auto convPrim = cldnn::gather(convLayerName,
+                                  inputPrimitives[0],
+                                  indices[0],
+                                  cldnn::gather::gather_axis::along_b,
+                                  CldnnTensorFromIEDims(convLayer->outData[0]->getTensorDesc().getDims()));
 
     topology.add(convPrim);
     AddPrimitiveToProfiler(convLayerName, layer);
