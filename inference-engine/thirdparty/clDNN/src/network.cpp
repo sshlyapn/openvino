@@ -41,7 +41,9 @@
 #include <utility>
 #include <map>
 
-// #define DEBUG_DUMP_PATH "cldnn_dump/"
+#include <chrono>
+
+// #define DEBUG_DUMP_PATH "/cldnn_dump/"
 
 #ifdef DEBUG_DUMP_PATH
 #include <iomanip>
@@ -49,7 +51,7 @@
 
 #define DUMP_VERBOSE 0
 #define DUMP_SINGLE_LAYER 0
-#define DUMP_LAYER_NAME ""
+#define DUMP_LAYER_NAME "sum"
 #endif
 
 namespace cldnn {
