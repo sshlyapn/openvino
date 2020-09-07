@@ -46,43 +46,6 @@ size_t ResampleKernelBase::GetFeatureBlockSize(const resample_params& params) co
     return std::max(feature_block_size, min_size);
 }
 
-ResampleKernelBase::DispatchData ResampleKernelBase::SetDefault(const kernel_selector::resample_params &arg) const {
-    DispatchData runInfo;
-    std::vector<size_t> global;
-    std::vector<size_t> local;
-    const auto& out = arg.output;
-
-    if (arg.resampleType == ResampleType::NEAREST_NEIGHBOR)
-        global = {out.X().v, out.Y().v * out.Z().v, out.Feature().v * out.Batch().v};
-    else if (arg.resampleType == ResampleType::BILINEAR_INTERP)
-        global = {Align(out.X().v, 32), out.Y().v, out.Batch().v};
-    else if (arg.resampleType == ResampleType::CAFFE_BILINEAR_INTERP)
-        global = {out.X().v * out.Y().v, CeilDiv(out.Feature().v, GetFeatureBlockSize(arg)), out.Batch().v * out.Z().v};
-    else
-        global = {out.X().v, out.Y().v * out.Z().v, out.Feature().v * out.Batch().v};
-
-    local = GetOptimalLocalWorkGroupSizes(global, arg.engineInfo);
-
-    if (arg.resampleType == ResampleType::BILINEAR_INTERP) {
-        local[0] = 32;
-        local[1] = 1;
-        local[2] = 1;
-    }
-
-    runInfo.gws0 = global[0];
-    runInfo.gws1 = global[1];
-    runInfo.gws2 = global[2];
-
-    runInfo.lws0 = local[0];
-    runInfo.lws1 = local[1];
-    runInfo.lws2 = local[2];
-
-    runInfo.efficiency = FORCE_PRIORITY_7;
-    runInfo.fp16UnitUsed = out.GetDType() == Datatype::F16;
-
-    return runInfo;
-}
-
 bool ResampleKernelBase::Validate(const Params& p, const optional_params& o) const {
     if (p.GetType() != KernelType::RESAMPLE || o.GetType() != KernelType::RESAMPLE) {
         return false;
@@ -114,18 +77,32 @@ JitConstants ResampleKernelBase::GetJitConstants(const resample_params& params) 
     const auto& input = params.inputs[0];
     const auto& output = params.output;
     const auto align_corners = params.align_corners;
-    const auto pad_begin = params.pad_begin;
-    const auto pad_end = params.pad_end;
-    const auto b_size_padded = pad_begin + input.Batch().v + pad_end;
-    const auto f_size_padded = pad_begin + input.Feature().v + pad_end;
-    const auto x_size_padded = pad_begin + input.X().v + pad_end;
-    const auto y_size_padded = pad_begin + input.Y().v + pad_end;
-    const auto z_size_padded = pad_begin + input.Z().v + pad_end;
-    const auto out_b_size_padded = pad_begin + output.Batch().v + pad_end;
-    const auto out_f_size_padded = pad_begin + output.Feature().v + pad_end;
-    const auto out_x_size_padded = pad_begin + output.X().v + pad_end;
-    const auto out_y_size_padded = pad_begin + output.Y().v + pad_end;
-    const auto out_z_size_padded = pad_begin + output.Z().v + pad_end;
+    auto pads_begin = params.pads_begin;
+    auto pads_end = params.pads_end;
+    if (pads_begin.size() == 4)
+        pads_begin.insert(std::next(pads_begin.begin(), 2), 0);
+    if (pads_end.size() == 4)
+        pads_end.insert(std::next(pads_end.begin(), 2), 0);
+
+    bool is_data_padded = false;
+    for (auto& p : pads_begin) is_data_padded |= p != 0;
+    for (auto& p : pads_end) is_data_padded |= p != 0;
+
+    const auto b_size_padded = pads_begin[0] + input.Batch().v + pads_end[0];
+    const auto f_size_padded = pads_begin[1] + input.Feature().v + pads_end[1];
+    const auto x_size_padded = pads_begin[4] + input.X().v + pads_end[4];
+    const auto y_size_padded = pads_begin[3] + input.Y().v + pads_end[3];
+    const auto z_size_padded = pads_begin[2] + input.Z().v + pads_end[2];
+    // const auto out_b_size_padded = pads_begin[0] + output.Batch().v + pads_begin[0];
+    // const auto out_f_size_padded = pads_begin[1] + output.Feature().v + pads_begin[1];
+    // const auto out_x_size_padded = pads_begin[4] + output.X().v + pads_begin[4];
+    // const auto out_y_size_padded = pads_begin[3] + output.Y().v + pads_begin[3];
+    // const auto out_z_size_padded = pads_begin[2] + output.Z().v + pads_begin[2];
+    const auto out_b_size_padded = 0 + output.Batch().v + 0;
+    const auto out_f_size_padded = 0 + output.Feature().v + 0;
+    const auto out_x_size_padded = 0 + output.X().v + 0;
+    const auto out_y_size_padded = 0 + output.Y().v + 0;
+    const auto out_z_size_padded = 0 + output.Z().v + 0;
     std::unordered_map<InterpolateAxis, float, InterpolateAxisHash> scales;
 
     if (align_corners) {
@@ -159,20 +136,33 @@ JitConstants ResampleKernelBase::GetJitConstants(const resample_params& params) 
 
     jit.AddConstants({
         MakeJitConstant(toString(params.resampleType), ""),
-        MakeJitConstant(toString(params.nearestMode), "NEAREST_ROUND_PREFER_FLOOR"),
-        MakeJitConstant(toString(params.coordTransMode), "COORD_TRANS_MODE_HALF_PIXEL"),
+        MakeJitConstant(toString(params.nearestMode), ""),
+        MakeJitConstant(toString(params.coordTransMode), ""),
         MakeJitConstant("B_RATIO", scales[InterpolateAxis::BATCH]),
         MakeJitConstant("F_RATIO", scales[InterpolateAxis::FEATURE]),
         MakeJitConstant("X_RATIO", scales[InterpolateAxis::X]),
         MakeJitConstant("Y_RATIO", scales[InterpolateAxis::Y]),
         MakeJitConstant("Z_RATIO", scales[InterpolateAxis::Z]),
-        MakeJitConstant("PAD_BEGIN", pad_begin),
-        MakeJitConstant("PAD_END", pad_end),
+        MakeJitConstant("B_PAD_BEGIN", pads_begin[0]),
+        MakeJitConstant("F_PAD_BEGIN", pads_begin[1]),
+        MakeJitConstant("X_PAD_BEGIN", pads_begin[4]),
+        MakeJitConstant("Y_PAD_BEGIN", pads_begin[3]),
+        MakeJitConstant("Z_PAD_BEGIN", pads_begin[2]),
+        MakeJitConstant("PADS_BEGIN", pads_begin),
+        MakeJitConstant("PADS_END", pads_end),
         MakeJitConstant("ALIGN_CORNERS", align_corners),
         MakeJitConstant("KERNEL_W", 2),
         MakeJitConstant("ANTIALIAS", params.antialias),
         MakeJitConstant("CUBE_COEFF", params.cube_coeff),
+        MakeJitConstant("IS_DATA_PADDED", is_data_padded),
     });
+    
+    printf("PadValue B: %d _ %d\n", pads_begin[0], pads_end[0]);
+    printf("PadValue F: %d _ %d\n", pads_begin[1], pads_end[1]);
+    printf("PadValue Z: %d _ %d\n", pads_begin[2], pads_end[2]);
+    printf("PadValue Y: %d _ %d\n", pads_begin[3], pads_end[3]);
+    printf("PadValue X: %d _ %d\n", pads_begin[4], pads_end[4]);
+
     if (params.resampleType == ResampleType::CUBIC) {
         jit.AddConstants({
             MakeJitConstant("CUBIC_COEF_COUNT", 4),

@@ -111,8 +111,8 @@ struct resample : public primitive_base<resample> {
         : primitive_base(id, {input}, output_padding),
           output_size(output_size),
           num_filter(num_filter),
-          pad_begin(0),
-          pad_end(0),
+          pads_begin(),
+          pads_end(),
           align_corners(1),
           operation_type(operation_type),
           shape_calc_mode(shape_calculation_mode::sizes),
@@ -137,8 +137,8 @@ struct resample : public primitive_base<resample> {
     resample(const primitive_id& id,
              const primitive_id& input,
              tensor output_size,
-             int32_t pad_begin = 0,
-             int32_t pad_end = 0,
+             std::vector<int32_t> pads_begin = {},
+             std::vector<int32_t> pads_end = {},
              int32_t align_corners = 1,
              resample_type operation_type = resample_type::bilinear,
              bool with_activation = false,
@@ -147,8 +147,8 @@ struct resample : public primitive_base<resample> {
         : primitive_base(id, {input}, output_padding),
           output_size(output_size),
           num_filter(0),
-          pad_begin(pad_begin),
-          pad_end(pad_end),
+          pads_begin(pads_begin),
+          pads_end(pads_end),
           align_corners(align_corners),
           operation_type(operation_type),
           shape_calc_mode(shape_calculation_mode::sizes),
@@ -166,8 +166,8 @@ struct resample : public primitive_base<resample> {
              const primitive_id& input,
              tensor output_size,
              AxesAndScales axesAndScales,
-             int32_t pad_begin = 0,
-             int32_t pad_end = 0,
+             std::vector<int32_t> pads_begin = {},
+             std::vector<int32_t> pads_end = {},
              int32_t antialias = 0,
              float cube_coeff = -0.75f,
              resample_type mode = resample_type::caffe_bilinear,
@@ -178,8 +178,8 @@ struct resample : public primitive_base<resample> {
         : primitive_base(id, {input}, output_padding),
           output_size(output_size),
           axesAndScales(axesAndScales),
-          pad_begin(pad_begin),
-          pad_end(pad_end),
+          pads_begin(pads_begin),
+          pads_end(pads_end),
           operation_type(mode),
           shape_calc_mode(shape_calc_mode),
           antialias(antialias),
@@ -193,10 +193,10 @@ struct resample : public primitive_base<resample> {
     uint32_t num_filter;
     /// @param scales scales for spatial axes.
     AxesAndScales axesAndScales;
-    /// @param pad_begin Begin padding for input.
-    int32_t pad_begin;
-    /// @param pad_end End padding for input.
-    int32_t pad_end;
+    /// @param pads_begin Begin paddings for input.
+    std::vector<int32_t> pads_begin;
+    /// @param pads_end End paddings for input.
+    std::vector<int32_t> pads_end;
     /// @param align_corners corner pixels of the input and output tensors
     int32_t align_corners;
     /// @param sample_type Resample method (nearest neighbor/bilinear/caffe bilinear).

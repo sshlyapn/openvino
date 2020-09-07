@@ -119,19 +119,23 @@ struct resample_gpu : typed_primitive_gpu_impl<resample> {
         if (primitive->with_activation)
             convert_activation_func_params(primitive, us_params.activations);
 
+        size_t dims_num = arg.get_output_layout().format.dimension();
         us_params.resampleType = convert_to_sample_type(primitive->operation_type);
         us_params.nearestMode = convert_to_nearest_mode(primitive->round_mode);
         us_params.coordTransMode = convert_to_coord_transform_mode(primitive->coord_trans_mode);
         us_params.shapeCalculationMode = convert_to_shape_calculation_mode(primitive->shape_calc_mode);
         us_params.antialias = primitive->antialias;
         us_params.cube_coeff = primitive->cube_coeff;
+        us_params.pads_begin = primitive->pads_begin.empty() ? std::vector<int32_t>(dims_num, 0) : primitive->pads_begin;
+        us_params.pads_end = primitive->pads_end.empty() ? std::vector<int32_t>(dims_num, 0) : primitive->pads_end;
         for (const auto& it : primitive->axesAndScales) {
-            us_params.axesAndScales.push_back({convert_axis(it.first), it.second});
+            us_params.axesAndScales[convert_axis(it.first)] = it.second;
+        }        
+        for (const auto& it : us_params.axesAndScales) {
+            printf("Axes %d scale %f\n", (int)it.first, it.second);
         }
 
         if (primitive->operation_type == resample_type::bilinear) {
-            us_params.pad_begin = primitive->pad_begin;
-            us_params.pad_end = primitive->pad_end;
             us_params.align_corners = primitive->align_corners;
         }
 

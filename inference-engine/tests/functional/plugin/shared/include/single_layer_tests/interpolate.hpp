@@ -23,7 +23,8 @@ typedef std::tuple<
         bool,                                                  // AntiAlias
         std::vector<size_t>,                                   // PadBegin
         std::vector<size_t>,                                   // PadEnd
-        double                                                 // Cube coef
+        double,                                                // Cube coef
+        std::vector<size_t>                                    // Axes
 > InterpolateSpecificParams;
 
 typedef std::tuple<

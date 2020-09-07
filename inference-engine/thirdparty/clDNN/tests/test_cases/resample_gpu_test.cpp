@@ -172,7 +172,7 @@ TEST(resample_gpu, basic_in1x1x2x2_interp) {
 
     topology topology;
     topology.add(input_layout("input", input.get_layout()));
-    topology.add(resample("upsampling", "input", output_size, 0, 0, 0, resample_type::bilinear));
+    topology.add(resample("upsampling", "input", output_size, {0,0,0,0}, {0,0,0,0}, 0, resample_type::bilinear));
 
     set_values(input, {
         1.f, 2.f,
@@ -223,7 +223,7 @@ TEST(resample_gpu, basic_in1x1x2x2_interp_f16) {
     topology topology;
     topology.add(input_layout("input", input.get_layout()));
     topology.add(reorder("input_to_b_fs_yx_fsv16", "input", format::b_fs_yx_fsv16, data_types::f32));
-    topology.add(resample("resample", "input_to_b_fs_yx_fsv16", output_size, 0, 0, 0, resample_type::bilinear));
+    topology.add(resample("resample", "input_to_b_fs_yx_fsv16", output_size, {0,0,0,0}, {0,0,0,0}, 0, resample_type::bilinear));
     topology.add(reorder("res_to_bfyx", "resample", format::bfyx, data_types::f32));
 
     set_values(input, {
@@ -281,7 +281,7 @@ TEST(resample_gpu, basic_in1x1x2x2_interp_fsv32) {
     topology topology;
     topology.add(input_layout("input", input.get_layout()));
     topology.add(reorder("input_to_fs_b_yx_fsv32", "input", format::fs_b_yx_fsv32, data_types::f16));
-    topology.add(resample("resample", "input_to_fs_b_yx_fsv32", output_size, 0, 0, 0, resample_type::bilinear));
+    topology.add(resample("resample", "input_to_fs_b_yx_fsv32", output_size, {0,0,0,0}, {0,0,0,0}, 0, resample_type::bilinear));
     topology.add(reorder("res_to_bfyx", "resample", format::bfyx, data_types::f32));
 
     set_values(input, {
@@ -339,7 +339,7 @@ TEST(resample_gpu, basic_in1x1x2x2_interp_align_1) {
 
     topology topology;
     topology.add(input_layout("input", input.get_layout()));
-    topology.add(resample("upsampling", "input", output_size, 0, 0, 1, resample_type::bilinear));
+    topology.add(resample("upsampling", "input", output_size, {0,0,0,0}, {0,0,0,0}, 1, resample_type::bilinear));
 
     set_values(input, {
             1.f, 2.f,
@@ -795,8 +795,6 @@ TEST(resample_gpu, interpolate_in2x2x3x2_nearest1) {
 
     topology topology;
     topology.add(input_layout("input", input.get_layout()));
-    int32_t pad_begin = 0;
-    int32_t pad_end = 0;
     int32_t antialias = 0;
     float cube_coeff = -0.75f;
     resample_type mode = resample_type::nearest;
@@ -804,7 +802,7 @@ TEST(resample_gpu, interpolate_in2x2x3x2_nearest1) {
     nearest_mode nm = nearest_mode::ceil;
     resample::AxesAndScales axesAndScales;
     shape_calculation_mode shapeCalcMode = shape_calculation_mode::sizes;
-    topology.add(resample("interpolate", "input", output_size, axesAndScales, pad_begin, pad_end, antialias, cube_coeff, mode, shapeCalcMode, ctm, nm));
+    topology.add(resample("interpolate", "input", output_size, axesAndScales, {0,0,0,0}, {0,0,0,0}, antialias, cube_coeff, mode, shapeCalcMode, ctm, nm));
 
     set_values(input, {
         0.f, 1.f, 2.f,
@@ -886,8 +884,6 @@ TEST(resample_gpu, interpolate_in2x2x3x2_nearest2) {
 
     topology topology;
     topology.add(input_layout("input", input.get_layout()));
-    int32_t pad_begin = 0;
-    int32_t pad_end = 0;
     int32_t antialias = 0;
     float cube_coeff = -0.75f;
     resample_type mode = resample_type::nearest;
@@ -895,7 +891,7 @@ TEST(resample_gpu, interpolate_in2x2x3x2_nearest2) {
     nearest_mode nm = nearest_mode::round_prefer_floor;
     resample::AxesAndScales axesAndScales;
     shape_calculation_mode shapeCalcMode = shape_calculation_mode::sizes;
-    topology.add(resample("interpolate", "input", output_size, axesAndScales, pad_begin, pad_end, antialias, cube_coeff, mode, shapeCalcMode, ctm, nm));
+    topology.add(resample("interpolate", "input", output_size, axesAndScales, {0,0,0,0}, {0,0,0,0}, antialias, cube_coeff, mode, shapeCalcMode, ctm, nm));
 
     set_values(input, {
         0.f, 1.f, 2.f,
@@ -977,8 +973,6 @@ TEST(resample_gpu, interpolate_in2x2x3x2_nearest3) {
 
     topology topology;
     topology.add(input_layout("input", input.get_layout()));
-    int32_t pad_begin = 0;
-    int32_t pad_end = 0;
     int32_t antialias = 0;
     float cube_coeff = -0.75f;
     resample_type mode = resample_type::nearest;
@@ -986,7 +980,7 @@ TEST(resample_gpu, interpolate_in2x2x3x2_nearest3) {
     nearest_mode nm = nearest_mode::round_prefer_ceil;
     resample::AxesAndScales axesAndScales;
     shape_calculation_mode shapeCalcMode = shape_calculation_mode::sizes;
-    topology.add(resample("interpolate", "input", output_size, axesAndScales, pad_begin, pad_end, antialias, cube_coeff, mode, shapeCalcMode, ctm, nm));
+    topology.add(resample("interpolate", "input", output_size, axesAndScales, {0,0,0,0}, {0,0,0,0}, antialias, cube_coeff, mode, shapeCalcMode, ctm, nm));
 
     set_values(input, {
         0.f, 1.f, 2.f,
@@ -1068,8 +1062,6 @@ TEST(resample_gpu, interpolate_in2x2x3x2_nearest4) {
 
     topology topology;
     topology.add(input_layout("input", input.get_layout()));
-    int32_t pad_begin = 0;
-    int32_t pad_end = 0;
     int32_t antialias = 0;
     float cube_coeff = -0.75f;
     resample_type mode = resample_type::nearest;
@@ -1077,7 +1069,7 @@ TEST(resample_gpu, interpolate_in2x2x3x2_nearest4) {
     nearest_mode nm = nearest_mode::floor;
     resample::AxesAndScales axesAndScales;
     shape_calculation_mode shapeCalcMode = shape_calculation_mode::sizes;
-    topology.add(resample("interpolate", "input", output_size, axesAndScales, pad_begin, pad_end, antialias, cube_coeff, mode, shapeCalcMode, ctm, nm));
+    topology.add(resample("interpolate", "input", output_size, axesAndScales, {0,0,0,0}, {0,0,0,0}, antialias, cube_coeff, mode, shapeCalcMode, ctm, nm));
 
     set_values(input, {
         0.f, 1.f, 2.f,
@@ -1159,8 +1151,6 @@ TEST(resample_gpu, interpolate_in2x2x3x2_nearest5) {
 
     topology topology;
     topology.add(input_layout("input", input.get_layout()));
-    int32_t pad_begin = 0;
-    int32_t pad_end = 0;
     int32_t antialias = 0;
     float cube_coeff = -0.75f;
     resample_type mode = resample_type::nearest;
@@ -1168,7 +1158,7 @@ TEST(resample_gpu, interpolate_in2x2x3x2_nearest5) {
     nearest_mode nm = nearest_mode::simple;
     resample::AxesAndScales axesAndScales;
     shape_calculation_mode shapeCalcMode = shape_calculation_mode::sizes;
-    topology.add(resample("interpolate", "input", output_size, axesAndScales, pad_begin, pad_end, antialias, cube_coeff, mode, shapeCalcMode, ctm, nm));
+    topology.add(resample("interpolate", "input", output_size, axesAndScales, {0,0,0,0}, {0,0,0,0}, antialias, cube_coeff, mode, shapeCalcMode, ctm, nm));
 
     set_values(input, {
         0.f, 1.f, 2.f,
@@ -1252,8 +1242,6 @@ TEST(resample_gpu, interpolate_in2x2x3x2_coord_transform_mode1) {
 
     topology topology;
     topology.add(input_layout("input", input.get_layout()));
-    int32_t pad_begin = 0;
-    int32_t pad_end = 0;
     int32_t antialias = 0;
     float cube_coeff = -0.75f;
     resample_type mode = resample_type::nearest;
@@ -1261,7 +1249,7 @@ TEST(resample_gpu, interpolate_in2x2x3x2_coord_transform_mode1) {
     nearest_mode nm = nearest_mode::round_prefer_floor;
     resample::AxesAndScales axesAndScales;
     shape_calculation_mode shapeCalcMode = shape_calculation_mode::sizes;
-    topology.add(resample("interpolate", "input", output_size, axesAndScales, pad_begin, pad_end, antialias, cube_coeff, mode, shapeCalcMode, ctm, nm));
+    topology.add(resample("interpolate", "input", output_size, axesAndScales, {0,0,0,0}, {0,0,0,0}, antialias, cube_coeff, mode, shapeCalcMode, ctm, nm));
 
     set_values(input, {
         0.f, 1.f, 2.f,
@@ -1323,8 +1311,6 @@ TEST(resample_gpu, interpolate_in2x2x3x2_coord_transform_mode2) {
 
     topology topology;
     topology.add(input_layout("input", input.get_layout()));
-    int32_t pad_begin = 0;
-    int32_t pad_end = 0;
     int32_t antialias = 0;
     float cube_coeff = -0.75f;
     resample_type mode = resample_type::nearest;
@@ -1332,7 +1318,7 @@ TEST(resample_gpu, interpolate_in2x2x3x2_coord_transform_mode2) {
     nearest_mode nm = nearest_mode::round_prefer_floor;
     resample::AxesAndScales axesAndScales;
     shape_calculation_mode shapeCalcMode = shape_calculation_mode::sizes;
-    topology.add(resample("interpolate", "input", output_size, axesAndScales, pad_begin, pad_end, antialias, cube_coeff, mode, shapeCalcMode, ctm, nm));
+    topology.add(resample("interpolate", "input", output_size, axesAndScales, {0,0,0,0}, {0,0,0,0}, antialias, cube_coeff, mode, shapeCalcMode, ctm, nm));
 
     set_values(input, {
         0.f, 1.f, 2.f,
@@ -1388,8 +1374,6 @@ TEST(resample_gpu, interpolate_in2x2x3x2_coord_transform_mode3) {
 
     topology topology;
     topology.add(input_layout("input", input.get_layout()));
-    int32_t pad_begin = 0;
-    int32_t pad_end = 0;
     int32_t antialias = 0;
     float cube_coeff = -0.75f;
     resample_type mode = resample_type::nearest;
@@ -1397,7 +1381,7 @@ TEST(resample_gpu, interpolate_in2x2x3x2_coord_transform_mode3) {
     nearest_mode nm = nearest_mode::round_prefer_floor;
     resample::AxesAndScales axesAndScales;
     shape_calculation_mode shapeCalcMode = shape_calculation_mode::sizes;
-    topology.add(resample("interpolate", "input", output_size, axesAndScales, pad_begin, pad_end, antialias, cube_coeff, mode, shapeCalcMode, ctm, nm));
+    topology.add(resample("interpolate", "input", output_size, axesAndScales, {0,0,0,0}, {0,0,0,0}, antialias, cube_coeff, mode, shapeCalcMode, ctm, nm));
 
     set_values(input, {
         0.f, 1.f, 2.f,
@@ -1459,8 +1443,6 @@ TEST(resample_gpu, interpolate_in2x2x3x2_coord_transform_mode4) {
 
     topology topology;
     topology.add(input_layout("input", input.get_layout()));
-    int32_t pad_begin = 0;
-    int32_t pad_end = 0;
     int32_t antialias = 0;
     float cube_coeff = -0.75f;
     resample_type mode = resample_type::nearest;
@@ -1468,7 +1450,7 @@ TEST(resample_gpu, interpolate_in2x2x3x2_coord_transform_mode4) {
     nearest_mode nm = nearest_mode::round_prefer_floor;
     resample::AxesAndScales axesAndScales;
     shape_calculation_mode shapeCalcMode = shape_calculation_mode::sizes;
-    topology.add(resample("interpolate", "input", output_size, axesAndScales, pad_begin, pad_end, antialias, cube_coeff, mode, shapeCalcMode, ctm, nm));
+    topology.add(resample("interpolate", "input", output_size, axesAndScales, {0,0,0,0}, {0,0,0,0}, antialias, cube_coeff, mode, shapeCalcMode, ctm, nm));
 
     set_values(input, {
         0.f, 1.f, 2.f,
@@ -1530,8 +1512,6 @@ TEST(resample_gpu, interpolate_in2x2x3x2_coord_transform_mode5) {
 
     topology topology;
     topology.add(input_layout("input", input.get_layout()));
-    int32_t pad_begin = 0;
-    int32_t pad_end = 0;
     int32_t antialias = 0;
     float cube_coeff = -0.75f;
     resample_type mode = resample_type::nearest;
@@ -1539,7 +1519,7 @@ TEST(resample_gpu, interpolate_in2x2x3x2_coord_transform_mode5) {
     nearest_mode nm = nearest_mode::round_prefer_floor;
     resample::AxesAndScales axesAndScales;
     shape_calculation_mode shapeCalcMode = shape_calculation_mode::sizes;
-    topology.add(resample("interpolate", "input", output_size, axesAndScales, pad_begin, pad_end, antialias, cube_coeff, mode, shapeCalcMode, ctm, nm));
+    topology.add(resample("interpolate", "input", output_size, axesAndScales, {0,0,0,0}, {0,0,0,0}, antialias, cube_coeff, mode, shapeCalcMode, ctm, nm));
 
     set_values(input, {
         0.f, 1.f, 2.f,
@@ -1601,14 +1581,12 @@ TEST(resample_gpu, interpolate_in2x2x3x2_cubic) {
 
     topology topology;
     topology.add(input_layout("input", input.get_layout()));
-    int32_t pad_begin = 0;
-    int32_t pad_end = 0;
     int32_t antialias = 0;
     float cube_coeff = -0.75f;
     resample_type mode = resample_type::cubic;
     resample::AxesAndScales axesAndScales;
     shape_calculation_mode shapeCalcMode = shape_calculation_mode::sizes;
-    topology.add(resample("interpolate", "input", output_size, axesAndScales, pad_begin, pad_end, antialias, cube_coeff, mode, shapeCalcMode));
+    topology.add(resample("interpolate", "input", output_size, axesAndScales, {0,0,0,0}, {0,0,0,0}, antialias, cube_coeff, mode, shapeCalcMode));
 
     set_values(input, {
         0.f, 1.f, 2.f,
@@ -1669,14 +1647,12 @@ TEST(resample_gpu, interpolate_in2x2x3x2_cubic2) {
 
     topology topology;
     topology.add(input_layout("input", input.get_layout()));
-    int32_t pad_begin = 0;
-    int32_t pad_end = 0;
     int32_t antialias = 0;
     float cube_coeff = -0.75f;
     resample_type mode = resample_type::cubic;
     resample::AxesAndScales axesAndScales;
     shape_calculation_mode shapeCalcMode = shape_calculation_mode::sizes;
-    topology.add(resample("interpolate", "input", output_size, axesAndScales, pad_begin, pad_end, antialias, cube_coeff, mode, shapeCalcMode));
+    topology.add(resample("interpolate", "input", output_size, axesAndScales, {0,0,0,0}, {0,0,0,0}, antialias, cube_coeff, mode, shapeCalcMode));
 
     set_values(input, {
         5.f, 1.f, 2.f,
@@ -1724,14 +1700,12 @@ TEST(resample_gpu, interpolate_in2x2x3x2_linear) {
 
     topology topology;
     topology.add(input_layout("input", input.get_layout()));
-    int32_t pad_begin = 0;
-    int32_t pad_end = 0;
     int32_t antialias = 0;
     float cube_coeff = -0.75f;
     resample_type mode = resample_type::caffe_bilinear;
     resample::AxesAndScales axesAndScales;
     shape_calculation_mode shapeCalcMode = shape_calculation_mode::sizes;
-    topology.add(resample("interpolate", "input", output_size, axesAndScales, pad_begin, pad_end, antialias, cube_coeff, mode, shapeCalcMode));
+    topology.add(resample("interpolate", "input", output_size, axesAndScales, {0,0,0,0}, {0,0,0,0}, antialias, cube_coeff, mode, shapeCalcMode));
 
     set_values(input, {
         0.f, 1.f, 2.f,
@@ -1793,15 +1767,13 @@ TEST(resample_gpu, interpolate_in2x2x3x2_linear_onnx) {
 
     topology topology;
     topology.add(input_layout("input", input.get_layout()));
-    int32_t pad_begin = 0;
-    int32_t pad_end = 0;
     int32_t antialias = 0;
     float cube_coeff = -0.75f;
     resample_type mode = resample_type::bilinear;
     coordinate_transformation_mode ctm = coordinate_transformation_mode::asymmetric;
     resample::AxesAndScales axesAndScales;
     shape_calculation_mode shapeCalcMode = shape_calculation_mode::sizes;
-    topology.add(resample("interpolate", "input", output_size, axesAndScales, pad_begin, pad_end, antialias, cube_coeff, mode, shapeCalcMode, ctm));
+    topology.add(resample("interpolate", "input", output_size, axesAndScales, {0,0,0,0}, {0,0,0,0}, antialias, cube_coeff, mode, shapeCalcMode, ctm));
 
     set_values(input, {
         1.f, 2.f,
@@ -1850,8 +1822,6 @@ TEST(resample_gpu, interpolate_in1x1x2x4_linear_scale) {
 
     topology topology;
     topology.add(input_layout("input", input.get_layout()));
-    int32_t pad_begin = 0;
-    int32_t pad_end = 0;
     int32_t antialias = 0;
     float cube_coeff = -0.75f;
     resample_type mode = resample_type::caffe_bilinear;
@@ -1860,7 +1830,7 @@ TEST(resample_gpu, interpolate_in1x1x2x4_linear_scale) {
         {cldnn::resample::resample_axis::along_x, 0.6f},
     };
     shape_calculation_mode shapeCalcMode = shape_calculation_mode::scales;
-    topology.add(resample("interpolate", "input", output_size, axesAndScales, pad_begin, pad_end, antialias, cube_coeff, mode, shapeCalcMode));
+    topology.add(resample("interpolate", "input", output_size, axesAndScales, {0,0,0,0}, {0,0,0,0}, antialias, cube_coeff, mode, shapeCalcMode));
 
     set_values(input, {
         1.f, 2.f, 3.f, 4.f,

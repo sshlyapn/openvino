@@ -25,8 +25,8 @@ namespace kernel_selector {
 struct resample_params : public base_params {
     resample_params() : base_params(KernelType::RESAMPLE) {}
 
-    uint32_t pad_begin = 0;
-    uint32_t pad_end = 0;
+    std::vector<int32_t> pads_begin = {};
+    std::vector<int32_t> pads_end = {};
     uint32_t align_corners = 0;
     ResampleType resampleType = ResampleType::NEAREST_NEIGHBOR;
     CoordinateTransformationMode coordTransMode = CoordinateTransformationMode::HALF_PIXEL;
@@ -34,7 +34,7 @@ struct resample_params : public base_params {
     ShapeCalculationMode shapeCalculationMode = ShapeCalculationMode::SIZES;
     uint32_t antialias = 0;
     float cube_coeff = -0.75f;
-    using AxesAndScales = std::vector<std::pair<InterpolateAxis, float>>;
+    using AxesAndScales = std::map<InterpolateAxis, float>;
     AxesAndScales axesAndScales;
 
     virtual ParamsKey GetParamsKey() const {
@@ -63,7 +63,7 @@ public:
 
 protected:
     bool Validate(const Params& p, const optional_params& o) const override;
-    virtual DispatchData SetDefault(const resample_params& arg) const;
+    virtual DispatchData SetDefault(const resample_params& arg) const = 0;
     virtual JitConstants GetJitConstants(const resample_params& params) const;
     KernelsData GetCommonKernelsData(const Params& params, const optional_params& options) const;
     size_t GetFeatureBlockSize(const resample_params& params) const;

@@ -12,22 +12,25 @@ using namespace LayerTestsDefinitions;
 namespace {
 
 const std::vector<InferenceEngine::Precision> prc = {
-        InferenceEngine::Precision::FP16,
+        // InferenceEngine::Precision::FP16,
         InferenceEngine::Precision::FP32,
 };
 
 const std::vector<std::vector<size_t>> inShapes = {
-        {1, 4, 30, 30},
+        {1, 4, 6, 6},
 };
 
 const std::vector<std::vector<size_t>> targetShapes = {
-        {1, 4, 40, 40},
+        {1, 4, 10, 10},
 };
 
-const  std::vector<ngraph::op::v4::Interpolate::InterpolateMode> modesWithoutNearest = {
+const  std::vector<ngraph::op::v4::Interpolate::InterpolateMode> withoutNearestModes = {
         ngraph::op::v4::Interpolate::InterpolateMode::linear,
-        ngraph::op::v4::Interpolate::InterpolateMode::linear_onnx,
         ngraph::op::v4::Interpolate::InterpolateMode::cubic,
+};
+
+const  std::vector<ngraph::op::v4::Interpolate::InterpolateMode> linearOnnxMode = {
+        ngraph::op::v4::Interpolate::InterpolateMode::linear_onnx,
 };
 
 const  std::vector<ngraph::op::v4::Interpolate::InterpolateMode> nearestMode = {
@@ -36,10 +39,10 @@ const  std::vector<ngraph::op::v4::Interpolate::InterpolateMode> nearestMode = {
 
 const std::vector<ngraph::op::v4::Interpolate::CoordinateTransformMode> coordinateTransformModes = {
         ngraph::op::v4::Interpolate::CoordinateTransformMode::tf_half_pixel_for_nn,
-        ngraph::op::v4::Interpolate::CoordinateTransformMode::pytorch_half_pixel,
-        ngraph::op::v4::Interpolate::CoordinateTransformMode::half_pixel,
-        ngraph::op::v4::Interpolate::CoordinateTransformMode::asymmetric,
-        ngraph::op::v4::Interpolate::CoordinateTransformMode::align_corners,
+        // ngraph::op::v4::Interpolate::CoordinateTransformMode::pytorch_half_pixel,
+        // ngraph::op::v4::Interpolate::CoordinateTransformMode::half_pixel,
+        // ngraph::op::v4::Interpolate::CoordinateTransformMode::asymmetric,
+        // ngraph::op::v4::Interpolate::CoordinateTransformMode::align_corners,
 };
 
 const std::vector<ngraph::op::v4::Interpolate::NearestMode> nearestModes = {
@@ -55,8 +58,8 @@ const std::vector<ngraph::op::v4::Interpolate::NearestMode> defaultNearestMode =
 };
 
 const std::vector<std::vector<size_t>> pads = {
+        // {0, 0, 1, 2},
         {0, 0, 1, 1},
-        {0, 0, 0, 0},
 };
 
 const std::vector<bool> antialias = {
@@ -73,8 +76,12 @@ const std::vector<std::vector<size_t>> defaultAxes = {
         {0, 1, 2, 3}
 };
 
+const std::vector<std::vector<size_t>> linearOnnxModeAxes = {
+        {2, 3}
+};
+
 const auto interpolateCasesWithoutNearest = ::testing::Combine(
-        ::testing::ValuesIn(modesWithoutNearest),
+        ::testing::ValuesIn(withoutNearestModes),
         ::testing::ValuesIn(coordinateTransformModes),
         ::testing::ValuesIn(defaultNearestMode),
         ::testing::ValuesIn(antialias),
@@ -83,7 +90,17 @@ const auto interpolateCasesWithoutNearest = ::testing::Combine(
         ::testing::ValuesIn(cubeCoefs),
         ::testing::ValuesIn(defaultAxes));
 
-const auto interpolateCases = ::testing::Combine(
+const auto interpolateCasesLinearOnnxMode = ::testing::Combine(
+        ::testing::ValuesIn(linearOnnxMode),
+        ::testing::ValuesIn(coordinateTransformModes),
+        ::testing::ValuesIn(defaultNearestMode),
+        ::testing::ValuesIn(antialias),
+        ::testing::ValuesIn(pads),
+        ::testing::ValuesIn(pads),
+        ::testing::ValuesIn(cubeCoefs),
+        ::testing::ValuesIn(linearOnnxModeAxes));
+
+const auto interpolateCasesNearesMode = ::testing::Combine(
         ::testing::ValuesIn(nearestMode),
         ::testing::ValuesIn(coordinateTransformModes),
         ::testing::ValuesIn(nearestModes),
@@ -98,15 +115,23 @@ INSTANTIATE_TEST_CASE_P(Interpolate_Basic, InterpolateLayerTest, ::testing::Comb
         ::testing::ValuesIn(prc),
         ::testing::ValuesIn(inShapes),
         ::testing::ValuesIn(targetShapes),
-        ::testing::Values(CommonTestUtils::DEVICE_CPU)),
+        ::testing::Values(CommonTestUtils::DEVICE_GPU)),
     InterpolateLayerTest::getTestCaseName);
 
 INSTANTIATE_TEST_CASE_P(Interpolate_Nearest, InterpolateLayerTest, ::testing::Combine(
-        interpolateCases,
+        interpolateCasesNearesMode,
         ::testing::ValuesIn(prc),
         ::testing::ValuesIn(inShapes),
         ::testing::ValuesIn(targetShapes),
-        ::testing::Values(CommonTestUtils::DEVICE_CPU)),
+        ::testing::Values(CommonTestUtils::DEVICE_GPU)),
+    InterpolateLayerTest::getTestCaseName);
+
+INSTANTIATE_TEST_CASE_P(Interpolate_Linear_ONNX, InterpolateLayerTest, ::testing::Combine(
+        interpolateCasesLinearOnnxMode,
+        ::testing::ValuesIn(prc),
+        ::testing::ValuesIn(inShapes),
+        ::testing::ValuesIn(targetShapes),
+        ::testing::Values(CommonTestUtils::DEVICE_GPU)),
     InterpolateLayerTest::getTestCaseName);
 
 } // namespace

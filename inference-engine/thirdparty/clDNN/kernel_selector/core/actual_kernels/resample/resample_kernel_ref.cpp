@@ -123,24 +123,41 @@ JitConstants ResampleKernelRef::GetJitConstants(const resample_params& params) c
 }
 
 ResampleKernelBase::DispatchData ResampleKernelRef::SetDefault(const resample_params& arg) const {
-    auto dispatch = Parent::SetDefault(arg);
+    DispatchData dispatch;
+    std::vector<size_t> global;
+    std::vector<size_t> local;
+    const auto& out = arg.output;
+    auto pack = packing_factor(arg);
 
-    if (use_packing(arg)) {
-        auto pack = packing_factor(arg);
-        std::vector<size_t> global;
-        std::vector<size_t> local;
-
+    if (use_packing(arg))
         global = { arg.output.X().v, arg.output.Y().v * arg.output.Z().v, CeilDiv(arg.output.Feature().v, pack) * arg.output.Batch().v };
-        local = GetOptimalLocalWorkGroupSizes(global, arg.engineInfo);
+    else if (arg.resampleType == ResampleType::NEAREST_NEIGHBOR)
+        global = {out.X().v, out.Y().v * out.Z().v, out.Feature().v * out.Batch().v};
+    else if (arg.resampleType == ResampleType::BILINEAR_INTERP)
+        global = {Align(out.X().v, 32), out.Y().v, out.Batch().v};
+    else if (arg.resampleType == ResampleType::CAFFE_BILINEAR_INTERP)
+        global = {out.X().v * out.Y().v, CeilDiv(out.Feature().v, GetFeatureBlockSize(arg)), out.Batch().v * out.Z().v};
+    else
+        global = {out.X().v, out.Y().v * out.Z().v, out.Feature().v * out.Batch().v};
 
-        dispatch.gws0 = global[0];
-        dispatch.gws1 = global[1];
-        dispatch.gws2 = global[2];
+    local = GetOptimalLocalWorkGroupSizes(global, arg.engineInfo);
 
-        dispatch.lws0 = local[0];
-        dispatch.lws1 = local[1];
-        dispatch.lws2 = local[2];
+    if (arg.resampleType == ResampleType::BILINEAR_INTERP) {
+        local[0] = 32;
+        local[1] = 1;
+        local[2] = 1;
     }
+
+    dispatch.gws0 = global[0];
+    dispatch.gws1 = global[1];
+    dispatch.gws2 = global[2];
+
+    dispatch.lws0 = local[0];
+    dispatch.lws1 = local[1];
+    dispatch.lws2 = local[2];
+
+    dispatch.efficiency = FORCE_PRIORITY_7;
+    dispatch.fp16UnitUsed = out.GetDType() == Datatype::F16;
 
     return dispatch;
 }

@@ -15,5 +15,7 @@ std::vector<std::string> disabledTestPatterns() {
             R"(.*(IEClassLoadNetwork).*(QueryNetworkMULTIWithHETERONoThrow_V10|QueryNetworkHETEROWithMULTINoThrow_V10).*)",
             //TODO: Issue: 34748
             R"(.*(ComparisonLayerTest).*)",
+            // Looks like an ngraph bug:
+            R"(.*Interpolate_Basic.*tf_half_pixel_for_nn.*)",
     };
 }

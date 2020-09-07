@@ -3100,8 +3100,14 @@ void Program::CreateInterpPrimitive(cldnn::topology& topology, InferenceEngine::
     auto outDims = layer->outData[0]->getTensorDesc().getDims();
     auto outTensor = CldnnTensorFromIEDims(outDims);
 
+    std::vector<int> pads_begin(outDims.size(), 0);
+    std::vector<int> pads_end(outDims.size(), 0);
     int pad_begin = interpLayer->GetParamAsInt("pad_beg_", 0);
     int pad_end = interpLayer->GetParamAsInt("pad_end_", 0);
+    for (size_t i = 2; i < pads_begin.size(); i++) {
+        pads_begin[i] = pad_begin;
+        pads_end[i] = pad_end;
+    }
     int align_corners = interpLayer->GetParamAsInt("align_corners", 1);
 
     std::string resampleLayerName = layer_type_name_ID(layer);
@@ -3110,8 +3116,6 @@ void Program::CreateInterpPrimitive(cldnn::topology& topology, InferenceEngine::
         resampleLayerName,
         inputPrimitives[0],
         outTensor,
-        pad_begin,
-        pad_end,
         align_corners,
         cldnn::resample_type::bilinear);
 
@@ -3176,6 +3180,7 @@ inline cldnn::resample::resample_axis InterpolateAxisFromIEAxis(int axis, unsign
         auto spatial_size = std::max(sz, 4u) - 2;
         cldnn_axis = spatial_size - spatial_axis - 1 + 2;
     }
+    printf("Axis: %d\n", cldnn_axis);
 
     switch (cldnn_axis) {
         case 0:
@@ -3197,7 +3202,7 @@ inline cldnn::resample::resample_axis InterpolateAxisFromIEAxis(int axis, unsign
 }
 
 void Program::CreateInterpolatePrimitive(cldnn::topology& topology, InferenceEngine::CNNLayerPtr &layer) {
-    ValidateLayer(layer, {2, 3});
+    ValidateLayer(layer, {2, 3, 4});
     auto inputPrimitives = GetPrevLayersPrimitives(layer);
     auto interpolateLayer = as<InferenceEngine::GenericLayer*> (layer);
 
@@ -3207,13 +3212,22 @@ void Program::CreateInterpolatePrimitive(cldnn::topology& topology, InferenceEng
     auto outDims = layer->outData[0]->getTensorDesc().getDims();
     auto outTensor = CldnnTensorFromIEDims(outDims);
 
-    int pad_begin = interpolateLayer->GetParamAsInt("pads_begin", 0);
-    int pad_end = interpolateLayer->GetParamAsInt("pads_end", 0);
+    auto pads_begin = interpolateLayer->GetParamAsInts("pads_begin", {});
+    auto pads_end = interpolateLayer->GetParamAsInts("pads_end", {});
+    printf("PADDINGS SIZES: %lu %lu\n", pads_begin.size(), pads_end.size());
+    for (size_t i = pads_begin.size(); i < outDims.size() || i < 4; i++)
+        pads_begin.push_back(0);
+    for (size_t i = pads_end.size(); i < outDims.size() || i < 4; i++)
+        pads_end.push_back(0);
+
+    for (auto& p : pads_end)
+        printf("PADDING END: %d\n", p);
+
     std::string mode = interpolateLayer->GetParamAsString("mode");
     std::string shape_calc_mode = interpolateLayer->GetParamAsString("shape_calculation_mode");
     std::string coordinate_trans_mode = interpolateLayer->GetParamAsString("coordinate_transformation_mode", "half_pixel");
     std::string nearest_mode = interpolateLayer->GetParamAsString("nearest_mode", "round_prefer_floor");
-    int antialias = interpolateLayer->GetParamAsInt("antialias", 0);
+    int antialias = interpolateLayer->GetParamAsBool("antialias", false);
     float cube_coeff = interpolateLayer->GetParamAsFloat("cube_coeff", -0.75f);
 
     std::string resampleLayerName = layer_type_name_ID(layer);
@@ -3238,7 +3252,7 @@ void Program::CreateInterpolatePrimitive(cldnn::topology& topology, InferenceEng
     }
 
     std::vector<cldnn::resample::resample_axis> axes;
-    if (inputPrimitives.size() == 3) {
+    if (inputPrimitives.size() == 4) {
         auto axesInput = layer->insData[3].lock();
         auto axesInputCreator = getCreatorLayer(axesInput).lock();
         if (axesInputCreator->blobs.size() == 1) {
@@ -3275,6 +3289,8 @@ void Program::CreateInterpolatePrimitive(cldnn::topology& topology, InferenceEng
         if (insData0dims.size() != 2 && insData0dims.size() != 4)
             THROW_CLDNN_EXCEPTION("mode 'linear_onnx' supports only 2D or 4D tensors");
         std::set<int> axes;
+        for (size_t i = 0; i < insData0dims.size(); i++)
+            printf("LINEAR_OONX: %lu != %lu\n", insData0dims[i], outDims[i]);
         if (insData0dims[0] != outDims[0])
             axes.insert(0);
         if (insData0dims[1] != outDims[1])
@@ -3283,7 +3299,7 @@ void Program::CreateInterpolatePrimitive(cldnn::topology& topology, InferenceEng
             axes.insert(2);
         if (insData0dims[3] != outDims[3])
             axes.insert(3);
-        if (axes != std::set<int>({0, 1}) || axes != std::set<int>({2, 3}))
+        if (axes != std::set<int>({0, 1}) && axes != std::set<int>({2, 3}))
             THROW_CLDNN_EXCEPTION("mode 'linear_onnx' supports only case when axes = {2, 3} or axes = {0, 1}");
     }
 
@@ -3292,8 +3308,8 @@ void Program::CreateInterpolatePrimitive(cldnn::topology& topology, InferenceEng
         inputPrimitives[0],
         outTensor,
         axesAndScales,
-        pad_begin,
-        pad_end,
+        pads_begin,
+        pads_end,
         antialias,
         cube_coeff,
         cldnnSampleType,
@@ -5622,7 +5638,8 @@ cldnn::resample_type Program::ResampleTypeFromString(const std::string &str) {
         { "Interp" , cldnn::resample_type::bilinear },
         // TODO: fix it
         { "linear" , cldnn::resample_type::caffe_bilinear },
-        { "onnx_linear" , cldnn::resample_type::bilinear },
+        { "linear_onnx" , cldnn::resample_type::bilinear },
+        { "nearest" , cldnn::resample_type::nearest },
         { "cubic" , cldnn::resample_type::cubic },
     };
     auto it = UpsamplingTypeNameToType.find(str);

@@ -119,7 +119,7 @@ void inline  fill_data_random(InferenceEngine::Blob::Ptr &blob, const uint32_t r
         start_from = 0;
     }
     for (size_t i = 0; i < blob->size(); i++) {
-        rawBlobDataPtr[i] = static_cast<dataType>(start_from + static_cast<int64_t>(random.Generate(range)));
+        rawBlobDataPtr[i] = static_cast<dataType>(i);
     }
 }
 
@@ -153,8 +153,7 @@ void inline fill_data_random_float(InferenceEngine::Blob::Ptr &blob, const uint3
 
     auto *rawBlobDataPtr = blob->buffer().as<dataType *>();
     for (size_t i = 0; i < blob->size(); i++) {
-        auto value = static_cast<float>(distribution(random));
-        value /= static_cast<float>(k);
+        auto value = i;
         if (typeid(dataType) == typeid(typename InferenceEngine::PrecisionTrait<InferenceEngine::Precision::FP16>::value_type)) {
             rawBlobDataPtr[i] = ngraph::float16(value).to_bits();
         } else {

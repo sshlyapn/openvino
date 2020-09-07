@@ -123,8 +123,8 @@ std::string resample_inst::to_string(resample_node const& node) {
     resample_info.add("output padding upper size", desc->output_padding.upper_size());
 
     if (desc->operation_type == resample_type::bilinear) {
-        resample_info.add("pad_begin", desc->pad_begin);
-        resample_info.add("pad_end", desc->pad_end);
+        // resample_info.add("pad_begin", desc->pad_begin);
+        // resample_info.add("pad_end", desc->pad_end);
         resample_info.add("align_corners", desc->align_corners);
     }
 
