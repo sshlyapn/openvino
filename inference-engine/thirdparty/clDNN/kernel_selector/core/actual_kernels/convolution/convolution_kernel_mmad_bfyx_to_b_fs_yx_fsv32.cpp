@@ -122,9 +122,13 @@ ConvolutionKernel_mmad_bfyx_to_b_fs_yx_fsv32::AutoTuneOption ConvolutionKernel_m
     static const size_t register_bytes = registers_count * register_byte_size;
     static const size_t max_register_bytes = register_bytes * 3 / 4;
     static const size_t simd_size = 16;
+    printf("Estimated reg usage: %lu vs %lu avavilable\n", estimateRegUsage(8,simd_size), max_register_bytes);
+    printf("Estimated reg usage: %lu vs %lu avavilable\n", estimateRegUsage(4,simd_size), max_register_bytes);
     if (output.LogicalSize() > 49 * 1024 && estimateRegUsage(8, simd_size) <= max_register_bytes) {
+        printf("Selected BLOCK WIDTH: 8, Logical Size %lu > 50176\n", output.LogicalSize());
         option.blockWidth = 8;
     } else {
+        printf("Selected BLOCK WIDTH: 4, Logical Size %lu <= 50176\n", output.LogicalSize());
         option.blockWidth = 4;
     }
 
@@ -167,6 +171,14 @@ ConvolutionKernelBase::DispatchData ConvolutionKernel_mmad_bfyx_to_b_fs_yx_fsv32
     runInfo.lws0 = sub_group_size;
     runInfo.lws1 = get_lws(cp, runInfo.gws1, tuneOptions.blockWidth, max_lws);
     runInfo.lws2 = 1;
+
+    printf("Out sizes: %lu %lu %lu %lu\n", cp.output.Batch().v, cp.output.Feature().v, cp.output.Y().v, cp.output.X().v); 
+    printf("GWS: %lu %lu %lu, LWS: %lu %lu %lu. Max lws: %lu, BlockW %lu, BlockH %lu, Prefetch %lu\n", 
+                                                   runInfo.gws0, runInfo.gws1, runInfo.gws2,
+                                                   runInfo.lws0, runInfo.lws1, runInfo.lws2,
+                                                   max_lws, runInfo.cldnnStyle.blockWidth,
+                                                   runInfo.cldnnStyle.blockHeight,
+                                                   runInfo.cldnnStyle.prefetch);
 
     return runInfo;
 }
