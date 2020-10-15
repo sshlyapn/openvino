@@ -41,15 +41,15 @@
 #include <utility>
 #include <map>
 
-// #define DEBUG_DUMP_PATH "cldnn_dump/"
+// #define DEBUG_DUMP_PATH "./"
 
 #ifdef DEBUG_DUMP_PATH
 #include <iomanip>
 #include <fstream>
 
 #define DUMP_VERBOSE 0
-#define DUMP_SINGLE_LAYER 0
-#define DUMP_LAYER_NAME ""
+#define DUMP_SINGLE_LAYER 1
+#define DUMP_LAYER_NAME "convolution:L0000_Conv2d_BN"
 #endif
 
 namespace cldnn {
