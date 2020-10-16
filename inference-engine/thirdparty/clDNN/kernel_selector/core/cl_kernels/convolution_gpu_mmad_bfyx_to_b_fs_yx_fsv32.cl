@@ -272,7 +272,9 @@ KERNEL(convolution_mmad_bfyx_to_b_fs_yx_fsv32)(
                                 + kw * OSV * ISV;
 
                 int weights_data0 = as_int(intel_sub_group_block_read((const __global uint*)(weights + f_off)));
-                int weights_data1 = as_int(intel_sub_group_block_read((const __global uint*)(weights + f_off + SUB_GROUP_SIZE*ISV)));
+                int weights_data1 = 0;
+                if (OUTPUT_FEATURE_NUM > 16)
+                    weights_data1 = as_int(intel_sub_group_block_read((const __global uint*)(weights + f_off + SUB_GROUP_SIZE*ISV)));
 
                 PACKED_TYPE_VEC src;
 

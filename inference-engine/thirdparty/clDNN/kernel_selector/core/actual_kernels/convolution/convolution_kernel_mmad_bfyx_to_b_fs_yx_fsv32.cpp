@@ -125,8 +125,8 @@ ConvolutionKernel_mmad_bfyx_to_b_fs_yx_fsv32::AutoTuneOption ConvolutionKernel_m
     printf("Estimated RegUsage: %lu vs %lu avavilable\n", estimateRegUsage(8, 1, simd_size), max_register_bytes);
     printf("Estimated RegUsage: %lu vs %lu avavilable\n", estimateRegUsage(4, 2, simd_size), max_register_bytes);
     if (output.LogicalSize() > 49 * 1024 && estimateRegUsage(8, 1, simd_size) <= max_register_bytes) {
-        option.blockWidth = 4;
-        option.blockHeight = 2; // 8_1 - 280; 4_2 - 525; 4_1 - 567; 4_2_new - 306
+        option.blockWidth = 8;
+        option.blockHeight = 1; // 8_1 - 280; 4_2 - 525; 4_1 - 567; 4_2_new - 306
     } else if (estimateRegUsage(4, 2, simd_size) <= max_register_bytes) {
         option.blockWidth = 4;
         option.blockHeight = 2;
