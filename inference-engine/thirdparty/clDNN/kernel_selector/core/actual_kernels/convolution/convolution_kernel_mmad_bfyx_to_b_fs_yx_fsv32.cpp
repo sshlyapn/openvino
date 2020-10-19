@@ -167,7 +167,7 @@ ConvolutionKernelBase::DispatchData ConvolutionKernel_mmad_bfyx_to_b_fs_yx_fsv32
     runInfo.efficiency = FORCE_PRIORITY_3;
 
     const size_t max_lws = std::max((size_t)1, cp.engineInfo.maxWorkGroupSize / sub_group_size);
-    runInfo.gws0 = Align(cp.output.Feature().v, 32) / 2;
+    runInfo.gws0 = Align(cp.output.Feature().v, 16);
     runInfo.gws1 = CeilDiv(cp.output.X().v, runInfo.cldnnStyle.blockWidth);
     runInfo.gws2 = cp.output.Batch().v * CeilDiv(cp.output.Y().v, runInfo.cldnnStyle.blockHeight) * cp.output.Z().v;
 
