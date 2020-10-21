@@ -113,9 +113,9 @@ KERNEL(convolution_mmad_bfyx_to_b_fs_yx_fsv32)(
     const int z = 0;
     const int y = (int)get_global_id(2) % CEIL_DIV(OUTPUT_SIZE_Y, OUTPUT_Y_BLOCK_SIZE) * OUTPUT_Y_BLOCK_SIZE;
 #elif OUTPUT_DIMS == 5
-    const int b = (int)get_global_id(2) / OUTPUT_SIZE_Y / OUTPUT_SIZE_Z;
+    const int b = (int)get_global_id(2) / CEIL_DIV(OUTPUT_SIZE_Y, OUTPUT_Y_BLOCK_SIZE) / OUTPUT_SIZE_Z;
     const int z = (int)get_global_id(2) / OUTPUT_SIZE_Y % OUTPUT_SIZE_Z;
-    const int y = (int)get_global_id(2) % OUTPUT_SIZE_Y;
+    const int y = (int)get_global_id(2) % CEIL_DIV(OUTPUT_SIZE_Y, OUTPUT_Y_BLOCK_SIZE) * OUTPUT_Y_BLOCK_SIZE;
 #endif // OUTPUT_DIMS == 4
 
     const int lid = get_sub_group_local_id();
@@ -126,7 +126,7 @@ KERNEL(convolution_mmad_bfyx_to_b_fs_yx_fsv32)(
     const int input_y = y * STRIDE_SIZE_Y - PADDING_SIZE_Y;
     const int input_z = z * STRIDE_SIZE_Z - PADDING_SIZE_Z;
 
-    ACCUMULATOR_TYPE_VEC acc[2 * OUTPUT_Y_BLOCK_SIZE] = { 0 }; // 2*16 packed channels * OUTPUT_X_BLOCK_SIZE
+    ACCUMULATOR_TYPE_VEC acc[OUTPUT_Y_BLOCK_SIZE] = { 0 }; // 2*16 packed channels * OUTPUT_X_BLOCK_SIZE
 #if ASYMMETRIC_WEIGHTS_QUANTIZATION
     ACCUMULATOR_TYPE_VEC acc_assym_weights = 0;
 #endif
@@ -272,9 +272,6 @@ KERNEL(convolution_mmad_bfyx_to_b_fs_yx_fsv32)(
                                 + kw * OSV * ISV;
 
                 int weights_data0 = as_int(intel_sub_group_block_read((const __global uint*)(weights + f_off)));
-                int weights_data1 = 0;
-                if (OUTPUT_FEATURE_NUM > 16)
-                    weights_data1 = as_int(intel_sub_group_block_read((const __global uint*)(weights + f_off + SUB_GROUP_SIZE*ISV)));
 
                 PACKED_TYPE_VEC src;
 
@@ -285,7 +282,6 @@ KERNEL(convolution_mmad_bfyx_to_b_fs_yx_fsv32)(
                         // src[i] = slm[kh*SLM_LINE_SIZE + (sg*OUTPUT_X_BLOCK_SIZE + i)*STRIDE_SIZE_X + kw*DILATION_SIZE_X];
                         src[i] = line_cache[yb * INPUT_LINE_SIZE + kw*DILATION_SIZE_X + STRIDE_SIZE_X*i];
                         acc[yb * 2 + 0][i] = IMAD(acc[yb * 2 + 0][i], AS_INPUT0_TYPE_4(src[i]), as_char4(weights_data0));
-                        acc[yb * 2 + 1][i] = IMAD(acc[yb * 2 + 1][i], AS_INPUT0_TYPE_4(src[i]), as_char4(weights_data1));
 #if ASYMMETRIC_WEIGHTS_QUANTIZATION
                         acc_assym_weights[i] = IMAD(acc_assym_weights[i], AS_INPUT0_TYPE_4(src[i]), multiplier);
 #endif
@@ -300,7 +296,7 @@ KERNEL(convolution_mmad_bfyx_to_b_fs_yx_fsv32)(
 #endif
 
 #if OUTPUT_IS_FP
-    MAKE_VECTOR_TYPE(PACKED_OUT_TYPE, OUTPUT_X_BLOCK_SIZE) dst[2 * OUTPUT_Y_BLOCK_SIZE];
+    MAKE_VECTOR_TYPE(PACKED_OUT_TYPE, OUTPUT_X_BLOCK_SIZE) dst[OUTPUT_Y_BLOCK_SIZE];
 
     #if OUTPUT_Y_BLOCK_SIZE > 1
     for (int j = 0; j < OUTPUT_Y_BLOCK_SIZE; j++) {
@@ -310,27 +306,21 @@ KERNEL(convolution_mmad_bfyx_to_b_fs_yx_fsv32)(
     for (int i = 0; i < OUTPUT_X_BLOCK_SIZE; i++) {
 #if BIAS_TERM
         ACTIVATION_TYPE res0 = TO_ACTIVATION_TYPE(acc[j * 2 + 0][i]) + (ACTIVATION_TYPE)(biases[bias_index + lid]);
-        ACTIVATION_TYPE res1 = TO_ACTIVATION_TYPE(acc[j * 2 + 1][i]) + (ACTIVATION_TYPE)(biases[bias_index + lid + SUB_GROUP_SIZE]);
 #else
         ACTIVATION_TYPE res0 = TO_ACTIVATION_TYPE(acc[j * 2 + 0][i]);
-        ACTIVATION_TYPE res1 = TO_ACTIVATION_TYPE(acc[j * 2 + 1][i]);
 #endif
 
 #if ASYMMETRIC_WEIGHTS_QUANTIZATION
         res0 -= acc_assym_weights[i] * TO_ACCUMULATOR_TYPE(weights_zp[fg * OSV + lid + 0]);
-        res1 -= acc_assym_weights[i] * TO_ACCUMULATOR_TYPE(weights_zp[fg * OSV + lid + 16]);
 #endif  // ASYMMETRIC_WEIGHTS_QUANTIZATION
 
 #if ASYMMETRIC_DATA_QUANTIZATION
         res0 += compensation[fg*OSV + lid];
-        res1 += compensation[fg*OSV + lid + SUB_GROUP_SIZE];
 #endif  // ASYMMETRIC_DATA_QUANTIZATION
 #if HAS_FUSED_OPS
         { FUSED_OPS_0; dst[j * 2 + 0][i] = FUSED_OPS_RESULT_0; };
-        { FUSED_OPS_1; dst[j * 2 + 1][i] = FUSED_OPS_RESULT_1; };
 #else
         dst[j * 2 + 0][i] = TO_OUTPUT_TYPE(res0);
-        dst[j * 2 + 1][i] = TO_OUTPUT_TYPE(res1);
 #endif
     }
     #if OUTPUT_Y_BLOCK_SIZE > 1
@@ -343,7 +333,7 @@ KERNEL(convolution_mmad_bfyx_to_b_fs_yx_fsv32)(
     #endif
 #if OUTPUT_LAYOUT_B_FS_YX_FSV32
     for (int i = 0; i < OUTPUT_X_BLOCK_SIZE; i++) {
-        for (int ofm = 0; ofm < 2; ofm++) {
+        for (int ofm = 0; ofm < 1; ofm++) {
             const uint dst_index = OUTPUT_GET_INDEX(b, fg*OSV + SUB_GROUP_SIZE*ofm + lid, y + j, x+i);
             if (x + i < OUTPUT_SIZE_X) {
                 output[dst_index] = dst[j * 2 + ofm][i];
@@ -353,7 +343,7 @@ KERNEL(convolution_mmad_bfyx_to_b_fs_yx_fsv32)(
 #else // OUTPUT_LAYOUT_B_FS_YX_FSV32
     for (int i = 0; i < OUTPUT_X_BLOCK_SIZE; i++) {
 #if OUTPUT_FEATURE_NUM > 16
-        for (int ofm = 0; ofm < 2; ofm++) {
+        for (int ofm = 0; ofm < 1; ofm++) {
 #if OUTPUT_DIMS == 4
             const uint dst_index = OUTPUT_GET_INDEX(b, fg*OSV + SUB_GROUP_SIZE*ofm + lid, y + j, x+i);
 #elif OUTPUT_DIMS == 5
@@ -382,12 +372,10 @@ KERNEL(convolution_mmad_bfyx_to_b_fs_yx_fsv32)(
 #else  // OUTPUT_IS_FP
 #if OUTPUT_LAYOUT_B_FS_YX_FSV32
     MAKE_VECTOR_TYPE(PACKED_OUT_TYPE, OUTPUT_X_BLOCK_SIZE) dst[OUTPUT_Y_BLOCK_SIZE];
-    #define CHANNEL0_OFFSET (2*lid+0)
-    #define CHANNEL1_OFFSET (2*lid+1)
-#else // OUTPUT_LAYOUT_B_FS_YX_FSV32
-    MAKE_VECTOR_TYPE(OUTPUT_TYPE, OUTPUT_X_BLOCK_SIZE) dst[2 * OUTPUT_Y_BLOCK_SIZE];
     #define CHANNEL0_OFFSET (lid)
-    #define CHANNEL1_OFFSET (lid+16)
+#else // OUTPUT_LAYOUT_B_FS_YX_FSV32
+    MAKE_VECTOR_TYPE(OUTPUT_TYPE, OUTPUT_X_BLOCK_SIZE) dst[OUTPUT_Y_BLOCK_SIZE];
+    #define CHANNEL0_OFFSET (lid)
 #endif // OUTPUT_LAYOUT_B_FS_YX_FSV32
 
     #if OUTPUT_Y_BLOCK_SIZE > 1
@@ -398,35 +386,28 @@ KERNEL(convolution_mmad_bfyx_to_b_fs_yx_fsv32)(
     for (int i = 0; i < OUTPUT_X_BLOCK_SIZE; i++) {
 #if BIAS_TERM
         ACTIVATION_TYPE res0 = TO_ACTIVATION_TYPE(acc[j * 2 + 0][i]) + (ACTIVATION_TYPE)(biases[bias_index + CHANNEL0_OFFSET]);
-        ACTIVATION_TYPE res1 = TO_ACTIVATION_TYPE(acc[j * 2 + 1][i]) + (ACTIVATION_TYPE)(biases[bias_index + CHANNEL1_OFFSET]);
 #else
         ACTIVATION_TYPE res0 = TO_ACTIVATION_TYPE(acc[j * 2 + 0][i]);
-        ACTIVATION_TYPE res1 = TO_ACTIVATION_TYPE(acc[j * 2 + 1][i]);
 #endif
 
 #if ASYMMETRIC_WEIGHTS_QUANTIZATION
         res0 -= acc_assym_weights[i] * TO_ACCUMULATOR_TYPE(weights_zp[fg * OSV + CHANNEL0_OFFSET]);
-        res1 -= acc_assym_weights[i] * TO_ACCUMULATOR_TYPE(weights_zp[fg * OSV + CHANNEL1_OFFSET]);
 #endif  // ASYMMETRIC_WEIGHTS_QUANTIZATION
 
 #if ASYMMETRIC_DATA_QUANTIZATION
         res0 += compensation[fg*OSV + CHANNEL0_OFFSET];
-        res1 += compensation[fg*OSV + CHANNEL1_OFFSET];
 #endif  // ASYMMETRIC_DATA_QUANTIZATION
 
         MAKE_VECTOR_TYPE(OUTPUT_TYPE, 2) pack;
 #if HAS_FUSED_OPS
         { FUSED_OPS_0; pack[0] = FUSED_OPS_RESULT_0; };
-        { FUSED_OPS_1; pack[1] = FUSED_OPS_RESULT_1; };
 #else
         pack[0] = TO_OUTPUT_TYPE(res0);
-        pack[1] = TO_OUTPUT_TYPE(res1);
 #endif
 #if OUTPUT_LAYOUT_B_FS_YX_FSV32
         dst[j][i] = AS_PACKED_OUT_TYPE(pack);
 #else // OUTPUT_LAYOUT_B_FS_YX_FSV32
         dst[j * 2 + 0][i] = pack[0];
-        dst[j * 2 + 1][i] = pack[1];
 #endif // OUTPUT_LAYOUT_B_FS_YX_FSV32
     }
 #if OUTPUT_Y_BLOCK_SIZE > 1
@@ -464,15 +445,12 @@ KERNEL(convolution_mmad_bfyx_to_b_fs_yx_fsv32)(
     if (full_x && full_f && full_y) {
 #if OUTPUT_DIMS == 4
         const uint dst_index0 = OUTPUT_GET_INDEX(b, fg*OSV, y + j, x);
-        const uint dst_index1 = OUTPUT_GET_INDEX(b, fg*OSV+16, y + j, x);
 #elif OUTPUT_DIMS == 5
         const uint dst_index0 = OUTPUT_GET_INDEX(b, fg*OSV, z, y + j, x);
-        const uint dst_index1 = OUTPUT_GET_INDEX(b, fg*OSV+16, z, y + j, x);
 #endif
         BLOCK_WRITE(output + dst_index0, dst[j * 2 + 0]);
-        BLOCK_WRITE(output + dst_index1, dst[j * 2 + 1]);
     } else {
-        for (int ofm = 0; ofm < 2; ofm++) {
+        for (int ofm = 0; ofm < 1; ofm++) {
             for (int i = 0; i < OUTPUT_X_BLOCK_SIZE; i++) {
                 const bool full_it_x = OUTPUT_SIZE_X % OUTPUT_X_BLOCK_SIZE == 0 || x + i < OUTPUT_SIZE_X;
                 const bool full_it_y = OUTPUT_SIZE_Y % OUTPUT_Y_BLOCK_SIZE == 0 || y + j < OUTPUT_SIZE_Y;

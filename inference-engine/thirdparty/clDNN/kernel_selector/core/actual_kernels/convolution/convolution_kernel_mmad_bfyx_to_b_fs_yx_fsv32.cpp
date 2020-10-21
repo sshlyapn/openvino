@@ -167,7 +167,7 @@ ConvolutionKernelBase::DispatchData ConvolutionKernel_mmad_bfyx_to_b_fs_yx_fsv32
     runInfo.efficiency = FORCE_PRIORITY_3;
 
     const size_t max_lws = std::max((size_t)1, cp.engineInfo.maxWorkGroupSize / sub_group_size);
-    runInfo.gws0 = Align(cp.output.Feature().v, 32) / 2;
+    runInfo.gws0 = Align(cp.output.Feature().v, 16);
     runInfo.gws1 = CeilDiv(cp.output.X().v, runInfo.cldnnStyle.blockWidth);
     runInfo.gws2 = cp.output.Batch().v * CeilDiv(cp.output.Y().v, runInfo.cldnnStyle.blockHeight) * cp.output.Z().v;
 
@@ -194,7 +194,7 @@ JitConstants ConvolutionKernel_mmad_bfyx_to_b_fs_yx_fsv32::GetJitConstants(const
     jit.AddConstant(MakeJitConstant("LWS0", runInfo.lws0));
     jit.AddConstant(MakeJitConstant("LWS1", runInfo.lws1));
     jit.AddConstant(MakeJitConstant("LWS2", runInfo.lws2));
-    jit.AddConstant(MakeJitConstant("OSV", 32));
+    jit.AddConstant(MakeJitConstant("OSV", 16));
     jit.AddConstant(MakeJitConstant("X_BLOCK_SIZE", runInfo.cldnnStyle.blockWidth));
     auto input = params.inputs[0];
     auto output = params.output;
