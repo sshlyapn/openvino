@@ -7389,6 +7389,8 @@ TEST_P(convolution_grouped_gpu, base) {
                         if (!equal) {
                             std::cout << "Value at batch: " << bi << ", output_f: " << ofi << ", z: " << zi << ", y: " << yi << ", x: " << xi << " = " << val << std::endl;
                             std::cout << "Reference value at batch: " << bi << ", output_f: " << ofi << ", z: " << zi << ", y: " << yi << ", x: " << xi << " = " << val_ref << std::endl;
+                            printf("Failed\n\n");
+                            return;
                         }
                         EXPECT_TRUE(equal);
                     }
