@@ -34,8 +34,10 @@ TuningCache::TuningCache(const std::string& cacheFilePath, bool createMode)
     std::ifstream tuningFile(cacheFilePath);
 
     if (tuningFile && tuningFile.good()) {
-        rapidjson::IStreamWrapper isw{ tuningFile };
-        cache.ParseStream(isw);
+        std::stringstream buffer;
+        buffer << tuningFile.rdbuf();
+        rapidjson::StringStream s(buffer.str().c_str());
+        cache.ParseStream(s);
     } else {
         if (!createMode) {
             throw std::runtime_error("Tuning file: " + cacheFilePath +
@@ -110,8 +112,10 @@ TuningCache::Entry TuningCache::LoadKernel(const Params& params, bool update) {
 TuningCache::Entry TuningCache::LoadKernel(const Params& params, uint32_t computeUnitsCount, bool update) {
     bool oldVersion = false;
     // Try to load from version 2
+    // auto t1 = std::chrono::high_resolution_clock::now();
     auto result = LoadKernel_v2(params, computeUnitsCount);
     // Try to load from version 1
+    // auto t2 = std::chrono::high_resolution_clock::now();
     if (std::get<0>(result).empty() || update) {
         auto result_v1 = LoadKernel_v1(params, computeUnitsCount);
         oldVersion = !std::get<0>(result_v1).empty();
@@ -119,10 +123,18 @@ TuningCache::Entry TuningCache::LoadKernel(const Params& params, uint32_t comput
             result = result_v1;
         }
     }
+    // auto t3 = std::chrono::high_resolution_clock::now();
     // Move cache from old version to newer
     if (oldVersion && update) {
         StoreKernel(params, computeUnitsCount, std::get<0>(result), std::get<1>(result));
     }
+    // auto t4 = std::chrono::high_resolution_clock::now();
+    // auto res0 = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
+    // auto res1 = std::chrono::duration_cast<std::chrono::microseconds>(t3 - t2).count();
+    // auto res2 = std::chrono::duration_cast<std::chrono::microseconds>(t4 - t3).count();
+    // auto res = std::chrono::duration_cast<std::chrono::microseconds>(t4 - t1).count();
+    // printf("Total time cahce: %lu\n", res);
+    // printf("L1 and L2: %lu %lu %lu\n", res0, res1, res2);
 
     return result;
 }
@@ -329,7 +341,7 @@ std::tuple<std::string, int> AutoTuner::LoadKernelOffline(std::shared_ptr<Tuning
                                                           const Params& params) {
     static const uint32_t defaultComputeUnits = 24;
     auto result = deviceCache->LoadKernel(params, false);
-    if (std::get<0>(result).empty()) {
+    if (std::get<0>(result).empty() && params.engineInfo.computeUnitsCount != defaultComputeUnits) {
         result = deviceCache->LoadKernel(params, defaultComputeUnits);
     }
     return result;
