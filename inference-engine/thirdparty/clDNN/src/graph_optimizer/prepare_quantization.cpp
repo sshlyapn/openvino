@@ -126,6 +126,7 @@ void prepare_quantization::prepare_scale_shift_opt(program_impl &p) {
             scales_layout.size = tensor::max(scales_layout.size, mem_output_low.get_layout().size);
             scales_layout.size = tensor::max(scales_layout.size, mem_output_high.get_layout().size);
 
+            printf("Quntization: ");
             auto mem_input_scale  = p.get_engine().allocate_memory(scales_layout, mem_input_low.get_net_id(), false);
             auto mem_input_shift  = p.get_engine().allocate_memory(scales_layout, mem_input_high.get_net_id(), false);
             auto mem_output_scale = p.get_engine().allocate_memory(scales_layout, mem_output_low.get_net_id(), false);

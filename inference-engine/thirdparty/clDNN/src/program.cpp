@@ -530,9 +530,11 @@ void program_impl::transfer_memory_to_device() {
 
             if (alloc_type == allocation_type::usm_host || alloc_type == allocation_type::usm_shared) {
                 // Allocate and transfer memory
+                printf("Transfer memory\n");
                 auto device_mem = mem.get_engine()->allocate_memory(mem.get_layout(),
                                                                     allocation_type::usm_device,
-                                                                    mem.get_net_id());
+                                                                    mem.get_net_id(),
+                                                                    false);
                 dynamic_cast<gpu::gpu_usm&>(*device_mem).copy_from_other(dynamic_cast<gpu::gpu_usm&>(mem));
                 data_node.attach_memory(*device_mem);
                 const_cast<memory&>(data_node.get_primitive()->mem).reset();

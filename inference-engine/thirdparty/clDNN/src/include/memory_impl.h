@@ -44,6 +44,7 @@ struct memory_impl : refcounted_obj<memory_impl> {
     void set_net(uint32_t id) { _net_id = id; }
     allocation_type get_allocation_type() const { return _type; }
     virtual bool is_memory_reset_needed(layout l) {
+        static int counter = 0;
         // To avoid memory reset, output memory must meet the following requirements:
         // - To be Weights format (Data memory can be reused by memory_pool, which can lead to errors)
         // - To have zero paddings
@@ -57,6 +58,8 @@ struct memory_impl : refcounted_obj<memory_impl> {
         }
 
         if (_bytes_count == (l.data_type == data_types::bin ? ceil_div(l.count(), 32) : l.count()) * data_type_traits::size_of(l.data_type)) {
+            printf("Return false for memory reset\n");
+            counter++;
             return false;
         }
 
