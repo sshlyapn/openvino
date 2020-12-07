@@ -123,6 +123,7 @@ TEST_P(RNNSeqTest, SingleRNN) {
     req.Infer();
 
     i = 0;
+    printf("Total outputs: %lu\n", net.getOutputsInfo().size());
     for (auto &info : net.getOutputsInfo())
         EXPECT_TRUE(checkers[i++](req.GetBlob(info.first))) << "Error with #" << i << " output";
 }
