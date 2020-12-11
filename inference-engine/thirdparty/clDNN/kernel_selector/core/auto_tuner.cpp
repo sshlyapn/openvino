@@ -327,11 +327,7 @@ void AutoTuner::RemoveKernel(const std::string& cacheFilePath,
 
 std::tuple<std::string, int> AutoTuner::LoadKernelOffline(std::shared_ptr<TuningCache> deviceCache,
                                                           const Params& params) {
-    static const uint32_t defaultComputeUnits = 24;
     auto result = deviceCache->LoadKernel(params, false);
-    if (std::get<0>(result).empty()) {
-        result = deviceCache->LoadKernel(params, defaultComputeUnits);
-    }
     return result;
 }
 
