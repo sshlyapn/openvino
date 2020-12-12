@@ -48,7 +48,7 @@ struct memory_impl : refcounted_obj<memory_impl> {
         // - To be Weights format (Data memory can be reused by memory_pool, which can lead to errors)
         // - To have zero paddings
         // - To be completely filled with data
-        if (!format::is_weights_format(l.format) || format::is_winograd(l.format) || format::is_image_2d(l.format)) {
+        if ((!format::is_weights_format(l.format) && !format::is_simple_data_format(l.format)) || format::is_winograd(l.format) || format::is_image_2d(l.format)) {
             return true;
         }
 
@@ -57,6 +57,7 @@ struct memory_impl : refcounted_obj<memory_impl> {
         }
 
         if (_bytes_count == (l.data_type == data_types::bin ? ceil_div(l.count(), 32) : l.count()) * data_type_traits::size_of(l.data_type)) {
+            printf("Return false for memory reset. Simple data format - %d\n", format::is_simple_data_format(l.format));
             return false;
         }
 

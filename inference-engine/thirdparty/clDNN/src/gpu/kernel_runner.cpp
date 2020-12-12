@@ -37,6 +37,7 @@ void kernel_runner::prepare_kernel_args(const kernel_selector::KernelsData& kern
     if (input_buffers.empty()) {
         for (const auto& input : base_params.inputs) {
             int num_of_input_elements = static_cast<int>(input.PhysicalSize());
+            printf("void kernel_runner::prepare_kernel_args\n");
             input_buffers.push_back(engine->allocate_memory(
                 {from_data_type(input.GetDType()), format::bfyx, tensor(1, 1, num_of_input_elements, 1)},
                 0));
@@ -50,6 +51,7 @@ void kernel_runner::prepare_kernel_args(const kernel_selector::KernelsData& kern
         for (auto& fused_op : base_params.fused_ops) {
             for (auto& fused_ops_input : fused_op.tensors) {
                 auto num_of_elements = static_cast<int>(fused_ops_input.PhysicalSize());
+                printf("void kernel_runner::prepare_kernel_args fused_ops_buffers\n");
                 fused_ops_buffers.push_back(engine->allocate_memory(
                     { from_data_type(fused_ops_input.GetDType()), format::bfyx, tensor(1, 1, num_of_elements, 1) },
                     0));
@@ -62,6 +64,7 @@ void kernel_runner::prepare_kernel_args(const kernel_selector::KernelsData& kern
     // Prepare output buffer
     if (output_buffers.empty()) {
         int num_of_output_elements = static_cast<int>(base_params.output.PhysicalSize());
+        printf("void kernel_runner::prepare_kernel_args output_buffers\n");
         output_buffers.push_back(engine->allocate_memory(
             {from_data_type(base_params.output.GetDType()), format::bfyx, tensor(1, 1, num_of_output_elements, 1)},
             0));
@@ -82,25 +85,28 @@ void kernel_runner::prepare_kernel_args(const kernel_selector::KernelsData& kern
         cldnn::format::type fmt = cldnn::format::bfyx;
 
         if (!cldnn::format::is_image_2d(from_weights_layout(weights_bias_params.weights.GetLayout()))) {
-            if (weight_buffers.empty())
+            if (weight_buffers.empty()) {
+                printf("void kernel_runner::prepare_kernel_args weight_buffers\n");
                 weight_buffers.push_back(
                     engine->allocate_memory({from_weights_type(weights_bias_params.weights.GetDType()),
                                              fmt,
                                              tensor(num_of_weight_elements_ofm, 1, num_of_weight_elements_spatial, 1)},
                                             0));
 
-            if (weight_buffers[0]->get_layout().format != fmt)
+            } if (weight_buffers[0]->get_layout().format != fmt) {
+                printf("void kernel_runner::prepare_kernel_args weight_buffers[0]\n");
                 weight_buffers[0] =
                     engine->allocate_memory({from_weights_type(weights_bias_params.weights.GetDType()),
                                              fmt,
                                              tensor(num_of_weight_elements_ofm, 1, num_of_weight_elements_spatial, 1)},
                                             0);
-
+            }
             while (weight_buffers[0]->get_layout().bytes_count() < weights_bias_params.weights.PhysicalSizeInBytes()) {
                 // Weights layout depends on the kernel. Multiply the buffer size by 2 until it is big enough
                 // (to avoid complex computations of the exact buffer size according to the chosen layout).
                 weight_buffers.clear();
                 num_of_weight_elements_spatial *= 2;
+                printf("void kernel_runner::prepare_kernel_args weight_buffers[0]->\n");
                 weight_buffers.push_back(
                     engine->allocate_memory({from_weights_type(weights_bias_params.weights.GetDType()),
                                              fmt,
@@ -111,6 +117,7 @@ void kernel_runner::prepare_kernel_args(const kernel_selector::KernelsData& kern
             weight_buffers.clear();
             fmt = from_weights_layout(weights_bias_params.weights.GetLayout());
             num_of_weight_elements_ofm = static_cast<int>(weights_bias_params.weights.OFM().v);
+            printf("void kernel_runner::prepare_kernel_args weight_buffers.push_back\n");
             weight_buffers.push_back(engine->allocate_memory({from_weights_type(weights_bias_params.weights.GetDType()),
                                                               fmt,
                                                               tensor(num_of_weight_elements_ofm,
@@ -125,6 +132,7 @@ void kernel_runner::prepare_kernel_args(const kernel_selector::KernelsData& kern
         if (!weights_bias_params.bias.empty()) {
             if (bias_buffers.empty()) {
                 int num_of_bias_elements = static_cast<int>(weights_bias_params.bias[0].PhysicalSize());
+                printf("void kernel_runner::prepare_kernel_args Prepare bias buffer\n");
                 bias_buffers.push_back(engine->allocate_memory({from_data_type(weights_bias_params.bias[0].GetDType()),
                                                                 format::bfyx,
                                                                 tensor(1, num_of_bias_elements, 1, 1)},
@@ -139,6 +147,7 @@ void kernel_runner::prepare_kernel_args(const kernel_selector::KernelsData& kern
                 if (weight_zero_point_buffers.empty()) {
                     auto& weight_zero_point = zero_point_params.weights_zero_points[0];
                     auto num_of_elements = static_cast<int>(weight_zero_point.PhysicalSize());
+                    printf("void kernel_runner::prepare_kernel_args zero_points_exist\n");
                     weight_zero_point_buffers.push_back(
                         engine->allocate_memory({
                             from_data_type(weight_zero_point.GetDType()),
@@ -152,6 +161,7 @@ void kernel_runner::prepare_kernel_args(const kernel_selector::KernelsData& kern
                 if (activation_zero_point_buffers.empty()) {
                     auto& activation_zero_point = zero_point_params.activations_zero_points[0];
                     auto num_of_elements = static_cast<int>(activation_zero_point.PhysicalSize());
+                    printf("void kernel_runner::prepare_kernel_args activation_zero_point_buffers\n");
                     activation_zero_point_buffers.push_back(
                         engine->allocate_memory({
                             from_data_type(activation_zero_point.GetDType()),
@@ -165,6 +175,7 @@ void kernel_runner::prepare_kernel_args(const kernel_selector::KernelsData& kern
                 if (compensation_buffers.empty()) {
                     auto& compensation = zero_point_params.compensation[0];
                     auto num_of_elements = static_cast<int>(compensation.PhysicalSize());
+                    printf("void kernel_runner::prepare_kernel_args compensation_buffers\n");
                     compensation_buffers.push_back(
                         engine->allocate_memory({
                             from_data_type(compensation.GetDType()),

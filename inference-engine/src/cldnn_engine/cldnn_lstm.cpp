@@ -34,6 +34,7 @@ std::string get_string_id(size_t i) {
 }
 
 void Program::CreateLSTMCellPrimitive(cldnn::topology& topology, InferenceEngine::CNNLayerPtr &layer) {
+    printf("Create LSTM\n");
     int lstm_batch_size, lstm_input_size, lstm_hidden_size;
     bool hasBias = false;
     auto inputPrimitives = GetPrevLayersPrimitives(layer);
@@ -422,6 +423,8 @@ void Program::CreateDynamicLSTM(cldnn::topology& topology, InferenceEngine::CNNL
         cldnn::layout WLayout = cldnn::layout(DataTypeFromPrecision(lstmPrecision), m_defaultFormat, wTensor);
         cldnn::layout RLayout = cldnn::layout(DataTypeFromPrecision(lstmPrecision), m_defaultFormat, rTensor);
 
+        printf("RNN %d\n", static_cast<int>(m_defaultFormat));
+
         auto wLayer = as<InferenceEngine::WeightableLayer *>(layer);
 
         {
@@ -437,6 +440,12 @@ void Program::CreateDynamicLSTM(cldnn::topology& topology, InferenceEngine::CNNL
             auto wBytes = wtmpPointer.data();
             auto rBytes = rtmpPointer.data();
 
+            for (int i = 0; i < wmem.size(); i++) {
+                wBytes[i] = 0;
+                rBytes[i] = 0;
+            }
+
+            // for (int dir = 0; dir < directions; dir++) {
             for (int h = 0; h < 4 * lstm_hidden_size; h++) {
                 // copy "input size" elements to W
                 for (size_t b = 0; b < WchunkSz; b++)
@@ -446,6 +455,9 @@ void Program::CreateDynamicLSTM(cldnn::topology& topology, InferenceEngine::CNNL
                 for (size_t b = 0; b < RchunkSz; b++)
                     *rBytes++ = *blobBytes++;
             }
+            // }
+
+            printf("Memory alloc 1\n");
 
             topology.add(cldnn::data(weightID, wmem));
             topology.add(cldnn::data(recurrentID, rmem));
@@ -464,8 +476,14 @@ void Program::CreateDynamicLSTM(cldnn::topology& topology, InferenceEngine::CNNL
             const size_t BchunkSz = lstm_hidden_size * elementSize;
             auto bBytes = btmpPointer.data();
 
+            for (int i = 0; i < bmem.size(); i++) {
+                bBytes[i] = 0;
+            }
+
             for (size_t b = 0; b < 4 * BchunkSz; b++)
                 *bBytes++ = *blobBytes++;
+
+            printf("Memory alloc 2\n");
 
             topology.add(cldnn::data(biasID, bmem));
             hasBias = true;
@@ -528,21 +546,29 @@ void Program::CreateDynamicLSTM(cldnn::topology& topology, InferenceEngine::CNNL
 
     // last hidden state crop (output 2)
     cldnn::primitive_id outputHiddenID = "", outputCellID = "";
-     if (layer->outData.size() > 1) {
+    if (layer->outData.size() > 1) {
+        printf("Here out 1\n");
         outputHiddenID = layer_type_lower(layer) + ":" + layer->outData[1]->getName();
         auto last_hidden_mem = cldnn::memory::allocate(*m_engine,
         { DataTypeFromPrecision(lstmPrecision),
             cldnn::format::bfyx, { lstm_batch_size, 1, lstm_hidden_size, directions } });
+        auto last_hidden_mem_ptr = last_hidden_mem.pointer<char>();
+        for (int i = 0; i < last_hidden_mem_ptr.size(); i++)
+            last_hidden_mem_ptr.data()[i] = 0;
         topology.add(cldnn::mutable_data(outputHiddenID, last_hidden_mem));
         primitiveIDs[outputHiddenID] = outputHiddenID;
     }
 
     // last cell state crop (output 3)
     if (layer->outData.size() > 2) {
+        printf("Here out 2\n");
         outputCellID = layer_type_lower(layer) + ":" + layer->outData[2]->getName();
         auto last_cell_mem = cldnn::memory::allocate(*m_engine,
         { DataTypeFromPrecision(lstmPrecision),
             cldnn::format::bfyx, { lstm_batch_size, 1, lstm_hidden_size, directions } });
+        auto last_cell_mem_ptr = last_cell_mem.pointer<char>();
+        for (int i = 0; i < last_cell_mem_ptr.size(); i++)
+            last_cell_mem_ptr.data()[i] = 0;
         topology.add(cldnn::mutable_data(outputCellID, last_cell_mem));
         primitiveIDs[outputCellID] = outputCellID;
     }
@@ -575,8 +601,10 @@ void Program::CreateDynamicLSTM(cldnn::topology& topology, InferenceEngine::CNNL
 }
 
 void Program::CreateRNNPrimitive(cldnn::topology& topology, InferenceEngine::CNNLayerPtr &layer) {
+    printf("CreateRNNPrimitive %d\n", layer->insData.size() > 3);
     if (layer->insData.size() > 3) {
         CreateDynamicLSTM(topology, layer);
+        printf("Created RNNPrimitive %d\n", layer->insData.size() > 3);
     } else {
         CreateRegularLSTM(topology, layer);
     }

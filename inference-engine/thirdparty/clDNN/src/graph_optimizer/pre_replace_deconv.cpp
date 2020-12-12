@@ -241,6 +241,7 @@ void pre_replace_deconv::run(program_impl& p) {
                 auto target_weights_layout = layout{ weights_layout.data_type, weights_layout.format, target_weights_size };
 
                 {
+                     printf("void pre_replace_deconv\n");
                      memory_impl::ptr data_to_allocate = p.get_engine().allocate_memory(target_weights_layout, 0);
 
                      std::vector<float> weights_vec_float;

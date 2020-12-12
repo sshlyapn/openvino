@@ -1014,6 +1014,8 @@ void prepare_conv_eltw_read_write_opt::conv_eltwise_read_write_opt(program_impl&
     }
 
     // buffer shared between primitives, if second input is mutable data, then we can reuse this memory
+    if (!second_input_node->is_type<mutable_data>())
+        printf("void prepare_conv_eltw_read_write_opt::conv_eltwise_read_write_opt\n");
     auto shared_buffer_mem = second_input_node->is_type<mutable_data>()
                                  ? second_input_node->as<mutable_data>().get_attached_memory_ptr()
                                  : p.get_engine().allocate_memory(node->get_output_layout(), 0);
