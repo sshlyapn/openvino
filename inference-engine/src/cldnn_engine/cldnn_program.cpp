@@ -938,6 +938,8 @@ cldnn::primitive_id Program::CreatePrimitiveFromBlob(cldnn::topology& topology,
         return bufIter->second;
     }
 
+    printf("Create memory for %s\n", primID.c_str());
+
     auto mem = cldnn::memory::allocate(*m_engine, blobLayout, 0, false);
     auto tmpPointer = mem.pointer<char>();  // implicitly maps buffer - unmap in destructor
     auto buf = tmpPointer.data();

@@ -49,17 +49,21 @@ struct memory_impl : refcounted_obj<memory_impl> {
         // - To have zero paddings
         // - To be completely filled with data
         if (!format::is_weights_format(l.format) || format::is_winograd(l.format) || format::is_image_2d(l.format)) {
+            printf("Memory reset is needed\n");
             return true;
         }
 
         if (l.data_padding.lower_size() != tensor(0) || l.data_padding.upper_size() != tensor(0)) {
+            printf("Memory reset is needed\n");
             return true;
         }
 
         if (_bytes_count == (l.data_type == data_types::bin ? ceil_div(l.count(), 32) : l.count()) * data_type_traits::size_of(l.data_type)) {
+            printf("Return false for memory reset. Simple data format\n");
             return false;
         }
 
+        printf("Memory reset is needed\n");
         return true;
     }
 
