@@ -41,7 +41,7 @@
 #include <utility>
 #include <map>
 
-// #define DEBUG_DUMP_PATH "cldnn_dump/"
+// #define DEBUG_DUMP_PATH "./cldnn_dump/"
 
 #ifdef DEBUG_DUMP_PATH
 #include <iomanip>
@@ -700,6 +700,7 @@ void network_impl::allocate_mutable_data_for_streams(std::vector<std::shared_ptr
 
         if (is_secondary_stream()) {
             // Alloc new buffer for this stream and copy data to have valid initial state
+            printf("allocate_mutable_data_for_streams\n");
             memory_impl::ptr result = get_engine().allocate_memory(mem->get_layout(), get_id(), false);
             {
                 mem_lock<char> src(mem);
@@ -758,6 +759,7 @@ void network_impl::transfer_memory_to_device(std::shared_ptr<primitive_inst> ins
     if (alloc_type == allocation_type::usm_host || alloc_type == allocation_type::usm_shared) {
         // Allocate and transfer memory
         auto& mem_pool = inst_mem.get_engine()->get_memory_pool();
+        printf("void network_impl::transfer_memory_to_device\n");
         auto device_mem = inst_mem.get_engine()->allocate_memory(
             inst_mem.get_layout(),
             allocation_type::usm_device,

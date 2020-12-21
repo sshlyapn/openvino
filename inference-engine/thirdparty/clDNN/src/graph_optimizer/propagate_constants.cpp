@@ -27,6 +27,8 @@
 #include <memory>
 #include <utility>
 
+#include <chrono>
+
 using namespace cldnn;
 
 // ToDo remove friendship relation from  program_node and program_impl
@@ -36,7 +38,14 @@ void propagate_constants::run(program_impl& p) {
             handle_constant(p, *node);
     }
 
+    printf("Constant Propagation time\n");
+    auto t0 = std::chrono::high_resolution_clock::now();
+
     auto&& to_replace = calculate(p.get_engine(), p.get_options());
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    auto time = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+    printf("Constant Propagation time %lu\n", time);
 
     // remove all nodes which are no longer relevant, i.e. nodes which:
     // 1. are constants, and

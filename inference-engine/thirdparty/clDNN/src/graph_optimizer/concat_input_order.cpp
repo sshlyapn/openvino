@@ -71,6 +71,7 @@ void shuffle_weights(data_node& node, const std::vector<shuffle_range>& ranges) 
     auto wei_layout = node.get_output_layout();
     auto& old_weights_memory = node.get_attached_memory();
     bool need_reset = static_cast<bool>(wei_layout.data_padding) || wei_layout.format.is_blocked();
+    printf("void shuffle_weights\n");
     auto new_weights_memory = old_weights_memory.get_engine()->allocate_memory(wei_layout, old_weights_memory.get_net_id(), need_reset);
 
     auto bytes_per_elem = data_type_traits::size_of(wei_layout.data_type);

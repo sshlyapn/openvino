@@ -42,6 +42,7 @@ memory_impl::ptr attach_or_copy_data(network_impl& network, memory_impl& mem) {
         return (memory_impl::ptr) & mem;
     }
 
+    printf("memory_impl::ptr attach_or_copy_data\n");
     memory_impl::ptr result = engine.allocate_memory(mem.get_layout(), network.get_id(), false);
     mem_lock<char> src(mem);
     mem_lock<char> dst(result);

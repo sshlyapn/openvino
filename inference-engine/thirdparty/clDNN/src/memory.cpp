@@ -26,6 +26,7 @@ memory memory::allocate(const engine& engine, const layout& layout, uint32_t net
     if (size == 0)
         throw std::invalid_argument("size should be more than 0");
 
+    // Allocate memory from Plugin side
     allocation_type type = engine.get()->get_lockable_preffered_memory_allocation_type(layout.format.is_image_2d());
     return memory(engine.get()->allocate_memory(layout, type, net_id, reset).detach());
 }

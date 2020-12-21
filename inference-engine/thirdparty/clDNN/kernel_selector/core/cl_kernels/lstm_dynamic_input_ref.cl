@@ -40,6 +40,7 @@ KERNEL(lstm_dynamic_input_ref)(
         const uint weights_idx = GET_FILTER_INDEX(WEIGHTS, 0, 0, dir, y, x);
         dot_prod += (ACCUMULATOR_TYPE)(input[input_idx] * weights[weights_idx]);
     }
+    printf("LSTM: %d %d %d %d. %d\n", y, batch, dir, timestep, INPUT0_SIZE_X);
 
 #if BIAS_TERM
     dot_prod += (ACCUMULATOR_TYPE)biases[GET_DATA_INDEX(BIAS, 0, 0, dir, y)];
