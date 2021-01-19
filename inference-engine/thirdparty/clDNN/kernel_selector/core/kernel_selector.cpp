@@ -269,7 +269,7 @@ KernelList kernel_selector_base::GetAllImplementations(const Params& params, con
             sortedImpls.end(),
             std::back_inserter(result),
             [](const PriorityPair& impl) {
-                return std::move(impl.second);
+                return impl.second;
             });
     }
 

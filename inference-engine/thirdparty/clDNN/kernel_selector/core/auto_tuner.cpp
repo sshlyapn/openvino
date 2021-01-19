@@ -34,9 +34,12 @@ TuningCache::TuningCache(const std::string& cacheFilePath, bool createMode)
     std::ifstream tuningFile(cacheFilePath);
 
     if (tuningFile && tuningFile.good()) {
-        std::stringstream buffer;
-        buffer << tuningFile.rdbuf();
-        cache.Parse(buffer.str().c_str());
+        // Temprorary reset to check CentOS76 CI test failure
+        // std::stringstream buffer;
+        // buffer << tuningFile.rdbuf();
+        // cache.Parse(buffer.str().c_str());
+        rapidjson::IStreamWrapper isw{ tuningFile };
+        cache.ParseStream(isw);
     } else {
         if (!createMode) {
             throw std::runtime_error("Tuning file: " + cacheFilePath +
