@@ -223,7 +223,7 @@ device_info_internal::device_info_internal(const cl::Device& device) {
 
     supports_subgroups_short = extensions.find("cl_intel_subgroups_short") != std::string::npos;
 
-    supports_imad = get_imad_support(device);
+    supports_imad = true;
     supports_immad = false;
 
     max_threads_per_execution_unit = 7;

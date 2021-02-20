@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2021 Intel Corporation
+﻿// Copyright (C) 2018-2021 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -73,6 +73,8 @@
 #include "cldnn_executable_network.h"
 #include "cldnn_custom_layer.h"
 #include "cldnn_itt.h"
+#include <fstream>
+#include <iomanip>
 
 #ifdef __linux__
 # include <dlfcn.h>
@@ -132,6 +134,10 @@ static bool disableReduceDecomposition(const std::shared_ptr<const ngraph::Node>
 InferenceEngine::CNNNetwork clDNNEngine::CloneAndTransformNetwork(const InferenceEngine::CNNNetwork& network,
                                                                   const CLDNNPlugin::Config& config) const {
     OV_ITT_SCOPED_TASK(itt::domains::CLDNNPlugin, "clDNNEngine::CloneAndTransformNetwork");
+    using ms = std::chrono::duration<double, std::ratio<1, 1000>>;
+    using Time = std::chrono::high_resolution_clock;
+
+    auto start = Time::now();
     CNNNetwork clonedNetwork = InferenceEngine::details::cloneNetwork(network);
 
     if (clonedNetwork.getFunction()) {
@@ -325,6 +331,19 @@ InferenceEngine::CNNNetwork clDNNEngine::CloneAndTransformNetwork(const Inferenc
             manager.run_passes(nGraphFunc);
         }
     }
+
+    auto stop = Time::now();
+    std::chrono::duration<float> fs = stop - start;
+    ms opt_pass_time = std::chrono::duration_cast<ms>(fs);
+    std::ofstream graph_opt_log("./cldnn_graph_optimizer.csv", std::fstream::app);
+    if (graph_opt_log.is_open()) {
+        graph_opt_log << std::setw(4) << "0" << ","
+            << std::setw(5) << "0" << ","
+            << std::setw(4) << "0" << ","
+            << std::setw(8) << opt_pass_time.count() << ","
+            << "Clone time" << "\n";
+        graph_opt_log.close();
+    }
     return clonedNetwork;
 }
 
@@ -394,6 +413,10 @@ void clDNNEngine::UpdateConfig(CLDNNPlugin::Config& conf, const InferenceEngine:
 ExecutableNetworkInternal::Ptr clDNNEngine::LoadExeNetworkImpl(const InferenceEngine::CNNNetwork &network,
                                                                const std::map<std::string, std::string> &config) {
     OV_ITT_SCOPED_TASK(itt::domains::CLDNNPlugin, "clDNNEngine::LoadExeNetworkImpl");
+    using ms = std::chrono::duration<double, std::ratio<1, 1000>>;
+    using Time = std::chrono::high_resolution_clock;
+
+    auto start = Time::now();
     // verification of supported input
     InferenceEngine::InputsDataMap _networkInputs = network.getInputsInfo();
     check_inputs(_networkInputs);
@@ -434,10 +457,31 @@ ExecutableNetworkInternal::Ptr clDNNEngine::LoadExeNetworkImpl(const InferenceEn
     context = m_defaultContext;
 
     auto transformedNetwork = CloneAndTransformNetwork(network, conf);
-    {
-        OV_ITT_SCOPED_TASK(itt::domains::CLDNNPlugin, "clDNNEngine::LoadExeNetworkImpl::CreateExeNetwork");
-        return std::make_shared<CLDNNExecNetwork>(transformedNetwork, context, conf);
+
+    auto res = std::make_shared<CLDNNExecNetwork>(transformedNetwork, context, conf);
+
+    auto stop = Time::now();
+    std::chrono::duration<float> fs = stop - start;
+    ms opt_pass_time = std::chrono::duration_cast<ms>(fs);
+    std::ofstream graph_opt_log("./cldnn_graph_optimizer.csv", std::fstream::app);
+    if (graph_opt_log.is_open()) {
+        graph_opt_log.setf(std::ios::fixed, std::ios::floatfield);
+        graph_opt_log << std::setprecision(4);
+        // print graph_opt_log header
+        graph_opt_log << "PassID,"
+            << "Proccesing_order,"
+            << "primitives_optimized,"
+            << "Pass_time,"
+            << "Pass_name"
+            << "\n";
+        graph_opt_log << std::setw(4) << "0" << ","
+            << std::setw(5) << "0" << ","
+            << std::setw(4) << "0" << ","
+            << std::setw(8) << opt_pass_time.count() << ","
+            << "LoadExecNetwork init time (create context and parse config)" << "\n";
+        graph_opt_log.close();
     }
+    return res;
 }
 
 ExecutableNetworkInternal::Ptr clDNNEngine::LoadExeNetworkImpl(const InferenceEngine::CNNNetwork &network,

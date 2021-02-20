@@ -52,6 +52,7 @@ public:
     uint32_t get_pass_count() { return pass_count; }
     uint32_t inc_pass_count() { return ++pass_count; }
     ~pass_manager() {}
+    void close() { graph_opt_log.close(); }
 
 private:
     uint32_t pass_count;
@@ -66,6 +67,31 @@ private:
     void run(program_impl& p) override;
     void add_reorder(program_impl& p, program_node* node, program_node* usr);
 };
+
+class compile_program : public base_pass {
+public:
+    compile_program() : base_pass("compile_program") {}
+
+private:
+    void run(program_impl& p) override;
+};
+
+class transfer_memory_to_device_pass : public base_pass {
+public:
+    transfer_memory_to_device_pass() : base_pass("transfer_memory_to_device") {}
+
+private:
+    void run(program_impl& p) override;
+};
+
+class cleanup_pass : public base_pass {
+public:
+    cleanup_pass() : base_pass("cleanup") {}
+
+private:
+    void run(program_impl& p) override;
+};
+
 
 class add_reshape_to_primitives : public base_pass {
 public:
