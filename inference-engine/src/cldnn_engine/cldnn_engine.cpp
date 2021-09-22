@@ -451,9 +451,9 @@ InferenceEngine::CNNNetwork clDNNEngine::CloneAndTransformNetwork(const Inferenc
 
                 return LayerTransformation::isAsymmetricQuantization(node) || WeightableLayerTransformation::isAsymmetricOnWeights(node);
             });
-            lptPassConfig->set_callback<MatMulTransformation>([](const_node_ptr& node) -> bool {
-                return MatMulTransformation::is3DTensorOnActivations(node);
-            });
+            // lptPassConfig->set_callback<MatMulTransformation>([](const_node_ptr& node) -> bool {
+            //     return MatMulTransformation::is3DTensorOnActivations(node);
+            // });
 
             lptManager.register_pass<LowPrecision>(supportedPrecisions, perTensorQuantization);
             lptManager.run_passes(nGraphFunc);
