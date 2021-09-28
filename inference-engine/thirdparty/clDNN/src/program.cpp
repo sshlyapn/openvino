@@ -1388,7 +1388,9 @@ void program::set_layout_optimizer_attributes(layout_optimizer& lo) {
 
 #ifdef ENABLE_ONEDNN_FOR_GPU
     auto& engine = get_engine();
-    if (engine.get_device_info().supports_immad && engine.configuration().queue_type == queue_types::in_order)
+    if (engine.get_device_info().supports_immad && engine.configuration().queue_type == queue_types::in_order) {
+        printf("Gen12 optimzied\n");
         lo.set_optimization_attribute(layout_optimizer::optimization_attributes_type::use_onednn_impls, 1);
+    }
 #endif
 }
