@@ -75,6 +75,16 @@ public:
         kernel_selector::eltwise_mode mode = convert_to_eltwise_mode(get_primitive()->mode);
         return std::make_shared<kernel_selector::eltwise_fuse_params>(mode);
     }
+
+    bool needs_onednn_sum_post_op(layout& input_layout) const {
+        auto mode = get_primitive()->mode;
+        if (mode == eltwise_mode::sum &&
+            (input_layout.size.spatial[0] > 1 || input_layout.size.spatial[1] > 1 || input_layout.size.batch[0] > 1)) {
+            return true;
+        }
+
+        return false;
+    }
 };
 
 using eltwise_node = typed_program_node<eltwise>;
