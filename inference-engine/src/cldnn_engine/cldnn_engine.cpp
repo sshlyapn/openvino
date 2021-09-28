@@ -379,9 +379,15 @@ InferenceEngine::CNNNetwork clDNNEngine::CloneAndTransformNetwork(const Inferenc
             OV_ITT_SCOPED_TASK(itt::domains::CLDNNPlugin, "clDNNEngine::TransformNetwork::LPT");
             using namespace ngraph::pass::low_precision;
 
+            bool convertFP16ToFP32 = false;
+#ifdef ENABLE_ONEDNN_FOR_GPU
+            auto deviceInfo = GetDeviceInfo(config.key_config_map);
+            convertFP16ToFP32 = deviceInfo.supports_immad;
+#endif
+
             // Conversion to FP32 might be needed for quantized models that face any fp16 related issues (e.g. overflow) for non-quantized layers
             // With this key users can work-around such issues
-            if (!config.enable_fp16_for_quantized_models) {
+            if (!config.enable_fp16_for_quantized_models || convertFP16ToFP32) {
                 ngraph::pass::Manager manager;
                 manager.register_pass<ngraph::pass::ConvertPrecision>(precisions_array {{ ngraph::element::f16, ngraph::element::f32 }});
                 manager.run_passes(nGraphFunc);
