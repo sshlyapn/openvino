@@ -746,12 +746,13 @@ layout layout_optimizer::get_expected_layout(layout const& current_layout,
     int ofm_per_group = output_layout.size.feature[0] / prim->groups;
     int ifm_per_group = input_layout.size.feature[0] / prim->groups;
     int compute_block = 32;
-    bool valid_grouped = !is_dw && prim->groups > 1 && (ofm_per_group % compute_block == 0 &&  ifm_per_group % compute_block == 0);
+    bool valid_grouped = !is_dw && prim->groups > 1 && (ofm_per_group % compute_block == 0 && ifm_per_group % compute_block == 0);
     bool valid_int8_dw = is_dw && output_layout.size.batch[0] % 16 == 0;
     bool non_grouped = prim->groups == 1;
     bool is_2d = input_layout.format.spatial_num() == 2;
     bool valid_post_ops = get_post_ops_count(node) <= 32;
     bool use_onednn_impls = _optimization_attributes.use_onednn_impls;
+    bool i8_u8_input = input_layout.data_type == data_types::u8 || input_layout.data_type == data_types::i8;
 
     if (use_onednn_impls) {
         for (auto& fo : node.get_fused_primitives()) {
@@ -771,7 +772,7 @@ layout layout_optimizer::get_expected_layout(layout const& current_layout,
     /* ***************************** OneDNN layout selection part ****************************** */
     /* ***************************************************************************************** */
 
-    if (use_onednn_impls && (input_layout.data_type == data_types::u8 || input_layout.data_type == data_types::i8)) {
+    if (use_onednn_impls && i8_u8_input) {
         if ((non_grouped || valid_grouped || valid_int8_dw) && valid_post_ops && is_2d) {
             if (input_layout.size.batch[0] % 16 == 0)
                 expected_format = cldnn::format::bs_fs_yx_bsv32_fsv32;
@@ -793,11 +794,11 @@ layout layout_optimizer::get_expected_layout(layout const& current_layout,
             expected_format = imad_case(node);
         }
         expected_tensor = current_layout.size;
-    } else if (use_onednn_impls && node.input().get_output_layout().data_type == data_types::f16 && is_2d) {
+    } else if (use_onednn_impls && input_layout.data_type == data_types::f16 && is_2d) {
         expected_tensor = current_layout.size;
 
         if (input_layout.size.batch[0] >= 16 && valid_post_ops) {
-            if (node.get_output_layout().data_type == node.input().get_output_layout().data_type) {
+            if (output_layout.data_type == input_layout.data_type) {
                 if (non_grouped || valid_grouped || is_dw) {
                     expected_format = cldnn::format::bs_fs_yx_bsv32_fsv16;
                 } else {
@@ -809,12 +810,12 @@ layout layout_optimizer::get_expected_layout(layout const& current_layout,
         } else {
             expected_format = cldnn::format::b_fs_yx_fsv16;
         }
-    } else if (use_onednn_impls && node.input().get_output_layout().data_type == data_types::f16 &&
-               convolution_bs_fs_yx_bsv16_fsv16_opt(node.input().get_output_layout(), output_layout, weights_layout, prim) &&
-               (node.get_output_layout().data_type == node.input().get_output_layout().data_type ||
-               !data_type_traits::is_floating_point(node.input().get_output_layout().data_type))) {
+    } else if (use_onednn_impls && input_layout.data_type == data_types::f16 &&
+               convolution_bs_fs_yx_bsv16_fsv16_opt(input_layout, output_layout, weights_layout, prim) &&
+               (output_layout.data_type == input_layout.data_type ||
+               !data_type_traits::is_floating_point(input_layout.data_type))) {
         expected_tensor = current_layout.size;
-        if (prim->groups == 1 || (output_layout.size.feature[0] % 16 == 0 && node.input().get_output_layout().size.feature[0] % 16 == 0)) {
+        if (prim->groups == 1 || (output_layout.size.feature[0] % 16 == 0 && input_layout.size.feature[0] % 16 == 0)) {
             expected_format = cldnn::format::bs_fs_yx_bsv32_fsv16;
         } else {
             expected_format = cldnn::format::bs_fs_yx_bsv16_fsv16;
@@ -824,7 +825,7 @@ layout layout_optimizer::get_expected_layout(layout const& current_layout,
     /* *************************** Native impls layout selection part ************************** */
     /* ***************************************************************************************** */
 
-    } else if ((input_layout.data_type == data_types::u8 || input_layout.data_type == data_types::i8)) {
+    } else if (i8_u8_input) {
         if ((_optimization_attributes.bs_fs_yx_bsv16_fsv16_network && expected_tensor.batch[0] % 16 == 0 &&
              convolution_bs_fs_yx_bsv16_fsv16_opt(input_layout, output_layout, weights_layout, prim))) {
             expected_format = cldnn::format::bs_fs_yx_bsv16_fsv16;
@@ -1107,7 +1108,7 @@ impl_types layout_optimizer::get_preferred_impl_type(program_node& node, format 
         }
 
         if (node.is_type<convolution>()) {
-            // onednn doesn't have good support for groups with fsv16 fmt
+            // oneDNN doesn't have good support for groups with fsv16 fmt
             auto& conv = node.as<convolution>();
             auto input_layout = conv.input().get_output_layout();
             bool fp16_input = input_layout.data_type == data_types::f16;
@@ -1127,13 +1128,13 @@ impl_types layout_optimizer::get_preferred_impl_type(program_node& node, format 
             bool valid_ic = input_layout.size.feature[0] >= 16;
             bool valid_groups = deconv.get_primitive()->groups == 1;
             bool valid_post_ops = get_post_ops_count(node) <= 10;
-            bool valid_batch = input_layout.size.batch[0] < 16;  // oneDNNs optimized kernel doesn't support big batches yet
+            bool valid_batch = input_layout.size.batch[0] < 16;  // oneDNN's optimized kernel doesn't support big batches yet
             bool valid_params = valid_ic && valid_groups && valid_post_ops && valid_batch;
             if (!valid_params)
                 impl_candidate = impl_types::ocl;
         }
 
-        // [WA] onednn doesn't support > 32 post-ops. Remove once onednn improve post-ops for GPU.
+        // [WA] oneDNN doesn't support > 32 post-ops. Remove once oneDNN improve post-ops for GPU.
         if (get_post_ops_count(node) > 32) {
            impl_candidate = impl_types::ocl;
         }
@@ -1167,7 +1168,7 @@ impl_types layout_optimizer::get_preferred_impl_type(program_node& node, format 
         if (node.is_type<convolution>() && node.as<convolution>().weights_zero_points_term())
             impl_candidate = impl_types::ocl;
 
-        // OneDNN doesn't support sum post ops for deconvolutions
+        // oneDNN doesn't support sum post ops for deconvolutions
         if (node.is_type<deconvolution>() && impl_candidate == impl_types::onednn) {
             for (auto& fused_op : node.get_fused_primitives()) {
                 if (fused_op.node->is_type<eltwise>() && fused_op.deps.size() == 1) {
