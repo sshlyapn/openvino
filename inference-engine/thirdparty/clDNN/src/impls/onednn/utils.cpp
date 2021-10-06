@@ -98,8 +98,21 @@ dnnl::memory::format_tag convert_data_format(cldnn::format fmt) {
     }
 }
 
-dnnl::memory::desc layout_to_memory_desc(cldnn::layout l, dnnl::memory::format_tag target_fmt, bool flatten) {
-    size_t rank = cldnn::format::dimension(l.format);
+void treat_layout_as_bf(cldnn::layout& l) {
+    auto rank = cldnn::format::dimension(l.format);
+    auto last_spatial_dim_idx = rank - 2 - 1;
+
+    l.size.batch[0] *= l.size.feature[0];
+    l.size.feature[0] = l.size.spatial[last_spatial_dim_idx];
+    for (int i = last_spatial_dim_idx - 1; i > 0; i--)
+        l.size.spatial[i - 1] = l.size.spatial[i];
+    l.size.spatial[last_spatial_dim_idx] = 1;
+}
+
+dnnl::memory::desc layout_to_memory_desc(cldnn::layout l, dnnl::memory::format_tag target_fmt, bool flatten, bool treat_as_bf) {
+    if (treat_as_bf)
+        treat_layout_as_bf(l);
+
     dnnl::memory::dims dims;
     dnnl::memory::dims padded_dims;
     dnnl::memory::dims padded_offset;
@@ -115,6 +128,7 @@ dnnl::memory::desc layout_to_memory_desc(cldnn::layout l, dnnl::memory::format_t
         dims = flatten_tensor(l.size);
         padded_dims = dims;
     } else {
+        auto rank = cldnn::format::dimension(l.format);
         auto padded_size = l.size + l.data_padding.lower_size() + l.data_padding.upper_size();
         auto offset = l.data_padding.lower_size();
         dims = convert_tensor(l.size, rank, cldnn::format::is_grouped(l.format));
@@ -208,6 +222,8 @@ dnnl::algorithm convert_activation_func(cldnn::activation_func func) {
         case cldnn::activation_func::hyperbolic_tan: return dnnl::algorithm::eltwise_tanh;
         case cldnn::activation_func::swish: return dnnl::algorithm::eltwise_swish;
         case cldnn::activation_func::abs: return dnnl::algorithm::eltwise_abs;
+        case cldnn::activation_func::gelu: return dnnl::algorithm::eltwise_gelu;
+        case cldnn::activation_func::hswish: return dnnl::algorithm::eltwise_hardswish;
         default: throw std::runtime_error("Unsupported activation func for onednn primitive " + std::to_string(static_cast<int>(func)));
     }
 }
@@ -231,6 +247,7 @@ cldnn::format convert_format(dnnl::memory::format_tag fmt, bool is_grouped) {
         }
     } else {
         switch (fmt) {
+        case dnnl::memory::format_tag::ab: return cldnn::format::oiyx;
         case dnnl::memory::format_tag::abcd: return cldnn::format::oiyx;
         case dnnl::memory::format_tag::bacd: return cldnn::format::oiyx;
         case dnnl::memory::format_tag::BAcd16b16a: return cldnn::format::is_os_yx_isv16_osv16;

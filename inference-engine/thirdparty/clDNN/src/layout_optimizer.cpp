@@ -863,6 +863,57 @@ layout layout_optimizer::get_expected_layout(layout const& current_layout,
     return layout(expected_data_type, expected_format, expected_tensor);
 }
 
+bool data_types_are_suitable_for_onednn(program_node& node) {
+    auto in_dt = node.get_dependency(0).get_output_layout().data_type;
+    auto out_dt = node.get_output_layout().data_type;
+
+    if (in_dt == data_types::f32 && !node.is_type<fully_connected>())
+        return false;
+
+    if (node.is_type<pooling>()) {
+        if (!data_type_traits::is_floating_point(in_dt) && in_dt != out_dt)
+            return false;
+        if ((in_dt == data_types::i8 || in_dt == data_types::u8) && out_dt != data_types::f32)
+            return true;
+        if (in_dt == data_types::f16 || out_dt == data_types::f16)
+            return true;
+        if (out_dt == data_types::f32)
+            return true;
+        if (in_dt == data_types::i32 || out_dt == data_types::i32)
+            return true;
+        if ((in_dt == data_types::i8 || out_dt == data_types::i8) || (in_dt == data_types::u8 || out_dt == data_types::u8))
+            return true;
+    } else if (node.is_type<convolution>() || node.is_type<deconvolution>()) {
+        bool is_conv = node.is_type<convolution>();
+        auto wei_dt = is_conv ? node.as<convolution>().weights().get_output_layout().data_type :
+                                node.as<deconvolution>().weights().get_output_layout().data_type;
+
+        if ((in_dt == data_types::f16 && wei_dt == data_types::f16) && (out_dt == data_types::f16 || out_dt == data_types::f32 || out_dt == data_types::i8))
+            return true;
+        if ((in_dt == data_types::i8 || in_dt == data_types::u8) && wei_dt == data_types::i8 &&
+            (out_dt == data_types::f32 || out_dt == data_types::i32 || out_dt == data_types::i8 || out_dt == data_types::u8))
+            return true;
+    } else if (node.is_type<fully_connected>()) {
+        auto& fc_node = node.as<fully_connected>();
+        auto wei_dt = fc_node.weights().get_output_layout().data_type;
+
+        // Use OneDNN`s FC only for FP data types
+        // if ((in_dt != data_types::f16 || wei_dt != data_types::f16) && (in_dt != data_types::f32 || wei_dt != data_types::f32))
+        //     return false;
+
+        if ((in_dt == data_types::f16 && wei_dt == data_types::f16) &&
+            (out_dt == data_types::f16 || out_dt == data_types::f32 || out_dt == data_types::i8))
+            return true;
+        if (in_dt == data_types::f32 && wei_dt == data_types::f32)
+            return true;
+        if ((in_dt == data_types::i8 || in_dt == data_types::u8) && (wei_dt == data_types::i8) &&
+            (out_dt == data_types::i8 || out_dt == data_types::u8 || out_dt == data_types::i32 || out_dt == data_types::f32))
+            return true;
+    }
+
+    return false;
+}
+
 layout layout_optimizer::get_expected_layout(layout const& current_layout,
                                              binary_convolution_node const& node,
                                              layout const& /*output_or_weights_layout*/) {
@@ -1048,6 +1099,54 @@ impl_types layout_optimizer::get_preferred_impl_type(program_node& node, format 
                 break;
             }
         }
+    } else if (node.is_type<fully_connected>()) {
+        // [WA] Disabled as it caused hangs. Also, onednn inner_product primitive is not optimized yet.
+        impl_types impl_candidate = impl_types::onednn;
+
+        if (!data_types_are_suitable_for_onednn(node)) {
+            impl_candidate = impl_types::ocl;
+        }
+
+        for (auto& fo : node.get_fused_primitives()) {
+            if (fo.node->is_type<eltwise>()) {
+                auto in_layout = node.get_dependency(fo.dep_start_idx).get_output_layout();
+                auto out_layout = node.get_output_layout();
+                auto in_dt = in_layout.data_type;
+                auto out_dt = out_layout.data_type;
+                if ((out_layout.count() == in_layout.count()) &&
+                    (data_type_traits::is_floating_point(in_dt) || data_type_traits::is_floating_point(out_dt)) && in_dt != out_dt) {
+                    impl_candidate = impl_types::ocl;
+                    break;
+                }
+            }
+        }
+
+        // OneDNN doesn't support sum post ops for FC
+        // if (impl_candidate == impl_types::onednn) {
+        //     for (auto& fused_op : node.get_fused_primitives()) {
+        //         if (fused_op.node->is_type<eltwise>() && fused_op.deps.size() == 1) {
+        //             auto eltw_in_layout = node.get_dependency(fused_op.dep_start_idx).get_output_layout();
+        //             if (fused_op.node->as<eltwise>().get_primitive()->needs_onednn_sum_post_op(eltw_in_layout)) {
+        //                 impl_candidate = impl_types::ocl;
+        //                 break;
+        //             }
+        //         }
+        //     }
+        // }
+
+        // OneDnn doesn't support spatial dimensions for output
+        auto fc_prim = node.as<fully_connected>().get_primitive();
+        auto out_layout = node.get_output_layout();
+        size_t rank = cldnn::format::dimension(out_layout.format);
+        auto size = out_layout.size;
+        for (int i = 0; i < rank - 2 - (fc_prim->input_size == 3 ? 1 : 0); i++) {
+            if (size.spatial[i] != 1) {
+                impl_candidate = impl_types::ocl;
+                break;
+            }
+        }
+
+        preferred_impl = impl_candidate;
     }
 
     return preferred_impl;
