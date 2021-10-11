@@ -750,11 +750,11 @@ layout layout_optimizer::get_expected_layout(layout const& current_layout,
     bool valid_int8_dw = is_dw && output_layout.size.batch[0] % 16 == 0;
     bool non_grouped = prim->groups == 1;
     bool is_2d = input_layout.format.spatial_num() == 2;
-    bool valid_post_ops = get_post_ops_count(node) <= 32;
+    bool onednn_valid_post_ops = get_post_ops_count(node) <= 32;
     bool use_onednn_impls = _optimization_attributes.use_onednn_impls;
     bool i8_u8_input = input_layout.data_type == data_types::u8 || input_layout.data_type == data_types::i8;
 
-    if (use_onednn_impls && valid_post_ops) {
+    if (use_onednn_impls && onednn_valid_post_ops) {
         for (auto& fo : node.get_fused_primitives()) {
             if (fo.node->is_type<eltwise>()) {
                 auto in_layout = node.get_dependency(fo.dep_start_idx).get_output_layout();
@@ -763,142 +763,133 @@ layout layout_optimizer::get_expected_layout(layout const& current_layout,
                 auto out_dt = out_layout.data_type;
                 if ((out_layout.count() == in_layout.count()) &&
                     (data_type_traits::is_floating_point(in_dt) || data_type_traits::is_floating_point(out_dt)) && in_dt != out_dt) {
-                    valid_post_ops = false;
+                    onednn_valid_post_ops = false;
                     break;
                 }
             }
         }
     }
 
-    /* ***************************************************************************************** */
-    /* ***************************** OneDNN layout selection part ****************************** */
-    /* ***************************************************************************************** */
-
-    if (use_onednn_impls && i8_u8_input) {
-        if ((non_grouped || valid_grouped || valid_int8_dw) && valid_post_ops && is_2d) {
-            if (input_layout.size.batch[0] % 16 == 0)
-                expected_format = cldnn::format::bs_fs_yx_bsv32_fsv32;
-            else
-                expected_format = cldnn::format::b_fs_yx_fsv32;
-        } else if ((_optimization_attributes.bs_fs_yx_bsv16_fsv16_network && expected_tensor.batch[0] % 16 == 0 &&
-            convolution_bs_fs_yx_bsv16_fsv16_opt(input_layout, output_layout, weights_layout, prim)) && is_2d) {
-            expected_format = cldnn::format::bs_fs_yx_bsv16_fsv16;
-        } else if ((_optimization_attributes.b_fs_yx_fsv16_network &&
-            convolution_b_fs_yx_fsv16_opt(input_layout, output_layout, weights_layout, prim)) && is_2d) {
-            if (is_dw)
-                expected_format = cldnn::format::b_fs_yx_fsv32;
-            else
-                expected_format = cldnn::format::b_fs_yx_fsv16;
-        } else if ((_optimization_attributes.b_fs_zyx_fsv16_network &&
-            convolution_b_fs_zyx_fsv16_opt(input_layout, output_layout, weights_layout, prim))) {
-            expected_format = cldnn::format::b_fs_zyx_fsv16;
-        } else {
-            expected_format = imad_case(node);
-        }
-        expected_tensor = current_layout.size;
-    } else if (use_onednn_impls && input_layout.data_type == data_types::f16 && is_2d) {
-        expected_tensor = current_layout.size;
-
-        if (input_layout.size.batch[0] >= 16 && valid_post_ops) {
-            if (output_layout.data_type == input_layout.data_type) {
-                if (non_grouped || valid_grouped || is_dw) {
-                    expected_format = cldnn::format::bs_fs_yx_bsv32_fsv16;
-                } else {
+    if (use_onednn_impls) {
+        /* ***************************** OneDNN impls format selection part ****************************** */
+        if (i8_u8_input) {
+            if ((non_grouped || valid_grouped || valid_int8_dw) && onednn_valid_post_ops && is_2d) {
+                if (input_layout.size.batch[0] % 16 == 0)
+                    expected_format = cldnn::format::bs_fs_yx_bsv32_fsv32;
+                else
+                    expected_format = cldnn::format::b_fs_yx_fsv32;
+            } else if ((_optimization_attributes.b_fs_yx_fsv16_network &&
+                       convolution_b_fs_yx_fsv16_opt(input_layout, output_layout, weights_layout, prim)) && is_2d) {
+                if (is_dw)
+                    expected_format = cldnn::format::b_fs_yx_fsv32;
+                else
                     expected_format = cldnn::format::b_fs_yx_fsv16;
+            } else {
+                expected_format = imad_case(node);
+            }
+            expected_tensor = current_layout.size;
+        } else if (input_layout.data_type == data_types::f16 && is_2d) {
+            expected_tensor = current_layout.size;
+
+            if (input_layout.size.batch[0] >= 16 && onednn_valid_post_ops) {
+                if (output_layout.data_type == input_layout.data_type) {
+                    if (non_grouped || valid_grouped || is_dw) {
+                        expected_format = cldnn::format::bs_fs_yx_bsv32_fsv16;
+                    } else {
+                        expected_format = cldnn::format::b_fs_yx_fsv16;
+                    }
+                } else {
+                    expected_format = cldnn::format::bs_fs_yx_bsv16_fsv16;
                 }
+            } else {
+                expected_format = cldnn::format::b_fs_yx_fsv16;
+            }
+        } else if (input_layout.data_type == data_types::f16 &&
+                convolution_bs_fs_yx_bsv16_fsv16_opt(input_layout, output_layout, weights_layout, prim) &&
+                (output_layout.data_type == input_layout.data_type ||
+                !data_type_traits::is_floating_point(input_layout.data_type))) {
+            expected_tensor = current_layout.size;
+            if (prim->groups == 1 || (output_layout.size.feature[0] % 16 == 0 && input_layout.size.feature[0] % 16 == 0)) {
+                expected_format = cldnn::format::bs_fs_yx_bsv32_fsv16;
             } else {
                 expected_format = cldnn::format::bs_fs_yx_bsv16_fsv16;
             }
-        } else {
-            expected_format = cldnn::format::b_fs_yx_fsv16;
         }
-    } else if (use_onednn_impls && input_layout.data_type == data_types::f16 &&
-               convolution_bs_fs_yx_bsv16_fsv16_opt(input_layout, output_layout, weights_layout, prim) &&
-               (output_layout.data_type == input_layout.data_type ||
-               !data_type_traits::is_floating_point(input_layout.data_type))) {
-        expected_tensor = current_layout.size;
-        if (prim->groups == 1 || (output_layout.size.feature[0] % 16 == 0 && input_layout.size.feature[0] % 16 == 0)) {
-            expected_format = cldnn::format::bs_fs_yx_bsv32_fsv16;
-        } else {
-            expected_format = cldnn::format::bs_fs_yx_bsv16_fsv16;
-        }
-
-    /* ***************************************************************************************** */
-    /* *************************** Native impls layout selection part ************************** */
-    /* ***************************************************************************************** */
-
-    } else if (i8_u8_input) {
-        if ((_optimization_attributes.bs_fs_yx_bsv16_fsv16_network && expected_tensor.batch[0] % 16 == 0 &&
-             convolution_bs_fs_yx_bsv16_fsv16_opt(input_layout, output_layout, weights_layout, prim))) {
-            expected_format = cldnn::format::bs_fs_yx_bsv16_fsv16;
-        } else if ((_optimization_attributes.b_fs_yx_fsv16_network &&
-            convolution_b_fs_yx_fsv16_opt(input_layout, output_layout, weights_layout, prim))) {
-            expected_format = cldnn::format::b_fs_yx_fsv16;
-        } else if ((_optimization_attributes.b_fs_zyx_fsv16_network &&
-            convolution_b_fs_zyx_fsv16_opt(input_layout, output_layout, weights_layout, prim))) {
-            expected_format = cldnn::format::b_fs_zyx_fsv16;
-        } else {
-            expected_format = imad_case(node);
-        }
-        expected_tensor = current_layout.size;
-    } else if (_optimization_attributes.b_fs_zyx_fsv16_network &&
-               convolution_b_fs_zyx_fsv16_opt(input_layout, output_layout, weights_layout, prim)) {
-        expected_tensor = current_layout.size;
-        if ((current_layout.data_type == data_types::f32 && expected_tensor.batch[0] % 16 == 0) ||
-            (current_layout.data_type == data_types::f16 && expected_tensor.batch[0] % 32 == 0))
-            expected_format = cldnn::format::bs_fs_zyx_bsv16_fsv16;
-        else
-            expected_format = cldnn::format::b_fs_zyx_fsv16;
-
-    } else if (current_layout.format == format::bfzyx) {
-        expected_tensor = current_layout.size;
-        expected_format = cldnn::format::bfzyx;
-    } else if (_optimization_attributes.bs_fs_yx_bsv16_fsv16_network &&
-               convolution_bs_fs_yx_bsv16_fsv16_opt(node.input().get_output_layout(), output_layout, weights_layout, prim)) {
-        expected_tensor = current_layout.size;
-        expected_format = cldnn::format::bs_fs_yx_bsv16_fsv16;
-    } else if (_optimization_attributes.fs_b_yx_fsv32_network && !node.get_transposed() &&
-               ((convolution_fs_b_yx_fsv32_opt(input_layout,
-                                               output_layout,
-                                               weights_layout, prim) ||
-               (((node.get_dependency(0).is_type<convolution>() && is_format_optimized(node.get_dependency(0).as<convolution>(), format::fs_b_yx_fsv32))
-                || (_optimized_conv_count.at({format::fs_b_yx_fsv32, false}) * cond_denom > 0.8f)) &&
-                convolution_fs_b_yx_fsv32_opt(input_layout,
-                                              output_layout,
-                                              weights_layout, prim, true))))) {
-        // Chose fs_b_yx_fsv32 layout in two cases: 1-st: the current conv primitive totally supports fs_b_yx_fsv32 layout
-        //                                          2-nd: the previous conv primitive supports fs_b_yx_fsv32 layout and
-        //                                                current conv primitives supports this one with weak restrictions -
-        //                                                that should be cheaper than reordering data to another layout
-        expected_tensor = current_layout.size;
-        expected_format = format::fs_b_yx_fsv32;
-    } else if (should_select_b_fs_yx_fsv16_layout(node, weights_layout)) {
-        expected_tensor = current_layout.size;
-        expected_format = cldnn::format::b_fs_yx_fsv16;
-    } else if (current_layout.data_type == data_types::f16 &&
-                layout_optimizer::convolution_byxf_opt(input_layout, current_layout, weights_layout, node) &&
-                (users_for_convolution_byxf_opt(node, 2) || deps_for_convolution_byxf_opt(node, 2)) &&
-                // todo: remove this condition when yxfb optimizations will be disabled
-                current_layout.format != cldnn::format::yxfb && current_layout.size.batch[0] == 1) {
-        expected_tensor = current_layout.size;
-        expected_format = cldnn::format::byxf;
-    } else if (current_layout.format == format::b_fs_yx_fsv4 ||
-                current_layout.format == format::os_is_yx_osv16_isv4) {
-        // imad case
-        // nothing to do, just go out from here.
-    } else if (layout_optimizer::convolution_bfyx_opt(current_layout, weights_layout, prim) ||
-                (_output_size_handling_enabled && prim->with_output_size) || node.get_transposed()) {
-        {
-            expected_tensor = current_layout.size;
-            if (current_layout.format == format::b_fs_zyx_fsv16 || current_layout.format == format::bs_fs_zyx_bsv16_fsv16)
-                expected_format = cldnn::format::bfzyx;
-            else
-                expected_format = cldnn::format::bfyx;
-        }
-
     } else {
-        expected_tensor = current_layout.size;
-        expected_format = cldnn::format::yxfb;
+        /* *************************** Native impls format selection part ************************** */
+        if (i8_u8_input) {
+            if ((_optimization_attributes.bs_fs_yx_bsv16_fsv16_network && expected_tensor.batch[0] % 16 == 0 &&
+                convolution_bs_fs_yx_bsv16_fsv16_opt(input_layout, output_layout, weights_layout, prim))) {
+                expected_format = cldnn::format::bs_fs_yx_bsv16_fsv16;
+            } else if ((_optimization_attributes.b_fs_yx_fsv16_network &&
+                convolution_b_fs_yx_fsv16_opt(input_layout, output_layout, weights_layout, prim))) {
+                expected_format = cldnn::format::b_fs_yx_fsv16;
+            } else if ((_optimization_attributes.b_fs_zyx_fsv16_network &&
+                convolution_b_fs_zyx_fsv16_opt(input_layout, output_layout, weights_layout, prim))) {
+                expected_format = cldnn::format::b_fs_zyx_fsv16;
+            } else {
+                expected_format = imad_case(node);
+            }
+            expected_tensor = current_layout.size;
+        } else if (_optimization_attributes.b_fs_zyx_fsv16_network &&
+                convolution_b_fs_zyx_fsv16_opt(input_layout, output_layout, weights_layout, prim)) {
+            expected_tensor = current_layout.size;
+            if ((current_layout.data_type == data_types::f32 && expected_tensor.batch[0] % 16 == 0) ||
+                (current_layout.data_type == data_types::f16 && expected_tensor.batch[0] % 32 == 0))
+                expected_format = cldnn::format::bs_fs_zyx_bsv16_fsv16;
+            else
+                expected_format = cldnn::format::b_fs_zyx_fsv16;
+
+        } else if (current_layout.format == format::bfzyx) {
+            expected_tensor = current_layout.size;
+            expected_format = cldnn::format::bfzyx;
+        } else if (_optimization_attributes.bs_fs_yx_bsv16_fsv16_network &&
+                convolution_bs_fs_yx_bsv16_fsv16_opt(node.input().get_output_layout(), output_layout, weights_layout, prim)) {
+            expected_tensor = current_layout.size;
+            expected_format = cldnn::format::bs_fs_yx_bsv16_fsv16;
+        } else if (_optimization_attributes.fs_b_yx_fsv32_network && !node.get_transposed() &&
+                ((convolution_fs_b_yx_fsv32_opt(input_layout,
+                                                output_layout,
+                                                weights_layout, prim) ||
+                (((node.get_dependency(0).is_type<convolution>() && is_format_optimized(node.get_dependency(0).as<convolution>(), format::fs_b_yx_fsv32))
+                    || (_optimized_conv_count.at({format::fs_b_yx_fsv32, false}) * cond_denom > 0.8f)) &&
+                    convolution_fs_b_yx_fsv32_opt(input_layout,
+                                                output_layout,
+                                                weights_layout, prim, true))))) {
+            // Chose fs_b_yx_fsv32 layout in two cases: 1-st: the current conv primitive totally supports fs_b_yx_fsv32 layout
+            //                                          2-nd: the previous conv primitive supports fs_b_yx_fsv32 layout and
+            //                                                current conv primitives supports this one with weak restrictions -
+            //                                                that should be cheaper than reordering data to another layout
+            expected_tensor = current_layout.size;
+            expected_format = format::fs_b_yx_fsv32;
+        } else if (should_select_b_fs_yx_fsv16_layout(node, weights_layout)) {
+            expected_tensor = current_layout.size;
+            expected_format = cldnn::format::b_fs_yx_fsv16;
+        } else if (current_layout.data_type == data_types::f16 &&
+                    layout_optimizer::convolution_byxf_opt(input_layout, current_layout, weights_layout, node) &&
+                    (users_for_convolution_byxf_opt(node, 2) || deps_for_convolution_byxf_opt(node, 2)) &&
+                    // todo: remove this condition when yxfb optimizations will be disabled
+                    current_layout.format != cldnn::format::yxfb && current_layout.size.batch[0] == 1) {
+            expected_tensor = current_layout.size;
+            expected_format = cldnn::format::byxf;
+        } else if (current_layout.format == format::b_fs_yx_fsv4 ||
+                    current_layout.format == format::os_is_yx_osv16_isv4) {
+            // imad case
+            // nothing to do, just go out from here.
+        } else if (layout_optimizer::convolution_bfyx_opt(current_layout, weights_layout, prim) ||
+                    (_output_size_handling_enabled && prim->with_output_size) || node.get_transposed()) {
+            {
+                expected_tensor = current_layout.size;
+                if (current_layout.format == format::b_fs_zyx_fsv16 || current_layout.format == format::bs_fs_zyx_bsv16_fsv16)
+                    expected_format = cldnn::format::bfzyx;
+                else
+                    expected_format = cldnn::format::bfyx;
+            }
+
+        } else {
+            expected_tensor = current_layout.size;
+            expected_format = cldnn::format::yxfb;
+        }
     }
 
     return layout(expected_data_type, expected_format, expected_tensor);
@@ -912,7 +903,8 @@ layout layout_optimizer::get_expected_layout(layout const& current_layout,
     auto expected_data_type = current_layout.data_type;
     auto expected_format = current_layout.format;
     auto input_layout = node.get_dependency(0).get_output_layout();
-    auto is_2d = input_layout.format.spatial_num() == 2;
+    auto spatial_dims_num = input_layout.format.spatial_num();
+    auto is_2d = spatial_dims_num == 2;
     bool use_onednn_impls = _optimization_attributes.use_onednn_impls;
 
     bool onednn_valid_dt = input_layout.data_type == data_types::i8 ||
@@ -922,10 +914,10 @@ layout layout_optimizer::get_expected_layout(layout const& current_layout,
     bool onednn_valid_params = onednn_valid_dt &&
                                input_layout.size.feature[0] >= 16 &&
                                prim->groups == 1 &&
-                               /* get_post_ops_count(node) <= 10 */ false &&
+                               get_post_ops_count(node) <= 32 &&
                                input_layout.size.batch[0] < 16;  // oneDNNs optimized kernel doesn't support big batches yet
 
-    if (use_onednn_impls && onednn_valid_params) {
+    if (use_onednn_impls && onednn_valid_params && spatial_dims_num <= 3) {
         if (input_layout.data_type == data_types::f16) {
             if (input_layout.size.batch[0] < 16) {
                 expected_format = is_2d ? cldnn::format::b_fs_yx_fsv16 : cldnn::format::b_fs_zyx_fsv16;
@@ -1129,9 +1121,9 @@ impl_types layout_optimizer::get_preferred_impl_type(program_node& node, format 
             auto input_layout = deconv.input().get_output_layout();
             bool valid_ic = input_layout.size.feature[0] >= 16;
             bool valid_groups = deconv.get_primitive()->groups == 1;
-            bool valid_post_ops = get_post_ops_count(node) <= 10;
+            bool onednn_valid_post_ops = get_post_ops_count(node) <= 32;
             bool valid_batch = input_layout.size.batch[0] < 16;  // oneDNN's optimized kernel doesn't support big batches yet
-            bool valid_params = valid_ic && valid_groups && valid_post_ops && valid_batch;
+            bool valid_params = valid_ic && valid_groups && onednn_valid_post_ops && valid_batch;
             if (!valid_params)
                 impl_candidate = impl_types::ocl;
         }

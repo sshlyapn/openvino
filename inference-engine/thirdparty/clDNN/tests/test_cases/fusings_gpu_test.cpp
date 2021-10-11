@@ -141,6 +141,10 @@ public:
     static const int min_random = -200;
     static const int max_random = 200;
 
+    virtual cldnn::engine& get_engine() {
+        return engine;
+    }
+
     void SetUp() override {
         bo_fused.set_option(build_option::optimize_data(true));
         bo_not_fused.set_option(build_option::optimize_data(false));
@@ -203,7 +207,7 @@ public:
     }
 
     cldnn::memory::ptr get_mem(cldnn::layout l) {
-        auto prim = engine.allocate_memory(l);
+        auto prim = get_engine().allocate_memory(l);
         tensor s = l.size;
         if (l.data_type == data_types::bin) {
             VF<int32_t> rnd_vec = generate_random_1d<int32_t>(s.count() / 32, min_random, max_random);
@@ -223,7 +227,7 @@ public:
     }
 
     cldnn::memory::ptr get_mem(cldnn::layout l, float fill_value) {
-        auto prim = engine.allocate_memory(l);
+        auto prim = get_engine().allocate_memory(l);
         tensor s = l.size;
         if (l.data_type == data_types::bin) {
             VF<int32_t> rnd_vec(s.count() / 32, static_cast<int32_t>(fill_value));
@@ -242,7 +246,7 @@ public:
     }
 
     cldnn::memory::ptr get_repeatless_mem(cldnn::layout l, int min, int max) {
-        auto prim = engine.allocate_memory(l);
+        auto prim = get_engine().allocate_memory(l);
         tensor s = l.size;
         if (l.data_type == data_types::f32) {
             VF<float> rnd_vec = generate_random_norepetitions_1d<float>(s.count(), min, max);
@@ -263,7 +267,7 @@ public:
     }
 
     cldnn::memory::ptr get_mem(cldnn::layout l, int min, int max) {
-        auto prim = engine.allocate_memory(l);
+        auto prim = get_engine().allocate_memory(l);
         tensor s = l.size;
         if (l.data_type == data_types::f32) {
             VF<float> rnd_vec = generate_random_1d<float>(s.count(), min, max);
@@ -337,8 +341,9 @@ public:
 
     void execute(T& p) {
         auto input_prim = this->get_mem(get_input_layout(p));
-        network network_not_fused(this->engine, this->topology_non_fused, this->bo_not_fused);
-        network network_fused(this->engine, this->topology_fused, this->bo_fused);
+        auto& engine = BaseFusingTest<T>::get_engine();
+        network network_not_fused(engine, this->topology_non_fused, this->bo_not_fused);
+        network network_fused(engine, this->topology_fused, this->bo_fused);
         network_fused.set_input_data("input", input_prim);
         network_not_fused.set_input_data("input", input_prim);
 
@@ -528,6 +533,10 @@ public:
 #define CASE_CONV_U8S8_8 {1, 3, 4, 5}, {1, 32, 4, 5}, {1, 1, 3, 3}, tensor{1}, tensor{0, 0, -1, -1, 0, 0}, tensor{1}, 1, data_types::u8, format::bfyx, data_types::i8, format::bfyx, data_types::f32, format::bfyx
 #define CASE_CONV_U8S8_9 {16, 32, 5, 5}, {16, 32, 3, 3}, {1, 1, 1, 1}, tensor{1}, tensor{0}, tensor{1}, 1, data_types::u8, format::bs_fs_yx_bsv16_fsv16, data_types::i8, format::os_is_yx_osv16_isv16, data_types::f32, format::bfyx
 #define CASE_CONV_U8S8_10 {16, 32, 5, 5}, {16, 32, 3, 3}, {1, 1, 3, 3}, tensor{1}, tensor{0}, tensor{1}, 1, data_types::u8, format::bs_fs_yx_bsv16_fsv16, data_types::i8, format::os_is_yx_osv16_isv16, data_types::f32, format::bfyx
+#define CASE_CONV_U8S8_11 {32, 15, 4, 5}, {32, 30, 2, 3}, {1, 1, 3, 3}, tensor{1}, tensor{0}, tensor{1}, 1, data_types::u8, format::bfyx, data_types::i8, format::bfyx, data_types::f32, format::bfyx
+#define CASE_CONV_U8S8_12 {32, 15, 5, 5}, {32, 30, 3, 3}, {1, 1, 3, 3}, tensor{1}, tensor{0}, tensor{1}, 1, data_types::u8, format::bfyx, data_types::i8, format::bfyx, data_types::f32, format::bfyx
+#define CASE_CONV_U8S8_13 {32, 16, 4, 5}, {32, 32, 4, 5}, {1, 1, 1, 1}, tensor{1}, tensor{0}, tensor{1}, 1, data_types::u8, format::bfyx, data_types::i8, format::bfyx, data_types::f32, format::bfyx
+#define CASE_CONV_U8S8_14 {32, 17, 4, 5}, {32, 17, 4, 5}, {1, 1, 3, 3}, tensor{1}, tensor{0, 0, -1, -1, 0, 0}, tensor{1}, 17, data_types::u8, format::bfyx, data_types::i8, format::goiyx, data_types::f32, format::bfyx
 
 #define CASE_CONV_S8S8_1 {1, 15, 4, 5}, {1, 30, 2, 3}, {1, 1, 3, 3}, tensor{1}, tensor{0}, tensor{1}, 1, data_types::i8, format::bfyx, data_types::i8, format::bfyx, data_types::f32, format::bfyx
 #define CASE_CONV_S8S8_2 {1, 15, 5, 5}, {1, 30, 3, 3}, {1, 1, 3, 3}, tensor{1}, tensor{0}, tensor{1}, 1, data_types::i8, format::bfyx, data_types::i8, format::bfyx, data_types::f32, format::bfyx
@@ -540,6 +549,10 @@ public:
 #define CASE_CONV_S8S8_9 {16, 32, 5, 5}, {16, 32, 3, 3}, {1, 1, 1, 1}, tensor{1}, tensor{0}, tensor{1}, 1, data_types::i8, format::bs_fs_yx_bsv16_fsv16, data_types::i8, format::os_is_yx_osv16_isv16, data_types::f32, format::bfyx
 #define CASE_CONV_S8S8_10 {16, 32, 5, 5}, {16, 32, 3, 3}, {1, 1, 3, 3}, tensor{1}, tensor{0}, tensor{1}, 1, data_types::i8, format::bs_fs_yx_bsv16_fsv16, data_types::i8, format::os_is_yx_osv16_isv16, data_types::f32, format::bfyx
 #define CASE_CONV_S8S8_11 {1, 4, 1280, 720}, {1, 4, 1280, 720}, {1, 1, 5, 5}, tensor{1}, tensor{0, 0, -2, -2}, tensor{1}, 1, data_types::i8, format::b_fs_yx_fsv4, data_types::i8, format::os_is_yx_osv16_isv4, data_types::f32, format::bfyx
+#define CASE_CONV_S8S8_12 {32, 15, 4, 5}, {32, 30, 2, 3}, {1, 1, 3, 3}, tensor{1}, tensor{0}, tensor{1}, 1, data_types::i8, format::bfyx, data_types::i8, format::bfyx, data_types::f32, format::bfyx
+#define CASE_CONV_S8S8_13 {32, 15, 5, 5}, {32, 30, 3, 3}, {1, 1, 3, 3}, tensor{1}, tensor{0}, tensor{1}, 1, data_types::i8, format::bfyx, data_types::i8, format::bfyx, data_types::f32, format::bfyx
+#define CASE_CONV_S8S8_14 {32, 16, 4, 5}, {32, 32, 4, 5}, {1, 1, 1, 1}, tensor{1}, tensor{0}, tensor{1}, 1, data_types::i8, format::bfyx, data_types::i8, format::bfyx, data_types::f32, format::bfyx
+#define CASE_CONV_S8S8_15 {32, 17, 4, 5}, {32, 17, 4, 5}, {1, 1, 3, 3}, tensor{1}, tensor{0, 0, -1, -1, 0, 0}, tensor{1}, 17, data_types::i8, format::bfyx, data_types::i8, format::goiyx, data_types::f32, format::bfyx
 
 #define CASE_CONV3D_U8S8_1 {1, 15, 5, 4, 5}, {1, 30, 3, 2, 3}, {1, 1, 3, 3, 3}, tensor{1}, tensor{0}, tensor{1}, 1, data_types::u8, format::bfzyx, data_types::i8, format::bfzyx, data_types::f32, format::bfzyx
 #define CASE_CONV3D_U8S8_2 {1, 15, 5, 5, 5}, {1, 30, 3, 3, 3}, {1, 1, 3, 3, 3}, tensor{1}, tensor{0}, tensor{1}, 1, data_types::u8, format::bfzyx, data_types::i8, format::bfzyx, data_types::f32, format::bfzyx
@@ -601,6 +614,12 @@ public:
         network network_fused(this->engine, this->topology_fused, bo_fused);
         network_fused.set_input_data("input", input_prim);
         network_not_fused.set_input_data("input", input_prim);
+
+        auto forcing = bo_fused.get<build_option_type::force_implementations>()->forcing;
+
+        for (auto& a : forcing)
+            printf("%s %d\n", a.first.c_str(), (int)a.second.output_format);
+
 
         compare(network_not_fused, network_fused, p);
         auto find_conv = [](primitive_info& p) -> bool {
@@ -8818,3 +8837,210 @@ INSTANTIATE_TEST_SUITE_P(fusings_gpu, gather_elements_activation_scale_eltwise,
         gather_elements_test_params{ CASE_GATHER_ELEMENTS_FP32_6D_2, 2, 5 },
         gather_elements_test_params{ CASE_GATHER_ELEMENTS_FP32_6D_3, 2, 5 },
 }));
+
+#ifdef ENABLE_ONEDNN_FOR_GPU
+class ConvFusingTestOneDNN : public WeightsPrimitiveFusingTest<bc_test_params> {
+public:
+    cldnn::engine& onednn_engine = get_onednn_test_engine();
+
+    virtual cldnn::engine& get_engine() override {
+        return onednn_engine;
+    }
+
+    void execute(bc_test_params& p) {
+        auto input_prim = get_mem(get_input_layout(p));
+
+        auto impl_forcing_bo = bo_fused.get<build_option_type::force_implementations>();
+        const auto& impl_forcing = impl_forcing_bo->forcing;
+
+        auto forcing_format = p.input_format;
+        for (auto& forcing : impl_forcing) {
+            if (forcing.first == "conv_prim") {
+                forcing_format = forcing.second.output_format;
+            }
+        }
+
+        implementation_desc conv_impl = { forcing_format, "", impl_types::onednn };
+        bo_fused.set_option(build_option::force_implementations({ {"conv_prim", conv_impl} }));
+
+        network network_not_fused(get_engine(), this->topology_non_fused, bo_not_fused);
+        network network_fused(get_engine(), this->topology_fused, bo_fused);
+        network_fused.set_input_data("input", input_prim);
+        network_not_fused.set_input_data("input", input_prim);
+
+        compare(network_not_fused, network_fused, p);
+        auto find_conv = [](primitive_info& p) -> bool {
+            if (p.original_id == "conv_prim")
+                return true;
+            return false;
+        };
+
+        auto pi_fused = network_fused.get_primitives_info();
+        auto info_fused = std::find_if(pi_fused.begin(), pi_fused.end(), find_conv);
+        if (info_fused != pi_fused.end())
+            std::cout << "kernel: " << info_fused->kernel_id << std::endl;
+    }
+};
+
+class conv_fp32_activation_onednn : public ConvFusingTestOneDNN {};
+TEST_P(conv_fp32_activation_onednn, basic) {
+    auto p = GetParam();
+    create_topologies(input_layout("input", get_input_layout(p)),
+                 data("weights", get_mem(get_weights_layout(p))),
+                 data("bias", get_mem(get_bias_layout(p))),
+                 convolution("conv_prim", "input", {"weights"}, {"bias"}, p.groups, p.stride, p.pad, p.dilation),
+                 activation("activation", "conv_prim", activation_func::relu),
+                 reorder("reorder_bfyx", "activation", p.default_format, data_types::f32)
+    );
+
+    tolerance = 1e-2f;  // jit:ir oneDNN kernel has big computation error
+    execute(p);
+}
+
+INSTANTIATE_TEST_SUITE_P(fusings_gpu, conv_fp32_activation_onednn,
+                         ::testing::ValuesIn(std::vector<bc_test_params>{
+                                // Failed
+                                // bc_test_params{CASE_CONV_FP32_1, 2, 3},
+                                // bc_test_params{CASE_CONV_FP32_2, 2, 3},
+                                // bc_test_params{CASE_CONV_FP32_3, 2, 3},
+                                // bc_test_params{CASE_CONV_FP32_4, 2, 3},
+
+                                bc_test_params{CASE_CONV_FP16_1, 2, 3},
+                                bc_test_params{CASE_CONV_FP16_2, 2, 3},
+                                bc_test_params{CASE_CONV_FP16_3, 2, 3},
+                                bc_test_params{CASE_CONV_FP16_4, 2, 3},
+                        }));
+
+class conv_int8_eltwise_onednn_onednn : public ConvFusingTestOneDNN {};
+TEST_P(conv_int8_eltwise_onednn_onednn, u8_eltwise_out) {
+    auto p = GetParam();
+    create_topologies(input_layout("input", get_input_layout(p)),
+                 data("weights", get_mem(get_weights_layout(p))),
+                 data("bias", get_mem(get_bias_layout(p))),
+                 data("scale_data", get_mem(get_per_channel_layout(p), 1.0f/p.kernel.count())),
+                 convolution("conv_prim", "input", {"weights"}, {"bias"}, p.groups, p.stride, p.pad, p.dilation),
+                 eltwise("scale", {"conv_prim", "scale_data"}, eltwise_mode::prod, data_types::u8),
+                 reorder("reorder_bfyx", "scale", p.default_format, data_types::f32)
+    );
+
+    tolerance = 1.f;
+    execute(p);
+}
+
+INSTANTIATE_TEST_SUITE_P(fusings_gpu, conv_int8_eltwise_onednn_onednn,
+                         ::testing::ValuesIn(std::vector<bc_test_params>{
+                                bc_test_params{CASE_CONV_U8S8_1, 2, 3},
+                                bc_test_params{CASE_CONV_U8S8_2, 2, 3},
+                                bc_test_params{CASE_CONV_U8S8_3, 2, 3},
+                                bc_test_params{CASE_CONV_U8S8_4, 2, 3},
+                                bc_test_params{CASE_CONV_S8S8_1, 2, 3},
+                                bc_test_params{CASE_CONV_S8S8_2, 2, 3},
+                                bc_test_params{CASE_CONV_S8S8_3, 2, 3},
+                                bc_test_params{CASE_CONV_S8S8_4, 2, 3},
+
+                                bc_test_params{CASE_CONV_U8S8_11, 2, 3},
+                                bc_test_params{CASE_CONV_U8S8_12, 2, 3},
+                                bc_test_params{CASE_CONV_U8S8_13, 2, 3},
+                                bc_test_params{CASE_CONV_U8S8_14, 2, 3},
+                                bc_test_params{CASE_CONV_S8S8_12, 2, 3},
+                                bc_test_params{CASE_CONV_S8S8_13, 2, 3},
+                                bc_test_params{CASE_CONV_S8S8_14, 2, 3},
+                                bc_test_params{CASE_CONV_S8S8_15, 2, 3},
+
+                                bc_test_params{CASE_CONV3D_U8S8_1, 2, 3},
+                                bc_test_params{CASE_CONV3D_U8S8_2, 2, 3},
+                                bc_test_params{CASE_CONV3D_U8S8_3, 2, 3},
+                                bc_test_params{CASE_CONV3D_U8S8_4, 2, 3},
+                                bc_test_params{CASE_CONV3D_U8S8_5, 2, 3},
+                                bc_test_params{CASE_CONV3D_S8S8_1, 2, 3},
+                                bc_test_params{CASE_CONV3D_S8S8_2, 2, 3},
+                                bc_test_params{CASE_CONV3D_S8S8_3, 2, 3},
+                                bc_test_params{CASE_CONV3D_S8S8_4, 2, 3},
+                                bc_test_params{CASE_CONV3D_S8S8_5, 2, 3},
+                        }));
+
+class conv_int8_scale_shift_swish_onednn : public ConvFusingTestOneDNN {};
+TEST_P(conv_int8_scale_shift_swish_onednn, bsv32_fsv32) {
+    auto p = GetParam();
+    create_topologies(input_layout("input", get_input_layout(p)),
+                 data("weights", get_mem(get_weights_layout(p))),
+                 data("bias", get_mem(get_bias_layout(p))),
+                 data("scale_data", get_mem(get_per_channel_layout(p), 0, 1.0f/p.kernel.count())),
+                 data("shift_data", get_mem(get_per_channel_layout(p), 0, 1)),
+                 convolution("conv_prim", "input", {"weights"}, {"bias"}, p.groups, p.stride, p.pad, p.dilation),
+                 eltwise("scale1", {"conv_prim", "scale_data"}, eltwise_mode::prod),
+                 eltwise("shift0", {"conv_prim", "shift_data"}, eltwise_mode::sum),
+                 eltwise("shift1", {"scale1", "shift_data"}, eltwise_mode::sum),
+                 eltwise("mul", {"shift1", "shift0"}, eltwise_mode::prod),
+                 reorder("reorder_bfyx", "mul", p.default_format, data_types::f32)
+    );
+
+    tolerance = 1.f;
+    execute(p);
+}
+
+INSTANTIATE_TEST_SUITE_P(fusings_gpu, conv_int8_scale_shift_swish_onednn,
+                         ::testing::ValuesIn(std::vector<bc_test_params>{
+                                bc_test_params{CASE_CONV_U8S8_11, 4, 6},
+                                bc_test_params{CASE_CONV_U8S8_12, 4, 6},
+                                bc_test_params{CASE_CONV_U8S8_14, 4, 6},
+                                bc_test_params{CASE_CONV_S8S8_12, 4, 6},
+                                bc_test_params{CASE_CONV_S8S8_13, 4, 6},
+                                bc_test_params{CASE_CONV_S8S8_15, 4, 6},
+
+                                bc_test_params{CASE_CONV_U8S8_1, 4, 6},
+                                bc_test_params{CASE_CONV_U8S8_2, 4, 6},
+                                bc_test_params{CASE_CONV_U8S8_4, 4, 6},
+                                bc_test_params{CASE_CONV_S8S8_1, 4, 6},
+                                bc_test_params{CASE_CONV_S8S8_2, 4, 6},
+                                bc_test_params{CASE_CONV_S8S8_4, 4, 6},
+                        }));
+
+class conv_int8_activation_eltwise_quantize_onednn : public ConvFusingTestOneDNN {};
+TEST_P(conv_int8_activation_eltwise_quantize_onednn, bsv32_fsv32) {
+    auto p = GetParam();
+    create_topologies(input_layout("input", get_input_layout(p)),
+                 data("weights", get_mem(get_weights_layout(p))),
+                 data("bias", get_mem(get_bias_layout(p))),
+                 data("eltwise_data", get_mem(get_output_layout(p))),
+                 data("in_lo", get_mem(get_per_channel_layout(p), min_random, 0)),
+                 data("in_hi", get_mem(get_per_channel_layout(p), 1, max_random)),
+                 data("out_lo", get_mem(get_single_element_layout(p), -127)),
+                 data("out_hi", get_mem(get_single_element_layout(p), 127)),
+                 convolution("conv_prim", "input", { "weights" }, { "bias" }, p.groups, p.stride, p.pad, p.dilation),
+                 activation("activation", "conv_prim", activation_func::abs),
+                 eltwise("eltwise", "activation", "eltwise_data", eltwise_mode::sum),
+                 quantize("quantize", "eltwise", "in_lo", "in_hi", "out_lo", "out_hi", 255, data_types::i8),
+                 reorder("reorder_bfyx", "quantize", p.default_format, data_types::f32)
+    );
+
+    tolerance = 1.f;
+    execute(p);
+}
+
+INSTANTIATE_TEST_SUITE_P(fusings_gpu, conv_int8_activation_eltwise_quantize_onednn,
+                        ::testing::ValuesIn(std::vector<bc_test_params>{
+                                bc_test_params{CASE_CONV_U8S8_1, 2, 5},
+                                bc_test_params{CASE_CONV_U8S8_2, 2, 5},
+                                bc_test_params{CASE_CONV_U8S8_3, 2, 5},
+                                bc_test_params{CASE_CONV_U8S8_4, 2, 5},
+                                bc_test_params{CASE_CONV_U8S8_7, 2, 5},
+                                bc_test_params{CASE_CONV_U8S8_8, 2, 5},
+                                bc_test_params{CASE_CONV_U8S8_11, 2, 5},
+                                bc_test_params{CASE_CONV_U8S8_12, 2, 5},
+                                bc_test_params{CASE_CONV_U8S8_13, 2, 5},
+                                bc_test_params{CASE_CONV_U8S8_14, 2, 5},
+
+                                bc_test_params{CASE_CONV_S8S8_1, 2, 5},
+                                bc_test_params{CASE_CONV_S8S8_2, 2, 5},
+                                bc_test_params{CASE_CONV_S8S8_3, 2, 5},
+                                bc_test_params{CASE_CONV_S8S8_4, 2, 5},
+                                bc_test_params{CASE_CONV_S8S8_7, 2, 5},
+                                bc_test_params{CASE_CONV_S8S8_8, 2, 5},
+                                bc_test_params{CASE_CONV_S8S8_12, 2, 5},
+                                bc_test_params{CASE_CONV_S8S8_13, 2, 5},
+                                bc_test_params{CASE_CONV_S8S8_14, 2, 5},
+                                bc_test_params{CASE_CONV_S8S8_15, 2, 5},
+                        }));
+
+#endif
