@@ -27,6 +27,7 @@
 #include <cldnn/primitives/batch_to_space.hpp>
 #include <cldnn/primitives/space_to_batch.hpp>
 #include <cldnn/primitives/reduce.hpp>
+#include <cldnn/primitives/crop.hpp>
 
 #include <cmath>
 
@@ -130,7 +131,7 @@ struct normalize_test_params {
 template<typename T>
 class BaseFusingTest : public ::testing::TestWithParam<T> {
 public:
-    cldnn::engine& engine = get_test_engine();
+    cldnn::engine& engine = get_onednn_test_engine();
     cldnn::topology topology_fused;
     cldnn::topology topology_non_fused;
     cldnn::build_options bo_fused;
@@ -141,9 +142,9 @@ public:
     static const int min_random = -200;
     static const int max_random = 200;
 
-    virtual cldnn::engine& get_engine() {
-        return engine;
-    }
+    // virtual cldnn::engine& this->engine {
+    //     return engine;
+    // }
 
     void SetUp() override {
         bo_fused.set_option(build_option::optimize_data(true));
@@ -194,12 +195,22 @@ public:
         if (output_not_fused_prim->get_layout().data_type == data_types::f32) {
             cldnn::mem_lock<float> ref(output_not_fused_prim, get_test_stream());
             cldnn::mem_lock<float> output_ptr(output_fused_prim, get_test_stream());
+            // for (size_t i = 0; i < output_fused_prim->get_layout().count(); i++) {
+            //     printf("%.0f vs %.0f ", ref[i], output_ptr[i]);
+            //     if (i % 20 == 0)
+            //         printf("\n");
+            // }
             for (size_t i = 0; i < output_fused_prim->get_layout().count(); i++) {
                 ASSERT_NEAR(ref[i], output_ptr[i], tolerance) << "i = " << i;
             }
         } else {
             cldnn::mem_lock<int16_t> ref(output_not_fused_prim, get_test_stream());
             cldnn::mem_lock<int16_t> output_ptr(output_fused_prim, get_test_stream());
+            // for (size_t i = 0; i < output_fused_prim->get_layout().count(); i++) {
+            //     printf("%f vs %f", float16_to_float32(ref[i]), float16_to_float32(output_ptr[i]));
+            //     if (i % 20 == 0)
+            //         printf("\n");
+            // }
             for (size_t i = 0; i < output_fused_prim->get_layout().count(); i++) {
                 ASSERT_NEAR(float16_to_float32(ref[i]), float16_to_float32(output_ptr[i]), tolerance) << "i = " << i;
             }
@@ -207,12 +218,13 @@ public:
     }
 
     cldnn::memory::ptr get_mem(cldnn::layout l) {
-        auto prim = get_engine().allocate_memory(l);
+        auto prim = this->engine.allocate_memory(l);
         tensor s = l.size;
         if (l.data_type == data_types::bin) {
             VF<int32_t> rnd_vec = generate_random_1d<int32_t>(s.count() / 32, min_random, max_random);
             set_values(prim, rnd_vec);
         } else if (l.data_type == data_types::i8 || l.data_type == data_types::u8) {
+            printf("Get memory limits %d and %d\n", min_random, max_random);
             VF<uint8_t> rnd_vec = generate_random_1d<uint8_t>(s.count(), min_random, max_random);
             set_values(prim, rnd_vec);
         } else if (l.data_type == data_types::f16) {
@@ -227,7 +239,7 @@ public:
     }
 
     cldnn::memory::ptr get_mem(cldnn::layout l, float fill_value) {
-        auto prim = get_engine().allocate_memory(l);
+        auto prim = this->engine.allocate_memory(l);
         tensor s = l.size;
         if (l.data_type == data_types::bin) {
             VF<int32_t> rnd_vec(s.count() / 32, static_cast<int32_t>(fill_value));
@@ -238,6 +250,14 @@ public:
         } else if (l.data_type == data_types::f32) {
             VF<float> rnd_vec(s.count(), fill_value);
             set_values(prim, rnd_vec);
+        } else if (l.data_type == data_types::u8) {
+            printf("======= WARNING U8 ========\n");
+            VF<uint8_t> rnd_vec(s.count(), static_cast<uint8_t>(fill_value));
+            set_values(prim, rnd_vec);
+        } else if (l.data_type == data_types::i8) {
+            printf("======= WARNING I8 ========\n");
+            VF<int8_t> rnd_vec(s.count(), static_cast<int8_t>(fill_value));
+            set_values(prim, rnd_vec);
         } else {
             throw std::runtime_error("get_mem: Unsupported precision");
         }
@@ -246,7 +266,7 @@ public:
     }
 
     cldnn::memory::ptr get_repeatless_mem(cldnn::layout l, int min, int max) {
-        auto prim = get_engine().allocate_memory(l);
+        auto prim = this->engine.allocate_memory(l);
         tensor s = l.size;
         if (l.data_type == data_types::f32) {
             VF<float> rnd_vec = generate_random_norepetitions_1d<float>(s.count(), min, max);
@@ -267,7 +287,7 @@ public:
     }
 
     cldnn::memory::ptr get_mem(cldnn::layout l, int min, int max) {
-        auto prim = get_engine().allocate_memory(l);
+        auto prim = this->engine.allocate_memory(l);
         tensor s = l.size;
         if (l.data_type == data_types::f32) {
             VF<float> rnd_vec = generate_random_1d<float>(s.count(), min, max);
@@ -276,10 +296,22 @@ public:
             VF<FLOAT16> rnd_vec = generate_random_1d<FLOAT16>(s.count(), min, max);
             set_values(prim, rnd_vec);
         } else if (l.data_type == data_types::i8) {
+            printf("GENERATE MEMORY FOR INT8 %lu %s\n", s.count(), l.size.to_string().c_str());
             VF<int8_t> rnd_vec = generate_random_1d<int8_t>(s.count(), min, max);
+            // for (size_t i = 0; i < s.count(); i++) {
+            //     printf("%d ", rnd_vec[i]);
+            // }
+            // printf("\n");
             set_values(prim, rnd_vec);
-        }
-        else if (l.data_type == data_types::bin) {
+        } else if (l.data_type == data_types::u8) {
+            printf("GENERATE MEMORY FOR UINT8 %lu %s\n", s.count(), l.size.to_string().c_str());
+            VF<uint8_t> rnd_vec = generate_random_1d<uint8_t>(s.count(), min, max);
+            // for (size_t i = 0; i < s.count(); i++) {
+            //     printf("%d ", rnd_vec[i]);
+            // }
+            // printf("\n");
+            set_values(prim, rnd_vec);
+        } else if (l.data_type == data_types::bin) {
             VF<int32_t> rnd_vec = generate_random_1d<int32_t>(s.count() / 32, min, max);
             set_values(prim, rnd_vec);
         }
@@ -341,7 +373,7 @@ public:
 
     void execute(T& p) {
         auto input_prim = this->get_mem(get_input_layout(p));
-        auto& engine = BaseFusingTest<T>::get_engine();
+        auto& engine = this->engine;
         network network_not_fused(engine, this->topology_non_fused, this->bo_not_fused);
         network network_fused(engine, this->topology_fused, this->bo_fused);
         network_fused.set_input_data("input", input_prim);
@@ -8838,17 +8870,11 @@ INSTANTIATE_TEST_SUITE_P(fusings_gpu, gather_elements_activation_scale_eltwise,
         gather_elements_test_params{ CASE_GATHER_ELEMENTS_FP32_6D_3, 2, 5 },
 }));
 
-#ifdef ENABLE_ONEDNN_FOR_GPU
+#if defined(ENABLE_ONEDNN_FOR_GPU) || 1
 class ConvFusingTestOneDNN : public WeightsPrimitiveFusingTest<bc_test_params> {
 public:
-    cldnn::engine& onednn_engine = get_onednn_test_engine();
-
-    virtual cldnn::engine& get_engine() override {
-        return onednn_engine;
-    }
-
     void execute(bc_test_params& p) {
-        auto input_prim = get_mem(get_input_layout(p));
+        auto input_prim = p.data_type == data_types::u8 ? get_mem(get_input_layout(p), 0, 10) : get_mem(get_input_layout(p));
 
         auto impl_forcing_bo = bo_fused.get<build_option_type::force_implementations>();
         const auto& impl_forcing = impl_forcing_bo->forcing;
@@ -8863,8 +8889,8 @@ public:
         implementation_desc conv_impl = { forcing_format, "", impl_types::onednn };
         bo_fused.set_option(build_option::force_implementations({ {"conv_prim", conv_impl} }));
 
-        network network_not_fused(get_engine(), this->topology_non_fused, bo_not_fused);
-        network network_fused(get_engine(), this->topology_fused, bo_fused);
+        network network_not_fused(this->engine, this->topology_non_fused, bo_not_fused);
+        network network_fused(this->engine, this->topology_fused, bo_fused);
         network_fused.set_input_data("input", input_prim);
         network_not_fused.set_input_data("input", input_prim);
 
@@ -8882,6 +8908,73 @@ public:
     }
 };
 
+class conv_int8_eltwise_onednn : public ConvFusingTestOneDNN {};
+TEST_P(conv_int8_eltwise_onednn, u8_eltwise_sum_out) {
+    auto p = GetParam();
+
+    auto shift_layout = get_output_layout(p);
+    shift_layout.data_type = data_types::f32;
+
+    create_topologies(input_layout("input", get_input_layout(p)),
+                 data("weights", get_mem(get_weights_layout(p), 0, 2)),
+                 data("bias", get_mem(get_bias_layout(p))),
+                 data("shift_data", get_mem(shift_layout)),
+                 convolution("conv_prim", "input", {"weights"}, {"bias"}, p.groups, p.stride, p.pad, p.dilation),
+                 eltwise("shift", {"conv_prim", "shift_data"}, eltwise_mode::sum, data_types::f32),
+                 // Add 'not fusable' primitive to be able to test full size tensor sum
+                 crop("crop", "shift", get_output_layout(p).size, {0, 0, 0, 0}),
+                 reorder("reorder_bfyx", "crop", p.default_format, data_types::f32)
+    );
+
+    tolerance = 1.f;
+    execute(p);
+}
+
+// Produces zeros as output
+TEST_P(conv_int8_eltwise_onednn, u8_eltwise_prod_out) {
+    auto p = GetParam();
+
+    create_topologies(input_layout("input", get_input_layout(p)),
+                 data("weights", get_mem(get_weights_layout(p), -2, 2)),
+                 data("bias", get_mem(get_bias_layout(p))),
+                 data("scale_data", get_mem(get_per_channel_layout(p), 1.0f/p.kernel.count()) ),
+                 convolution("conv_prim", "input", {"weights"}, {"bias"}, p.groups, p.stride, p.pad, p.dilation),
+                 eltwise("scale", {"conv_prim", "scale_data"}, eltwise_mode::prod, data_types::u8),
+                 crop("crop", "scale", get_output_layout(p).size, {0, 0, 0, 0}),
+                 reorder("reorder_bfyx", "crop", p.default_format, data_types::f32)
+    );
+
+    tolerance = 1.f;
+    execute(p);
+}
+
+INSTANTIATE_TEST_SUITE_P(fusings_gpu, conv_int8_eltwise_onednn,
+                         ::testing::ValuesIn(std::vector<bc_test_params>{
+                                bc_test_params{CASE_CONV_U8S8_1, 2, 4},
+                                bc_test_params{CASE_CONV_U8S8_2, 2, 4},
+                                bc_test_params{CASE_CONV_U8S8_3, 2, 4},
+                                bc_test_params{CASE_CONV_S8S8_1, 2, 4},
+                                bc_test_params{CASE_CONV_S8S8_2, 2, 4},
+                                bc_test_params{CASE_CONV_S8S8_3, 2, 4},
+
+                                bc_test_params{CASE_CONV_U8S8_11, 2, 4},
+                                bc_test_params{CASE_CONV_U8S8_12, 2, 4},
+                                bc_test_params{CASE_CONV_U8S8_13, 2, 4},
+                                bc_test_params{CASE_CONV_S8S8_12, 2, 4},
+                                bc_test_params{CASE_CONV_S8S8_13, 2, 4},
+                                bc_test_params{CASE_CONV_S8S8_14, 2, 4},
+
+                                bc_test_params{CASE_CONV3D_U8S8_1, 3, 4},
+                                bc_test_params{CASE_CONV3D_U8S8_2, 3, 4},
+                                bc_test_params{CASE_CONV3D_U8S8_3, 3, 4},
+                                bc_test_params{CASE_CONV3D_U8S8_5, 3, 4},
+                                bc_test_params{CASE_CONV3D_S8S8_1, 3, 4},
+                                bc_test_params{CASE_CONV3D_S8S8_2, 3, 4},
+                                bc_test_params{CASE_CONV3D_S8S8_3, 3, 4},
+                                bc_test_params{CASE_CONV3D_S8S8_5, 3, 4},
+                        }));
+
+
 class conv_fp32_activation_onednn : public ConvFusingTestOneDNN {};
 TEST_P(conv_fp32_activation_onednn, basic) {
     auto p = GetParam();
@@ -8889,7 +8982,7 @@ TEST_P(conv_fp32_activation_onednn, basic) {
                  data("weights", get_mem(get_weights_layout(p))),
                  data("bias", get_mem(get_bias_layout(p))),
                  convolution("conv_prim", "input", {"weights"}, {"bias"}, p.groups, p.stride, p.pad, p.dilation),
-                 activation("activation", "conv_prim", activation_func::relu),
+                 activation("activation", "conv_prim", activation_func::abs),
                  reorder("reorder_bfyx", "activation", p.default_format, data_types::f32)
     );
 
@@ -8899,110 +8992,68 @@ TEST_P(conv_fp32_activation_onednn, basic) {
 
 INSTANTIATE_TEST_SUITE_P(fusings_gpu, conv_fp32_activation_onednn,
                          ::testing::ValuesIn(std::vector<bc_test_params>{
-                                // Failed
-                                // bc_test_params{CASE_CONV_FP32_1, 2, 3},
-                                // bc_test_params{CASE_CONV_FP32_2, 2, 3},
-                                // bc_test_params{CASE_CONV_FP32_3, 2, 3},
-                                // bc_test_params{CASE_CONV_FP32_4, 2, 3},
-
                                 bc_test_params{CASE_CONV_FP16_1, 2, 3},
                                 bc_test_params{CASE_CONV_FP16_2, 2, 3},
                                 bc_test_params{CASE_CONV_FP16_3, 2, 3},
                                 bc_test_params{CASE_CONV_FP16_4, 2, 3},
                         }));
 
-class conv_int8_eltwise_onednn_onednn : public ConvFusingTestOneDNN {};
-TEST_P(conv_int8_eltwise_onednn_onednn, u8_eltwise_out) {
+class conv_int8_quantize_u8_onednn : public ConvFusingTestOneDNN {};
+TEST_P(conv_int8_quantize_u8_onednn, per_channel) {
     auto p = GetParam();
     create_topologies(input_layout("input", get_input_layout(p)),
-                 data("weights", get_mem(get_weights_layout(p))),
+                 data("weights", get_mem(get_weights_layout(p), -2, 2)),
                  data("bias", get_mem(get_bias_layout(p))),
-                 data("scale_data", get_mem(get_per_channel_layout(p), 1.0f/p.kernel.count())),
+                 data("in_lo", get_mem(get_per_channel_layout(p), -10, 0)),
+                 data("in_hi", get_mem(get_per_channel_layout(p), 0, 10)),
+                 data("out_lo", get_mem(get_single_element_layout(p), 0)),
+                 data("out_hi", get_mem(get_single_element_layout(p), 255)),
                  convolution("conv_prim", "input", {"weights"}, {"bias"}, p.groups, p.stride, p.pad, p.dilation),
-                 eltwise("scale", {"conv_prim", "scale_data"}, eltwise_mode::prod, data_types::u8),
-                 reorder("reorder_bfyx", "scale", p.default_format, data_types::f32)
+                 quantize("quantize", "conv_prim", "in_lo", "in_hi", "out_lo", "out_hi", 256, data_types::u8),
+                 reorder("reorder_bfyx", "quantize", p.default_format, data_types::f32)
     );
 
-    tolerance = 1.f;
+    tolerance = 1.0f;
     execute(p);
 }
 
-INSTANTIATE_TEST_SUITE_P(fusings_gpu, conv_int8_eltwise_onednn_onednn,
-                         ::testing::ValuesIn(std::vector<bc_test_params>{
+TEST_P(conv_int8_quantize_u8_onednn, per_tensor) {
+    auto p = GetParam();
+    create_topologies(input_layout("input", get_input_layout(p)),
+                 data("weights", get_mem(get_weights_layout(p), -2, 2)),
+                 data("bias", get_mem(get_bias_layout(p), 0)),
+                 data("in_lo", get_mem(get_single_element_layout(p), -10)),
+                 data("in_hi", get_mem(get_single_element_layout(p), 10)),
+                 data("out_lo", get_mem(get_single_element_layout(p), 0)),
+                 data("out_hi", get_mem(get_single_element_layout(p), 255)),
+                 convolution("conv_prim", "input", {"weights"}, {"bias"}, p.groups, p.stride, p.pad, p.dilation),
+                 quantize("quantize", "conv_prim", "in_lo", "in_hi", "out_lo", "out_hi", 256, data_types::u8),
+                 reorder("reorder_bfyx", "quantize", p.default_format, data_types::f32)
+    );
+
+    tolerance = 1.0f;
+    execute(p);
+}
+
+INSTANTIATE_TEST_SUITE_P(fusings_gpu, conv_int8_quantize_u8_onednn,
+                        ::testing::ValuesIn(std::vector<bc_test_params>{
                                 bc_test_params{CASE_CONV_U8S8_1, 2, 3},
                                 bc_test_params{CASE_CONV_U8S8_2, 2, 3},
                                 bc_test_params{CASE_CONV_U8S8_3, 2, 3},
-                                bc_test_params{CASE_CONV_U8S8_4, 2, 3},
                                 bc_test_params{CASE_CONV_S8S8_1, 2, 3},
                                 bc_test_params{CASE_CONV_S8S8_2, 2, 3},
                                 bc_test_params{CASE_CONV_S8S8_3, 2, 3},
-                                bc_test_params{CASE_CONV_S8S8_4, 2, 3},
-
-                                bc_test_params{CASE_CONV_U8S8_11, 2, 3},
-                                bc_test_params{CASE_CONV_U8S8_12, 2, 3},
-                                bc_test_params{CASE_CONV_U8S8_13, 2, 3},
-                                bc_test_params{CASE_CONV_U8S8_14, 2, 3},
-                                bc_test_params{CASE_CONV_S8S8_12, 2, 3},
-                                bc_test_params{CASE_CONV_S8S8_13, 2, 3},
-                                bc_test_params{CASE_CONV_S8S8_14, 2, 3},
-                                bc_test_params{CASE_CONV_S8S8_15, 2, 3},
-
-                                bc_test_params{CASE_CONV3D_U8S8_1, 2, 3},
-                                bc_test_params{CASE_CONV3D_U8S8_2, 2, 3},
-                                bc_test_params{CASE_CONV3D_U8S8_3, 2, 3},
-                                bc_test_params{CASE_CONV3D_U8S8_4, 2, 3},
-                                bc_test_params{CASE_CONV3D_U8S8_5, 2, 3},
-                                bc_test_params{CASE_CONV3D_S8S8_1, 2, 3},
-                                bc_test_params{CASE_CONV3D_S8S8_2, 2, 3},
-                                bc_test_params{CASE_CONV3D_S8S8_3, 2, 3},
-                                bc_test_params{CASE_CONV3D_S8S8_4, 2, 3},
-                                bc_test_params{CASE_CONV3D_S8S8_5, 2, 3},
-                        }));
-
-class conv_int8_scale_shift_swish_onednn : public ConvFusingTestOneDNN {};
-TEST_P(conv_int8_scale_shift_swish_onednn, bsv32_fsv32) {
-    auto p = GetParam();
-    create_topologies(input_layout("input", get_input_layout(p)),
-                 data("weights", get_mem(get_weights_layout(p))),
-                 data("bias", get_mem(get_bias_layout(p))),
-                 data("scale_data", get_mem(get_per_channel_layout(p), 0, 1.0f/p.kernel.count())),
-                 data("shift_data", get_mem(get_per_channel_layout(p), 0, 1)),
-                 convolution("conv_prim", "input", {"weights"}, {"bias"}, p.groups, p.stride, p.pad, p.dilation),
-                 eltwise("scale1", {"conv_prim", "scale_data"}, eltwise_mode::prod),
-                 eltwise("shift0", {"conv_prim", "shift_data"}, eltwise_mode::sum),
-                 eltwise("shift1", {"scale1", "shift_data"}, eltwise_mode::sum),
-                 eltwise("mul", {"shift1", "shift0"}, eltwise_mode::prod),
-                 reorder("reorder_bfyx", "mul", p.default_format, data_types::f32)
-    );
-
-    tolerance = 1.f;
-    execute(p);
-}
-
-INSTANTIATE_TEST_SUITE_P(fusings_gpu, conv_int8_scale_shift_swish_onednn,
-                         ::testing::ValuesIn(std::vector<bc_test_params>{
-                                bc_test_params{CASE_CONV_U8S8_11, 4, 6},
-                                bc_test_params{CASE_CONV_U8S8_12, 4, 6},
-                                bc_test_params{CASE_CONV_U8S8_14, 4, 6},
-                                bc_test_params{CASE_CONV_S8S8_12, 4, 6},
-                                bc_test_params{CASE_CONV_S8S8_13, 4, 6},
-                                bc_test_params{CASE_CONV_S8S8_15, 4, 6},
-
-                                bc_test_params{CASE_CONV_U8S8_1, 4, 6},
-                                bc_test_params{CASE_CONV_U8S8_2, 4, 6},
-                                bc_test_params{CASE_CONV_U8S8_4, 4, 6},
-                                bc_test_params{CASE_CONV_S8S8_1, 4, 6},
-                                bc_test_params{CASE_CONV_S8S8_2, 4, 6},
-                                bc_test_params{CASE_CONV_S8S8_4, 4, 6},
                         }));
 
 class conv_int8_activation_eltwise_quantize_onednn : public ConvFusingTestOneDNN {};
 TEST_P(conv_int8_activation_eltwise_quantize_onednn, bsv32_fsv32) {
     auto p = GetParam();
+    layout eltwise_layout = get_output_layout(p);
+    eltwise_layout.format = format::bs_fs_yx_bsv32_fsv32;
     create_topologies(input_layout("input", get_input_layout(p)),
-                 data("weights", get_mem(get_weights_layout(p))),
+                 data("weights", get_mem(get_weights_layout(p), -1, 1)),
                  data("bias", get_mem(get_bias_layout(p))),
-                 data("eltwise_data", get_mem(get_output_layout(p))),
+                 data("eltwise_data", get_mem(eltwise_layout, -0.5, 0.5)),
                  data("in_lo", get_mem(get_per_channel_layout(p), min_random, 0)),
                  data("in_hi", get_mem(get_per_channel_layout(p), 1, max_random)),
                  data("out_lo", get_mem(get_single_element_layout(p), -127)),
@@ -9013,6 +9064,9 @@ TEST_P(conv_int8_activation_eltwise_quantize_onednn, bsv32_fsv32) {
                  quantize("quantize", "eltwise", "in_lo", "in_hi", "out_lo", "out_hi", 255, data_types::i8),
                  reorder("reorder_bfyx", "quantize", p.default_format, data_types::f32)
     );
+
+    implementation_desc conv_impl = { format::bs_fs_yx_bsv32_fsv32, "", impl_types::onednn };
+    bo_fused.set_option(build_option::force_implementations({ {"conv_prim", conv_impl} }));
 
     tolerance = 1.f;
     execute(p);
@@ -9043,4 +9097,44 @@ INSTANTIATE_TEST_SUITE_P(fusings_gpu, conv_int8_activation_eltwise_quantize_oned
                                 bc_test_params{CASE_CONV_S8S8_15, 2, 5},
                         }));
 
+
+
+class conv_int8_scale_shift_swish_onednn : public ConvFusingTestOneDNN {};
+TEST_P(conv_int8_scale_shift_swish_onednn, bsv32_fsv32) {
+    auto p = GetParam();
+    create_topologies(input_layout("input", get_input_layout(p)),
+                 data("weights", get_mem(get_weights_layout(p), -1, 1)),
+                 data("bias", get_mem(get_bias_layout(p))),
+                 data("scale_data", get_mem(get_per_channel_layout(p), 1.0f/p.kernel.count())),
+                 data("shift_data", get_mem(get_per_channel_layout(p), 1)),
+                 convolution("conv_prim", "input", {"weights"}, {"bias"}, p.groups, p.stride, p.pad, p.dilation),
+                 eltwise("scale0", {"conv_prim", "scale_data"}, eltwise_mode::sum),
+                 eltwise("shift0", {"scale0", "shift_data"}, eltwise_mode::sum),
+                 activation("sigmoid", "shift0", activation_func::swish),
+                 eltwise("scale1", {"sigmoid", "scale_data"}, eltwise_mode::sum),
+                 eltwise("shift1", {"scale1", "shift_data"}, eltwise_mode::sum),
+                 reorder("reorder_bfyx", "shift1", p.default_format, data_types::f32)
+    );
+
+    implementation_desc conv_impl = { format::bs_fs_yx_bsv32_fsv32, "", impl_types::onednn };
+    bo_fused.set_option(build_option::force_implementations({ {"conv_prim", conv_impl} }));
+
+    tolerance = 1.f;
+    execute(p);
+}
+
+INSTANTIATE_TEST_SUITE_P(fusings_gpu, conv_int8_scale_shift_swish_onednn,
+                         ::testing::ValuesIn(std::vector<bc_test_params>{
+                                bc_test_params{CASE_CONV_U8S8_1, 2, 7},
+                                bc_test_params{CASE_CONV_U8S8_2, 2, 7},
+                                bc_test_params{CASE_CONV_S8S8_1, 2, 7},
+                                bc_test_params{CASE_CONV_S8S8_2, 2, 7},
+
+                                bc_test_params{CASE_CONV_U8S8_11, 2, 7},
+                                bc_test_params{CASE_CONV_U8S8_12, 2, 7},
+                                bc_test_params{CASE_CONV_U8S8_14, 2, 7},
+                                bc_test_params{CASE_CONV_S8S8_12, 2, 7},
+                                bc_test_params{CASE_CONV_S8S8_13, 2, 7},
+                                bc_test_params{CASE_CONV_S8S8_15, 2, 7},
+                        }));
 #endif
