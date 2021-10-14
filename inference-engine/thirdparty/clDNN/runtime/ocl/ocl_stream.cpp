@@ -316,9 +316,9 @@ event::ptr ocl_stream::enqueue_kernel(kernel& kernel,
                                       const kernel_arguments_data& /* args */,
                                       std::vector<event::ptr> const& deps,
                                       bool is_output) {
-    auto& ocl_kernel = downcast<ocl::ocl_kernel>(kernel);
+    // auto& ocl_kernel = downcast<ocl::ocl_kernel>(kernel);
 
-    auto& kern = ocl_kernel.get_handle();
+    // auto& kern = ocl_kernel.get_handle();
     auto global = toNDRange(args_desc.workGroups.global);
     auto local = toNDRange(args_desc.workGroups.local);
     std::vector<cl::Event> dep_events;
@@ -337,10 +337,10 @@ event::ptr ocl_stream::enqueue_kernel(kernel& kernel,
 
     cl::Event ret_ev;
 
-    bool set_output_event = sync_method == sync_methods::events || is_output;
+    // bool set_output_event = sync_method == sync_methods::events || is_output;
 
     try {
-        _command_queue.enqueueNDRangeKernel(kern, cl::NullRange, global, local, dep_events_ptr, set_output_event ? &ret_ev : nullptr);
+        // _command_queue.enqueueNDRangeKernel(kern, cl::NullRange, global, local, dep_events_ptr, set_output_event ? &ret_ev : nullptr);
     } catch (cl::Error const& err) {
         throw ocl_error(err);
     }
