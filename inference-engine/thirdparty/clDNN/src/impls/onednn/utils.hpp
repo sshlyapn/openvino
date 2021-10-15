@@ -18,6 +18,7 @@ namespace onednn {
 template <typename T>
 cldnn::memory::ptr convert_zp_data_to_s32(const memory::ptr zp_memory);
 cldnn::format default_fmt_for_dims(size_t dims, bool is_grouped = false);
+void treat_layout_as_bf(cldnn::layout& l);
 
 // cldnn -> onednn
 dnnl::memory::dims convert_tensor(cldnn::tensor t, size_t dims = 2, bool is_grouped = false);
@@ -25,7 +26,10 @@ dnnl::memory::dims convert_spatials(cldnn::tensor t, size_t dims = 2);
 dnnl::memory::dims flatten_tensor(cldnn::tensor t);
 dnnl::memory::data_type convert_data_type(cldnn::data_types dt);
 dnnl::memory::format_tag convert_data_format(cldnn::format fmt);
-dnnl::memory::desc layout_to_memory_desc(cldnn::layout l, dnnl::memory::format_tag target_fmt = dnnl::memory::format_tag::undef, bool flatten = false);
+dnnl::memory::desc layout_to_memory_desc(cldnn::layout l,
+                                         dnnl::memory::format_tag target_fmt = dnnl::memory::format_tag::undef,
+                                         bool flatten = false,
+                                         bool treat_as_bf = false);
 dnnl::memory::format_tag get_format_by_desc(dnnl::memory::desc desc);
 dnnl::algorithm convert_activation_func(cldnn::activation_func func);
 
