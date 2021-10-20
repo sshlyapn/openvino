@@ -12,10 +12,16 @@
 #include <cmath>
 #include <algorithm>
 
+#include <impls/onednn/utils.hpp>
+
 using namespace cldnn;
 using namespace ::tests;
 
 TEST(activation_f32_fw_gpu, not_basic_yxfb) {
+
+    auto form = onednn::convert_data_format(cldnn::format::bfyx);
+    printf("%d\n", static_cast<int>(form));
+
     //  Input:
     //  1 0 -3  4  5
     //  0  2  3  4 -6

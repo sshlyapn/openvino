@@ -51,6 +51,16 @@ if (MSVC)
   )
 endif()
 
+if (ENABLE_ONEDNN_FOR_GPU)
+  set(__CLDNN_Directory__impls2 "${CLDNN__MAIN_DIR}/src/impls/")
+  message("Here2 ${__CLDNN_Directory__impls2}")
+  file(GLOB __CLDNN_Sources__onednn2
+      "${__CLDNN_Directory__impls2}/onednn/*.hpp"
+      "${__CLDNN_Directory__impls2}/onednn/*.cpp"
+    )
+  message("${__CLDNN_Sources__onednn2}")
+endif()
+
 set(__CLDNN_Directory__ks_main           "${CLDNN__KERNEL_SELECTOR_DIR}")
 set(__CLDNN_Directory__ks_core           "${CLDNN__KERNEL_SELECTOR_DIR}/core")
 set(__CLDNN_Directory__ks_common         "${CLDNN__KERNEL_SELECTOR_DIR}/common")
@@ -64,6 +74,7 @@ set(__CLDNN_AllSources
     ${__CLDNN_Sources__test_utils}
     ${__CLDNN_Sources__module_tests}
     ${__CLDNN_Sources__natvis}
+    ${__CLDNN_Sources__onednn2}
   )
 
 # =============================================== Filters ==============================================
@@ -110,6 +121,14 @@ if(WIN32)
 elseif((NOT ANDROID) AND (UNIX))
   target_link_libraries("${CLDNN_BUILD__PROJ}" PRIVATE pthread)
 endif()
+
+if(ENABLE_ONEDNN_FOR_GPU)
+  message("Here22 ${CLDNN_BUILD__PROJ}  ${ONEDNN_LIBRARY}   ${ONEDNN_INCLUDE_DIRS}")
+  target_link_libraries("${CLDNN_BUILD__PROJ}" PUBLIC ${ONEDNN_LIBRARY})
+  target_include_directories("${CLDNN_BUILD__PROJ}" PUBLIC ${ONEDNN_INCLUDE_DIRS})
+  target_compile_definitions("${CLDNN_BUILD__PROJ}" PUBLIC ENABLE_ONEDNN_FOR_GPU)
+endif()
+
 
 # ======================================================================================================
 
