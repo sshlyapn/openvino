@@ -30,6 +30,7 @@ TEST(activation_f32_fw_gpu, not_basic_yxfb) {
 
     auto& engine = get_test_engine();
 
+
     auto input = engine.allocate_memory({ data_types::f32, format::yxfb, { 1, 1, 5, 4 } });
     set_values(input,
     { 1.0f, 0.0f, -3.0f, 4.0f, 5.0f,

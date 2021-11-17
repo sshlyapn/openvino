@@ -23,6 +23,7 @@ KERNEL(activation)(
 #endif
     )
 {
+    printf("Activation %p\n", input);
 #if OUTPUT_DIMS == 5
     #define ORDER batch,feature,z,y,x
 #elif OUTPUT_DIMS == 4

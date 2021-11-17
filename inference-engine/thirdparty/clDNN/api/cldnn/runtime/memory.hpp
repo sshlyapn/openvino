@@ -26,7 +26,7 @@ enum class mem_lock_type : int32_t {
 
 struct memory {
     using ptr = std::shared_ptr<memory>;
-    using cptr = std::shared_ptr<const memory>;
+    using cptr = std::shared_ptr<memory>;
     memory(engine* engine, const layout& layout,  allocation_type type, bool reused = false);
 
     virtual ~memory();

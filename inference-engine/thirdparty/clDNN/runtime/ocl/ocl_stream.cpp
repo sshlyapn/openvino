@@ -61,12 +61,17 @@ void set_arguments_impl(ocl_kernel_type& kernel,
                 if (args[i].index < data.inputs.size() && data.inputs[args[i].index]) {
                     const auto& input_mem = data.inputs[args[i].index];
                     if (input_mem) {
-                        if (input_mem->get_layout().format.is_image_2d())
+                        if (input_mem->get_layout().format.is_image_2d()) {
                             status = kernel.setArg(i, std::dynamic_pointer_cast<const ocl::gpu_image2d>(input_mem)->get_buffer());
-                        else if (memory_capabilities::is_usm_type(input_mem->get_allocation_type()))
+                        } else if (memory_capabilities::is_usm_type(input_mem->get_allocation_type())) {
+                            auto mem = std::dynamic_pointer_cast<ocl::gpu_usm>(input_mem);
+                            auto& stream = mem->get_engine()->get_program_stream();
+
+                            printf("Pointer %p\n", mem->lock(stream));
                             status = kernel.setArgUsm(i, std::dynamic_pointer_cast<const ocl::gpu_usm>(input_mem)->get_buffer());
-                        else
+                        } else {
                             status = kernel.setArg(i, std::dynamic_pointer_cast<const ocl::gpu_buffer>(input_mem)->get_buffer());
+                        }
                     }
                 }
                 break;
