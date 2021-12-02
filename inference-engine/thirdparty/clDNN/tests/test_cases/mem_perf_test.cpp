@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
+#include <thread>
+
 #include "test_utils.h"
 #include "opencl_helper_instance.hpp"
 
@@ -764,3 +766,128 @@ TEST(mem_perf_test_to_host_and_back_to_device, DISABLED_buffer_copy_host_ptr_eve
 
     validate_result(static_cast<float*>(output_buffer_host.data()), img_size * img_size);
 }
+
+void run_calculation(std::shared_ptr<OpenCL> ocl_instance, cl::KernelIntel kernel, cl::CommandQueue queue) {
+    const size_t iters_num = 10000;
+    auto usm_helper = *ocl_instance->_usm_helper;
+
+    cl::UsmMemory input_buffer_host(usm_helper);
+    input_buffer_host.allocateHost(sizeof(uint8_t) * img_size * img_size);
+    cl::UsmMemory output_buffer_host(usm_helper);
+    output_buffer_host.allocateHost(sizeof(float) * img_size * img_size);
+    cl::UsmMemory input_buffer_device(usm_helper);
+    input_buffer_device.allocateDevice(sizeof(uint8_t) * img_size * img_size);
+    cl::UsmMemory output_buffer_device(usm_helper);
+    output_buffer_device.allocateDevice(sizeof(float) * img_size * img_size);
+
+    fill_input(static_cast<uint8_t*>(input_buffer_host.get()), img_size * img_size);
+    for (size_t i = 0; i < iters_num; i++) {
+        kernel.setArgUsm(0, input_buffer_device);
+        kernel.setArgUsm(1, output_buffer_device);
+        cl::Event ev;
+        queue.enqueueNDRangeKernel(kernel, cl::NDRange(), cl::NDRange(img_size*img_size), cl::NDRange(16), nullptr, &ev);
+        cl::WaitForEvents({ev});
+    }
+    printf("Hello from thread\n");
+}
+
+// TEST(blitter_test, reproducer) {
+//     auto ocl_instance = std::make_shared<OpenCL>();
+//     auto& ctx = ocl_instance->_context;
+//     auto& device = ocl_instance->_device;
+//     auto usm_helper = *ocl_instance->_usm_helper;
+
+//     if (!ocl_instance->_supports_usm)
+//         GTEST_SKIP();
+
+//     cl::Program program(ctx, kernel_code);
+//     checkStatus(program.build(device, ""), "build");
+//     cl::Kernel kernel1(program, "simple_reorder");
+//     cl::KernelIntel kernel(kernel1, usm_helper);
+
+//     const size_t threads_num = 16;
+//     std::vector<std::thread> threads;
+
+//     auto create_queue = [&](size_t stream_id) -> cl::CommandQueue {
+//         std::vector<cl_queue_properties> prop;
+//         cl_int error_code = CL_SUCCESS;
+
+//         cl_uint num_queues = 0;
+//         cl_uint family = 0;
+
+//         std::vector<cl_queue_family_properties_intel> qfprops = device.getInfo<CL_DEVICE_QUEUE_FAMILY_PROPERTIES_INTEL>();
+//         for (cl_uint q = 0; q < qfprops.size(); q++) {
+//             if (qfprops[q].capabilities == CL_QUEUE_DEFAULT_CAPABILITIES_INTEL && qfprops[q].count > num_queues) {
+//                 family = q;
+//                 num_queues = qfprops[q].count;
+//             }
+//         }
+
+//         if (num_queues)
+//             prop.insert(prop.end(), {CL_QUEUE_FAMILY_INTEL, family,
+//                                                  CL_QUEUE_INDEX_INTEL, stream_id % num_queues});
+
+//         return clCreateCommandQueueWithProperties(ctx.get(), device.get(), prop.data(), &error_code);
+//     };
+
+//     for (size_t i = 0; i < threads_num; i++) {
+//         cl::CommandQueue queue = create_queue(i);
+//         threads.emplace_back(run_calculation, ocl_instance, kernel, queue);
+//     }
+
+//     for (size_t i = 0; i < threads_num; i++) {
+//         if (threads[i].joinable())
+//             threads[i].join();
+//     }
+// }
+
+
+// TEST(blitter_test, reproducer) {
+//     auto ocl_instance = std::make_shared<OpenCL>();
+//     auto& ctx = ocl_instance->_context;
+//     auto& device = ocl_instance->_device;
+//     auto usm_helper = *ocl_instance->_usm_helper;
+
+//     if (!ocl_instance->_supports_usm)
+//         GTEST_SKIP();
+
+//     cl::Program program(ctx, kernel_code);
+//     checkStatus(program.build(device, ""), "build");
+//     cl::Kernel kernel1(program, "simple_reorder");
+//     cl::KernelIntel kernel(kernel1, usm_helper);
+
+//     const size_t threads_num = 16;
+//     std::vector<std::thread> threads;
+
+//     auto create_queue = [&](size_t stream_id) -> cl::CommandQueue {
+//         std::vector<cl_queue_properties> prop;
+//         cl_int error_code = CL_SUCCESS;
+
+//         cl_uint num_queues = 0;
+//         cl_uint family = 0;
+
+//         std::vector<cl_queue_family_properties_intel> qfprops = device.getInfo<CL_DEVICE_QUEUE_FAMILY_PROPERTIES_INTEL>();
+//         for (cl_uint q = 0; q < qfprops.size(); q++) {
+//             if (qfprops[q].capabilities == CL_QUEUE_DEFAULT_CAPABILITIES_INTEL && qfprops[q].count > num_queues) {
+//                 family = q;
+//                 num_queues = qfprops[q].count;
+//             }
+//         }
+
+//         if (num_queues)
+//             prop.insert(prop.end(), {CL_QUEUE_FAMILY_INTEL, family,
+//                                      CL_QUEUE_INDEX_INTEL, stream_id % num_queues});
+
+//         return clCreateCommandQueueWithProperties(ctx.get(), device.get(), prop.data(), &error_code);
+//     };
+
+//     for (size_t i = 0; i < threads_num; i++) {
+//         cl::CommandQueue queue = create_queue(i);
+//         threads.emplace_back(run_calculation, ocl_instance, kernel, queue);
+//     }
+
+//     for (size_t i = 0; i < threads_num; i++) {
+//         if (threads[i].joinable())
+//             threads[i].join();
+//     }
+// }

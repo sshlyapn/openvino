@@ -84,6 +84,7 @@
 #include <low_precision/network_helper.hpp>
 
 #include "cldnn_itt.h"
+#include <transformations/serialize.hpp>
 
 namespace {
 template<typename T>
@@ -106,6 +107,11 @@ void TransformationsPipeline::apply(std::shared_ptr<ov::Function> func) {
 #ifdef ENABLE_ONEDNN_FOR_GPU
     use_onednn = device_info.supports_immad;
 #endif
+
+    ngraph::pass::Manager serialize_manager0;
+        serialize_manager0.register_pass<ngraph::pass::Serialize>(
+            "./temp_graph0.xml", "./temp_graph0.bin", ngraph::pass::Serialize::Version::IR_V10);
+        serialize_manager0.run_passes(func);
 
     bool enableInt8;
     {
@@ -330,6 +336,11 @@ void TransformationsPipeline::apply(std::shared_ptr<ov::Function> func) {
         manager.run_passes(func);
     }
 
+    ngraph::pass::Manager serialize_manager1;
+    serialize_manager1.register_pass<ngraph::pass::Serialize>(
+        "./temp_graph1.xml", "./temp_graph1.bin", ngraph::pass::Serialize::Version::IR_V10);
+    serialize_manager1.run_passes(func);
+
     if (enableInt8) {
         OV_ITT_SCOPED_TASK(itt::domains::CLDNNPlugin, "TransformationsPipeline::apply::lpt");
         using namespace ngraph::pass::low_precision;
@@ -417,6 +428,21 @@ void TransformationsPipeline::apply(std::shared_ptr<ov::Function> func) {
         lptManager.run_passes(func);
     }
 
+    ngraph::pass::Manager serialize_manager2;
+    serialize_manager2.register_pass<ngraph::pass::Serialize>(
+        "./temp_graph2.xml", "./temp_graph2.bin", ngraph::pass::Serialize::Version::IR_V10);
+    serialize_manager2.run_passes(func);
+
+    // ngraph::pass::Manager mngr_temp;
+    // auto decomp = mngr_temp.register_pass<ngraph::pass::GraphRewrite>();
+    // decomp->add_matcher<ngraph::pass::ConvertSubtract>();
+    // mngr_temp.run_passes(func);
+
+    ngraph::pass::Manager serialize_manager2_5;
+    serialize_manager2_5.register_pass<ngraph::pass::Serialize>(
+        "./temp_graph2_5.xml", "./temp_graph2_5.bin", ngraph::pass::Serialize::Version::IR_V10);
+    serialize_manager2_5.run_passes(func);
+
     {
         OV_ITT_SCOPED_TASK(itt::domains::CLDNNPlugin, "TransformationsPipeline::apply::run_passes");
         ngraph::pass::Manager manager;
@@ -438,5 +464,10 @@ void TransformationsPipeline::apply(std::shared_ptr<ov::Function> func) {
 
         manager.run_passes(func);
     }
+
+    ngraph::pass::Manager serialize_manager3;
+    serialize_manager3.register_pass<ngraph::pass::Serialize>(
+        "./temp_graph3.xml", "./temp_graph3.bin", ngraph::pass::Serialize::Version::IR_V10);
+    serialize_manager3.run_passes(func);
 }
 }  // namespace CLDNNPlugin

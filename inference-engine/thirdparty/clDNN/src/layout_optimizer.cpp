@@ -231,6 +231,9 @@ bool layout_optimizer::can_fuse_reorder(program_node& prev, program_node& next, 
     if (next.is_type<convolution>() && fmt_prev == format::b_fs_yx_fsv16 && fmt_next == format::b_fs_yx_fsv4 && is_input_idx(0))
         return true;
 
+    if (next.is_type<convolution>() && fmt_prev == format::b_fs_yx_fsv16 && fmt_next == format::b_fs_yx_fsv32)
+        return true;
+
     if (next.is_type<quantize>() && (fmt_prev == format::bfyx || fmt_prev == format::bfzyx) &&
         prev.is_input() && (prev_dt == data_types::u8 || prev_dt == data_types::i8))
         return true;
@@ -832,7 +835,7 @@ layout layout_optimizer::get_expected_layout(layout const& current_layout,
     bool non_grouped = prim->groups == 1;
     bool is_2d = input_layout.format.spatial_num() == 2;
     bool onednn_valid_post_ops = get_post_ops_count(node) <= 32;
-    bool use_onednn_impls = _optimization_attributes.use_onednn_impls;
+    bool use_onednn_impls = _optimization_attributes.use_onednn_impls && input_layout.data_type != data_types::f32;
     bool i8_u8_input = input_layout.data_type == data_types::u8 || input_layout.data_type == data_types::i8;
 
     if (use_onednn_impls && onednn_valid_post_ops) {
@@ -864,6 +867,8 @@ layout layout_optimizer::get_expected_layout(layout const& current_layout,
             } else if ((_optimization_attributes.b_fs_yx_fsv16_network &&
                        convolution_b_fs_yx_fsv16_opt(input_layout, output_layout, weights_layout, prim)) && is_2d) {
                 // TODO: optimize clDNN kernels for good support of b_fs_yx_fsv32 format
+                expected_format = cldnn::format::b_fs_yx_fsv32;
+            } else if (weights_layout.data_type == data_types::f32 || weights_layout.data_type == data_types::f16) {
                 expected_format = cldnn::format::b_fs_yx_fsv32;
             } else {
                 expected_format = imad_case(node);
@@ -1200,10 +1205,11 @@ impl_types layout_optimizer::get_preferred_impl_type(program_node& node, format 
             auto input_layout = conv.input().get_output_layout();
             auto output_layout = conv.get_output_layout();
             bool fp16_input = input_layout.data_type == data_types::f16;
+            bool fp32_input = input_layout.data_type == data_types::f32 || conv.weights().get_output_layout().data_type == data_types::f32;
             bool has_groups = conv.get_primitive()->groups > 1;
             bool is_depthwise = conv.get_primitive()->groups == input_layout.size.feature[0];
             bool first_conv = input_layout.size.feature[0] <= 4;
-            bool enable_onednn_dw_fp16_conv = fp16_input && is_depthwise;
+            bool enable_onednn_dw_fp16_conv = (fp16_input || fp32_input) && is_depthwise;
             if (((has_groups && !enable_onednn_dw_fp16_conv) || first_conv) &&
                 (output_layout.format == format::b_fs_yx_fsv16 || output_layout.format == format::bs_fs_yx_bsv32_fsv16) &&
                 (!conv.get_primitive()->needs_onednn_bfyx_to_fsv16(format::bfyx, output_layout.format, input_layout, output_layout)))
@@ -1341,6 +1347,8 @@ format layout_optimizer::get_preferred_format(program_node& node) {
             if (in_layout.format == format::bfyx && output_layout.size.feature[0] >= 16)
                 expected = format::b_fs_yx_fsv16;
         }
+        printf("Convolution %s format %d. in%d w%d\n", node.id().c_str(), static_cast<int>(expected),
+            static_cast<int>(conv_node.input().get_output_layout().data_type), static_cast<int>(weights_layout.data_type));
     } else if (node.is_type<binary_convolution>()) {
         auto& bconv_node = node.as<binary_convolution>();
         auto weights_layout = bconv_node.weights(0).get_output_layout();
