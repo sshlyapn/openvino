@@ -121,6 +121,8 @@ public:
             conv_params.quantization = kernel_selector::QuantizationType::NONE;
         }
 
+        printf("Quantization type of %s: %d\n", arg.id().c_str(), static_cast<int>(conv_params.quantization));
+
         auto format = arg.get_output_layout().format;
         if (format == format::b_fs_zyx_fsv16 ||
             format == format::bs_fs_zyx_bsv16_fsv16 ||

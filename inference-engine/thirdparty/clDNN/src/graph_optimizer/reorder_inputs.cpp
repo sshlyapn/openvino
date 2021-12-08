@@ -38,7 +38,7 @@ std::map<program_node*, format::type> get_preferred_formats(program& p, layout_o
 #ifdef ENABLE_ONEDNN_FOR_GPU
     size_t onednn_impls_counter = 0;
     size_t all_impls_counter = 0;
-    const float onednn_min_threshold = 0.1f;
+    const float onednn_min_threshold = 1.f;
     bool should_update_fmt_map = false;
 
     // Calculate onednn kernels number and all kernels number inside the network
@@ -60,7 +60,7 @@ std::map<program_node*, format::type> get_preferred_formats(program& p, layout_o
 
     float onednn_usage_ratio = all_impls_counter ? static_cast<float>(onednn_impls_counter) / static_cast<float>(all_impls_counter) : 0.f;
 
-    GPU_DEBUG_IF(debug_config->verbose >= 1) {
+    GPU_DEBUG_IF(debug_config->verbose >= 0) {
         GPU_DEBUG_COUT << "----------------------------------------------" << std::endl;
         GPU_DEBUG_COUT << "Onednn kernels number: " << onednn_impls_counter << " from " << all_impls_counter
                        << " (" << onednn_usage_ratio * 100.f << "%)" << std::endl;

@@ -58,6 +58,8 @@ Convolution_kernel_b_fs_zyx_fsv16_imad::GetBlockParams(const convolution_params&
     size_t max_block_width = getOutBlock_X(params.output.X().v, params.stride.x, params.filterSize.x, params.dilation.x);
     size_t max_in_block_width = (max_block_width - 1) * params.stride.x + (params.filterSize.x - 1) * params.dilation.x + 1;
 
+    printf("Max block width %lu, max in block width %lu\n", max_block_width, max_in_block_width);
+
     size_t block_width = max_block_width;
     if (max_block_width > 1) {
         for (size_t w = max_block_width; w >= CeilDiv(max_block_width, 2); w -= 1) {
@@ -67,6 +69,7 @@ Convolution_kernel_b_fs_zyx_fsv16_imad::GetBlockParams(const convolution_params&
             }
         }
     }
+    printf("Block width %lu\n", block_width);
 
     size_t in_block_width = (block_width - 1) * params.stride.x + (params.filterSize.x - 1) * params.dilation.x + 1;
     size_t block_features = simd;
@@ -78,6 +81,7 @@ Convolution_kernel_b_fs_zyx_fsv16_imad::GetBlockParams(const convolution_params&
 
     // Estimate basic block params ratio
     auto test_block_params = BlockParams{ block_width, 1, 1, simd, in_block_width, 1, 1, 1 };
+    return test_block_params;
     auto best_block_params_ratio = EstimateBlockParamsRatio(params, test_block_params);
 
     size_t max_slm_split = params.engineInfo.maxWorkGroupSize / simd;
@@ -195,9 +199,12 @@ float Convolution_kernel_b_fs_zyx_fsv16_imad::EstimateBlockParamsRatio(const con
         // Exception for z != 1
         bool fb32_exception_z = output.X().v == output.Y().v && output.X().v % 28 == 0 && output.Z().v == 40 && output.Feature().v % 32 == 0;
 
-        if ((output.X().v == output.Y().v && output.Z().v == 1 && fb32_exceptions) || fb32_exception_z)
+        if ((output.X().v == output.Y().v && output.Z().v == 1 && fb32_exceptions) || fb32_exception_z) {
+            printf("Override factor to 1.f\n");
             fb32_factor = 1.f;
+        }
     } else if (occupancy_by_logic_size >= 2500.f) {
+        printf("Override factor to 0.5f\n");
         fb32_factor = 0.5f;
     }
 
@@ -209,6 +216,10 @@ float Convolution_kernel_b_fs_zyx_fsv16_imad::EstimateBlockParamsRatio(const con
     // is a scaling coefficient for setting function values in range [0; 0.5f].
     float reg_pressure_factor = atanf(occupancy) / 3.14159f;
     float slm_usage_factor = atanf(occupancy) / 3.14159f;
+
+    printf("=> EstimateBlockParamsRatio: occupancy_by_logic_size %f increase_max_reg_pressure %d %d, max_reg_pressure %f\n",
+    occupancy_by_logic_size, increase_max_reg_pressure, twice_increase_max_reg_pressure, max_reg_pressure);
+    printf("=> EstimateBlockParamsRatio: reg_pressure_factor %f slm_usage_factor %f\n", reg_pressure_factor, slm_usage_factor);
 
     size_t cur_increase_occupancy_coeff = (block.output_block_features == fsv ? 2 : 1) * block.feature_slm_split;
     size_t max_increase_occupancy_coeff = 2 * params.engineInfo.maxWorkGroupSize / simd;
@@ -233,6 +244,9 @@ float Convolution_kernel_b_fs_zyx_fsv16_imad::EstimateBlockParamsRatio(const con
 
     // Check all restrictions
     bool bad_block_params = reg_pressure > max_reg_pressure || slm_usage > max_slm_usage || (occupancy < 1.0f && can_increase_occupancy);
+
+    printf("Params ratio: %d (%d %d %d): %f\n", bad_block_params,
+    reg_pressure > max_reg_pressure, slm_usage > max_slm_usage, (occupancy < 1.0f && can_increase_occupancy), block_params_ratio);
 
     return bad_block_params ? -10.f : block_params_ratio;
 }
@@ -266,6 +280,8 @@ float Convolution_kernel_b_fs_zyx_fsv16_imad::EstimateRegPressure(const convolut
     constexpr size_t bytes_per_reg = 32;
     constexpr size_t max_reg_bytes = reg_num * bytes_per_reg;
 
+    printf("RegPressure: %lu / %lu\n", bytes_used, max_reg_bytes);
+
     return static_cast<float>(bytes_used) / static_cast<float>(max_reg_bytes);
 }
 
@@ -278,12 +294,16 @@ float Convolution_kernel_b_fs_zyx_fsv16_imad::EstimateOccupancy(const convolutio
 
     auto threads = blocks_w * blocks_h * blocks_d * blocks_f * block_b;
 
+    printf("Occupancy %lu / %d\n", threads, params.engineInfo.maxThreadsPerDevice);
+
     return static_cast<float>(threads) / static_cast<float>(params.engineInfo.maxThreadsPerDevice);
 }
 
 float Convolution_kernel_b_fs_zyx_fsv16_imad::EstimateSLMUsage(const convolution_params& params, const BlockParams& block) const {
-    if (block.feature_slm_split == 1)
+    if (block.feature_slm_split == 1) {
+        printf("SLMUsage split 0\n");
         return 0.f;
+    }
 
     size_t slm_elements_per_work_group = block.output_block_width * block.output_block_height * block.output_block_depth *
                                          block.output_block_features * (block.feature_slm_split - 1);
@@ -329,6 +349,8 @@ float Convolution_kernel_b_fs_zyx_fsv16_imad::EstimateSLMUsage(const convolution
     max_slm_bytes_per_work_group = static_cast<float>(Align(static_cast<size_t>(max_slm_bytes_per_work_group), 1024));
     if (max_slm_bytes_per_work_group * static_cast<float>(current_max_work_groups_per_sub_slice) > static_cast<float>(max_slm_bytes_per_sub_slice))
         max_slm_bytes_per_work_group -= 1024.0;
+
+    printf("SLMUsage: %lu / %f\n", slm_bytes_per_work_group, max_slm_bytes_per_work_group);
 
     return static_cast<float>(slm_bytes_per_work_group) / static_cast<float>(max_slm_bytes_per_work_group);
 }
@@ -378,6 +400,14 @@ JitConstants Convolution_kernel_b_fs_zyx_fsv16_imad::GetJitConstants(const convo
     auto mem_consts = Parent::GetJitConstants(params, dispatchData);
 
     auto block_params = GetBlockParams(params);
+
+    printf("\n\nFinal results\n");
+
+    EstimateOccupancy(params, block_params);
+    EstimateSLMUsage(params, block_params);
+    EstimateRegPressure(params, block_params);
+
+    printf("\n\n");
 
     bool unroll_filter_y = block_params.output_block_height != 1;
     bool unroll_filter_z = block_params.output_block_depth != 1;
@@ -449,6 +479,9 @@ ConvolutionKernelBase::DispatchData Convolution_kernel_b_fs_zyx_fsv16_imad::SetD
     dispatchData.lws[0] = 1;
     dispatchData.lws[1] = 1;
     dispatchData.lws[2] = simd * block_params.feature_slm_split;
+
+    printf("Kernel %s: %lu %lu %lu, %lu %lu %lu\n", params.layerID.c_str(),
+    dispatchData.gws[0], dispatchData.gws[1], dispatchData.gws[2], dispatchData.lws[0], dispatchData.lws[1], dispatchData.lws[2]);
 
     dispatchData.cldnnStyle = {0, 0, 0, 0, 0};
     dispatchData.gemmStyle = {0, 0, 0, 0, 0, 0};
