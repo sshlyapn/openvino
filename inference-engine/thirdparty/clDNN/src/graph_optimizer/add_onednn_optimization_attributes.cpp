@@ -6,6 +6,8 @@
 
 #include "pass_manager.h"
 #include "program_node.h"
+#include "fully_connected_inst.h"
+#include <impls/onednn/utils.hpp>
 
 #ifdef ENABLE_ONEDNN_FOR_GPU
 #include "fully_connected_inst.h"
@@ -28,8 +30,20 @@ void add_onednn_optimization_attributes::run(program& p) {
                         if (fused_node->is_type<eltwise>()) {
                             auto& dependency = node->get_dependency(fused_prim.dep_start_idx);
                             auto original_layout = dependency.get_output_layout();
+                            auto prev = original_layout;
                             onednn::combine_bf_with_first_spatial_dim(original_layout);
                             dependency.set_output_layout(original_layout, false);
+
+                            auto in = node->get_dependency(0).get_output_layout();
+                            auto wei = node->get_dependency(1).get_output_layout();
+                            auto out = node->get_output_layout();
+                            auto eltw_in = prev;
+                            printf("%s. In %s(%d %d), wei %s(%d %d), out %s(%d %d), eltw_in %s(%d %d)\n",
+                                node->id().c_str(),
+                                in.size.to_string().c_str(), static_cast<int>(in.format), static_cast<int>(in.data_type),
+                                wei.size.to_string().c_str(), static_cast<int>(wei.format), static_cast<int>(wei.data_type),
+                                out.size.to_string().c_str(), static_cast<int>(out.format), static_cast<int>(out.data_type),
+                                eltw_in.size.to_string().c_str(), static_cast<int>(eltw_in.format), static_cast<int>(eltw_in.data_type));
                         }
                     }
                 }

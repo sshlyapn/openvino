@@ -996,7 +996,14 @@ bool program::extract_and_remove(program_node& node) {
 
 void program::fuse_nodes(program_node &fused_node,
                          program_node &peer_node,
-                         std::map<primitive_id, std::vector<std::pair<primitive_id, size_t>>>* fusing_history) {
+                         std::map<primitive_id, std::vector<std::pair<primitive_id, size_t>>>* fusing_history,
+                         std::vector<program_node*> pass_through) {
+    if (pass_through.size()) {
+        printf("Size of pass_through %lu\n", pass_through.size());
+        for (auto a : pass_through)
+            printf("Pass through: %s\n", a->id().c_str());
+    }
+
     auto peer_layout = peer_node.get_output_layout();
     fused_primitive_desc local_desc;
     local_desc.node = get_node_ptr(peer_node.id());
@@ -1026,9 +1033,17 @@ void program::fuse_nodes(program_node &fused_node,
     size_t deps_idx = 0;
     for (size_t i = 0; i < peer_node.get_dependencies().size(); i++) {
         auto& dep = peer_node.get_dependency(i);
-        if (dep.id() == fused_node.id()) {
-            deps_idx++;
-            continue;
+        if (pass_through.empty()) {
+            if (dep.id() == fused_node.id()) {
+                deps_idx++;
+                continue;
+            }
+        } else {
+            if (dep.id() == pass_through.front()->id()) {
+                printf("%lu. Match %s and %s!!!\n", i, dep.id().c_str(), pass_through.front()->id().c_str());
+                deps_idx++;
+                continue;
+            }
         }
 
         if (peer_node.is_type<quantize>()) {
@@ -1054,6 +1069,8 @@ void program::fuse_nodes(program_node &fused_node,
                     continue;
             }
         }
+        if (pass_through.size())
+            printf("Will be added for pass_through\n");
         fused_node.dependencies.push_back(&dep);
         local_desc.deps.emplace(dep.id(), deps_idx++);
         dep.users.push_back(&fused_node);
@@ -1082,12 +1099,14 @@ void program::fuse_nodes(program_node &fused_node,
         auto& dep = peer_node.get_dependency(peer_node.get_dependencies().size() - 1);
         remove_connection(dep, peer_node);
     }
-    replace_all_usages(peer_node, fused_node);
+    replace_all_usages(peer_node, pass_through.empty() ? fused_node : *pass_through.front());
 
     // Update output layout. Recalculation is not needed.
-    fused_node.merge_output_padding(needed_padding);
-    fused_node.set_output_layout(peer_layout, false);
-    fused_node.recalc_output_layout(true);
+    if (pass_through.empty()) {
+        fused_node.merge_output_padding(needed_padding);
+        fused_node.set_output_layout(peer_layout, false);
+        fused_node.recalc_output_layout(true);
+    }
 }
 
 void program::remove_nodes(std::vector<program_node*>& to_remove) {

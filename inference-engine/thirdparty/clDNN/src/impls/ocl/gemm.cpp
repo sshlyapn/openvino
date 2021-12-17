@@ -56,6 +56,8 @@ public:
                          best_kernels.empty(),
                          "Cannot find a proper kernel with this arguments");
 
+        printf("Gemm kernel %s\n", best_kernels[0].kernelName.c_str());
+
         return new gemm_impl(arg, best_kernels[0]);
     }
 };

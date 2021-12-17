@@ -920,6 +920,7 @@ void prepare_primitive_fusing::fuse_simple_primitives(program &p) {
         };
 
         auto fuse_eltwise_f = [&](eltwise_node& node) {
+            std::vector<program_node*> pass_through;
             std::shared_ptr<const cldnn::eltwise> prim = node.get_primitive();
             const std::vector<eltwise_mode> supported_modes = {
                 eltwise_mode::sum,
@@ -930,8 +931,18 @@ void prepare_primitive_fusing::fuse_simple_primitives(program &p) {
 
             if (node.is_output() || node.inputs_count() != 2 ||
                 std::find(supported_modes.begin(), supported_modes.end(), prim->mode) == supported_modes.end() ||
-                !prim->stride.empty())
+                !prim->stride.empty()) {
+                printf("Eltwise can't be fused %s: %d %d\n", node.id().c_str(), static_cast<int>(prim->mode), !prim->stride.empty());
                 return;
+            } else {
+                printf("%s - Ok\n", node.id().c_str());
+                for (size_t i = 0; i < node.get_dependencies().size(); i++) {
+                    printf("    Dep %lu. %s: %s %d. %d\n", i, node.get_dependency(i).id().c_str(),
+                                                   node.get_dependency(i).get_output_layout().size.to_string().c_str(),
+                                                   node.get_dependency(i).is_constant() || !node.get_dependency(i).is_in_data_flow(),
+                                                   static_cast<int>(prim->mode));
+                }
+            }
 
             std::vector<cldnn::program_node*> parents = node.get_dependencies();
             std::list<cldnn::program_node*> users = node.get_users();
@@ -939,7 +950,32 @@ void prepare_primitive_fusing::fuse_simple_primitives(program &p) {
             std::vector<bool> can_fuse_parents = { false, false };
 
             for (size_t i = 0; i < parents.size(); i++) {
+                size_t second_input_idx = i ^ 1;
+                if (parents[i]->is_type<reshape>() && parents[second_input_idx]->is_constant()) {
+                    if (parents[second_input_idx]->get_output_layout().size != cldnn::tensor(1)) {
+                        printf(" ===> CANT FUSE through RESHAPE! Because shape is %s\n",
+                                parents[second_input_idx]->get_output_layout().size.to_string().c_str());
+                        return;
+                    } else {
+                        if (parents[i]->get_dependency(0).is_type<reorder>()) {
+                            pass_through.push_back(parents[i]);
+                            parents[i] = &parents[i]->get_dependency(0).get_dependency(0);
+                            pass_through.push_back(&parents[i]->get_dependency(0));
+                            printf(" ===> Successfull for reshape -> reorder! Because shape is %s. %lu replaced on %s\n",
+                                        parents[second_input_idx]->get_output_layout().size.to_string().c_str(), i, parents[i]->id().c_str());
+                        } else {
+                            parents[i] = &parents[i]->get_dependency(0);
+                            printf(" ===> Successfull for single reshape! Because shape is %s. %lu replaced on %s\n",
+                                        parents[second_input_idx]->get_output_layout().size.to_string().c_str(), i, parents[i]->id().c_str());
+                        }
+                        break;
+                    }
+                }
+            }
+
+            for (size_t i = 0; i < parents.size(); i++) {
                 can_fuse_parents[i] = (parents[i]->is_type<convolution>() && conv_supports_fusings(parents[i]->as<convolution>())) ||
+                                      (parents[i]->is_type<gemm>() && gemm_supports_fusings(parents[i]->as<gemm>())) ||
                                       ((prim->mode == eltwise_mode::sum || prim->mode == eltwise_mode::prod) &&
                                       ((parents[i]->is_type<binary_convolution>() && bin_conv_supports_eltw_fusings(parents[i]->as<binary_convolution>())) ||
                                       (parents[i]->is_type<mvn>() && mvn_supports_fusings(parents[i]->as<mvn>())) ||
@@ -948,7 +984,6 @@ void prepare_primitive_fusing::fuse_simple_primitives(program &p) {
                                       (parents[i]->is_type<resample>()) ||
                                       (parents[i]->is_type<space_to_depth>()) ||
                                       (parents[i]->is_type<fully_connected>() && fc_supports_fusings(parents[i]->as<fully_connected>())) ||
-                                      (parents[i]->is_type<gemm>() && gemm_supports_fusings(parents[i]->as<gemm>())) ||
                                       (parents[i]->is_type<batch_to_space>()) ||
                                       (parents[i]->is_type<space_to_batch>()) ||
                                       (parents[i]->is_type<eltwise>() && eltwise_supports_fusings(parents[i]->as<eltwise>())) ||
@@ -962,9 +997,18 @@ void prepare_primitive_fusing::fuse_simple_primitives(program &p) {
                                       (parents[i]->is_type<reduce>() && reduce_supports_fusings(parents[i]->as<reduce>()))));
             }
 
+            if (parents[0]->is_type<gemm>() || parents[1]->is_type<gemm>()) {
+                printf("Gemm support1 %s - %s :(\n", parents[0]->id().c_str(), parents[1]->id().c_str());
+                printf("Gemm can_fuse_parensts %d - %d \n", can_fuse_parents[0] == 1, can_fuse_parents[1] == 1);
+            }
+
             // Disable fusion to a node on constant path when second input is in data flow
             for (size_t i = 0; i < parents.size(); i++) {
                 can_fuse_parents[i] = can_fuse_parents[i] && (!parents[i]->is_constant() || parents[parents.size() - 1 - i]->is_constant());
+            }
+
+            if (parents[0]->is_type<gemm>() || parents[1]->is_type<gemm>()) {
+                printf("Gemm can_fuse_parensts %d - %d \n", can_fuse_parents[0] == 1, can_fuse_parents[1] == 1);
             }
 
             auto parent1 = parents[0];
@@ -985,8 +1029,10 @@ void prepare_primitive_fusing::fuse_simple_primitives(program &p) {
             }
 
             // We should have at least one node to fuse
-            if (!can_fuse_parents[0] && !can_fuse_parents[1])
+            if (!can_fuse_parents[0] && !can_fuse_parents[1]) {
+                printf("Skip for %s %s\n", parent1->id().c_str(), parent2->id().c_str());
                 return;
+            }
 
             // Choose node to fuse
             size_t fused_idx = can_fuse_parents[0] ? 0 : 1;
@@ -1023,6 +1069,11 @@ void prepare_primitive_fusing::fuse_simple_primitives(program &p) {
 
             if (parent2->is_type<convolution>() && !conv_supports_fusings(parent2->as<convolution>()))
                 return;
+
+            if (parents[0]->is_type<gemm>() || parents[1]->is_type<gemm>()) {
+                printf("Okay for %s %s. Fuse %s -> %s\n", parent1->id().c_str(), parent2->id().c_str(),
+                peer_node->id().c_str(), fused_node->id().c_str());
+            }
 
             bool merge_allowed = true;
             // If fused node is not convolution and fused node has multiple users,
@@ -1118,7 +1169,7 @@ void prepare_primitive_fusing::fuse_simple_primitives(program &p) {
                 recalc_processing_order = true;
             }
 
-            p.fuse_nodes(*fused_node, node, &fusing_history);
+            p.fuse_nodes(*fused_node, node, &fusing_history, pass_through);
         };
 
         program_helpers::do_for_types<activation, scale, quantize, eltwise>(*node,
