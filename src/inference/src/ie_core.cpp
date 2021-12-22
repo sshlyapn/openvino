@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "any_copy.hpp"
 #include "cnn_network_ngraph_impl.hpp"
 #include "compilation_context.hpp"
 #include "cpp/ie_cnn_network.h"
@@ -205,7 +206,7 @@ class CoreImpl : public ie::ICore, public std::enable_shared_from_this<ie::ICore
     }
 
     bool DeviceSupportsImportExport(const ov::runtime::InferencePlugin& plugin) const {
-        std::vector<std::string> supportedMetricKeys = plugin.get_metric(METRIC_KEY(SUPPORTED_METRICS), {});
+        auto supportedMetricKeys = plugin.get_metric(METRIC_KEY(SUPPORTED_METRICS), {})->as<std::vector<std::string>>();
         auto it = std::find(supportedMetricKeys.begin(), supportedMetricKeys.end(), METRIC_KEY(IMPORT_EXPORT_SUPPORT));
         auto supported =
             (it != supportedMetricKeys.end()) && plugin.get_metric(METRIC_KEY(IMPORT_EXPORT_SUPPORT), {}).as<bool>();
@@ -221,12 +222,12 @@ class CoreImpl : public ie::ICore, public std::enable_shared_from_this<ie::ICore
         std::vector<std::string> supportedMetricKeys;
         try {
             // If plugin doesn't support 'SUPPORTED_METRICS' - treat it as config is not supported as well
-            supportedMetricKeys = plugin.get_metric(METRIC_KEY(SUPPORTED_METRICS), {}).as<std::vector<std::string>>();
+            supportedMetricKeys = plugin.get_metric(METRIC_KEY(SUPPORTED_METRICS), {})->as<std::vector<std::string>>();
         } catch (...) {
         }
         auto it = std::find(supportedMetricKeys.begin(), supportedMetricKeys.end(), METRIC_KEY(SUPPORTED_CONFIG_KEYS));
         if (it != supportedMetricKeys.end()) {
-            std::vector<std::string> configKeys = plugin.get_metric(METRIC_KEY(SUPPORTED_CONFIG_KEYS), {});
+            auto configKeys = plugin.get_metric(METRIC_KEY(SUPPORTED_CONFIG_KEYS), {})->as<std::vector<std::string>>();
             supported = std::find(configKeys.begin(), configKeys.end(), key) != configKeys.end();
         }
         return supported;
@@ -333,13 +334,13 @@ class CoreImpl : public ie::ICore, public std::enable_shared_from_this<ie::ICore
         }
 
         // 2. replace it with DEVICE_ARCHITECTURE value
-        std::vector<std::string> supportedMetricKeys =
-            plugin.get_metric(METRIC_KEY(SUPPORTED_METRICS), getMetricConfig);
+        auto supportedMetricKeys =
+            plugin.get_metric(METRIC_KEY(SUPPORTED_METRICS), getMetricConfig)->as<std::vector<std::string>>();
         auto archIt =
             std::find(supportedMetricKeys.begin(), supportedMetricKeys.end(), METRIC_KEY(DEVICE_ARCHITECTURE));
         if (archIt != supportedMetricKeys.end()) {
             auto value = plugin.get_metric(METRIC_KEY(DEVICE_ARCHITECTURE), getMetricConfig);
-            compileConfig[METRIC_KEY(DEVICE_ARCHITECTURE)] = value.as<std::string>();
+            compileConfig[METRIC_KEY(DEVICE_ARCHITECTURE)] = value->as<std::string>();
         } else {
             // Take device name if device does not support DEVICE_ARCHITECTURE metric
             compileConfig[METRIC_KEY(DEVICE_ARCHITECTURE)] = deviceFamily;
@@ -722,9 +723,7 @@ public:
         return res;
     }
 
-    ie::Parameter GetMetric(const std::string& deviceName,
-                            const std::string& name,
-                            const ie::ParamMap& options = {}) const override {
+    Any GetMetric(const std::string& deviceName, const std::string& name, const ParamMap& options = {}) const override {
         // HETERO case
         {
             if (deviceName.find("HETERO:") == 0) {
@@ -760,7 +759,7 @@ public:
         return GetCPPPluginByName(parsed._deviceName).get_metric(name, parsed._config);
     }
 
-    ie::Parameter GetConfig(const std::string& deviceName, const std::string& name) const override {
+    Any GetConfig(const std::string& deviceName, const std::string& name) const override {
         auto parsed = parseDeviceNameIntoConfig(deviceName);
         return GetCPPPluginByName(parsed._deviceName).get_config(name, parsed._config);
     }
@@ -1061,6 +1060,26 @@ public:
                     }
                     plugin.second.set_config(configCopy);
                 });
+            }
+        }
+    }
+
+    /**
+     * @brief Get device config it is passed as pair of device_name and `ov::runtime::ParamMap`
+     * @param configs All set of configs
+     * @note  `device_name` is not allowed in form of MULTI:CPU, HETERO:GPU,CPU, AUTO:CPU
+     *        just simple forms like CPU, GPU, MULTI, GPU.0, etc
+     */
+    void ExtractAndSetDeviceConfig(const ov::AnyMap& configs) {
+        for (auto&& config : configs) {
+            auto parsed = parseDeviceNameIntoConfig(config.first);
+            auto devices = GetListOfDevicesInRegistry();
+            auto config_is_device_name_in_regestry =
+                std::any_of(devices.begin(), devices.end(), [&](const std::string& device) {
+                    return device == parsed._deviceName;
+                });
+            if (config_is_device_name_in_regestry) {
+                SetConfigForPlugins(any_copy(config.second.as<ov::runtime::ParamMap>()), config.first);
             }
         }
     }
@@ -1568,37 +1587,38 @@ ie::CNNNetwork toCNN(const std::shared_ptr<const ngraph::Function>& model) {
 
 }  // namespace
 
-CompiledModel Core::compile_model(const std::shared_ptr<const ov::Model>& model, const ConfigMap& config) {
+CompiledModel Core::compile_model(const std::shared_ptr<const ov::Model>& model, const ParamMap& config) {
     return compile_model(model, ov::DEFAULT_DEVICE_NAME, config);
 }
 
 CompiledModel Core::compile_model(const std::shared_ptr<const ov::Model>& model,
                                   const std::string& deviceName,
-                                  const ConfigMap& config) {
+                                  const ParamMap& config) {
     OV_CORE_CALL_STATEMENT({
-        auto exec = _impl->LoadNetwork(toCNN(model), deviceName, config);
+        _impl->ExtractAndSetDeviceConfig(config);
+        auto exec = _impl->LoadNetwork(toCNN(model), deviceName, any_copy(config));
         return {exec._ptr, exec._so};
     });
 }
 
-CompiledModel Core::compile_model(const std::string& modelPath, const ConfigMap& config) {
+CompiledModel Core::compile_model(const std::string& modelPath, const ParamMap& config) {
     return compile_model(modelPath, ov::DEFAULT_DEVICE_NAME, config);
 }
 
-CompiledModel Core::compile_model(const std::string& modelPath,
-                                  const std::string& deviceName,
-                                  const ConfigMap& config) {
+CompiledModel Core::compile_model(const std::string& modelPath, const std::string& deviceName, const ParamMap& config) {
     OV_CORE_CALL_STATEMENT({
-        auto exec = _impl->LoadNetwork(modelPath, deviceName, config);
+        _impl->ExtractAndSetDeviceConfig(config);
+        auto exec = _impl->LoadNetwork(modelPath, deviceName, any_copy(config));
         return {exec._ptr, exec._so};
     });
 }
 
 CompiledModel Core::compile_model(const std::shared_ptr<const ov::Model>& model,
                                   const RemoteContext& context,
-                                  const ConfigMap& config) {
+                                  const ParamMap& config) {
     OV_CORE_CALL_STATEMENT({
-        auto exec = _impl->LoadNetwork(toCNN(model), context._impl, config);
+        _impl->ExtractAndSetDeviceConfig(config);
+        auto exec = _impl->LoadNetwork(toCNN(model), context._impl, any_copy(config));
         return {exec._ptr, exec._so};
     });
 }
@@ -1623,15 +1643,16 @@ void Core::add_extension(const std::vector<std::shared_ptr<ov::Extension>>& exte
     OV_CORE_CALL_STATEMENT({ _impl->AddOVExtensions(extensions); });
 }
 
-CompiledModel Core::import_model(std::istream& modelStream, const std::string& deviceName, const ConfigMap& config) {
+CompiledModel Core::import_model(std::istream& modelStream, const std::string& deviceName, const ParamMap& config) {
     OV_ITT_SCOPED_TASK(ov::itt::domains::IE, "Core::import_model");
     OV_CORE_CALL_STATEMENT({
-        auto exec = _impl->ImportNetwork(modelStream, deviceName, config);
+        _impl->ExtractAndSetDeviceConfig(config);
+        auto exec = _impl->ImportNetwork(modelStream, deviceName, any_copy(config));
         return {exec._ptr, exec._so};
     });
 }
 
-CompiledModel Core::import_model(std::istream& modelStream, const RemoteContext& context, const ConfigMap& config) {
+CompiledModel Core::import_model(std::istream& modelStream, const RemoteContext& context, const ParamMap& config) {
     OV_ITT_SCOPED_TASK(ov::itt::domains::IE, "Core::import_model");
 
     using ExportMagic = std::array<char, 4>;
@@ -1651,6 +1672,7 @@ CompiledModel Core::import_model(std::istream& modelStream, const RemoteContext&
     modelStream.seekg(currentPos, modelStream.beg);
 
     OV_CORE_CALL_STATEMENT({
+        _impl->ExtractAndSetDeviceConfig(config);
         auto exec = _impl->GetCPPPluginByName(deviceName).import_model(modelStream, {});
         return {exec._ptr, exec._so};
     });
@@ -1658,14 +1680,22 @@ CompiledModel Core::import_model(std::istream& modelStream, const RemoteContext&
 
 SupportedOpsMap Core::query_model(const std::shared_ptr<const ov::Model>& model,
                                   const std::string& deviceName,
-                                  const ConfigMap& config) const {
+                                  const ParamMap& config) const {
     OV_CORE_CALL_STATEMENT({
-        auto qnResult = _impl->QueryNetwork(toCNN(model), deviceName, config);
+        _impl->ExtractAndSetDeviceConfig(config);
+        auto qnResult = _impl->QueryNetwork(toCNN(model), deviceName, any_copy(config));
         return qnResult.supportedLayersMap;
     });
 }
 
-void Core::set_config(const ConfigMap& config, const std::string& deviceName) {
+void Core::set_config(const ParamMap& config) {
+    OV_CORE_CALL_STATEMENT({
+        _impl->ExtractAndSetDeviceConfig(config);
+        _impl->SetConfigForPlugins(any_copy(config), {});
+    });
+}
+
+void Core::set_config(const std::string& deviceName, const ParamMap& config) {
     OPENVINO_ASSERT(deviceName.find("HETERO:") != 0,
                     "set_config is supported only for HETERO itself (without devices). "
                     "You can configure the devices with set_config before creating the HETERO on top.");
@@ -1677,11 +1707,8 @@ void Core::set_config(const ConfigMap& config, const std::string& deviceName) {
                     "You can configure the devices with set_config before creating the AUTO on top.");
 
     OV_CORE_CALL_STATEMENT({
-        if (deviceName.empty()) {
-            _impl->SetConfigForPlugins(config, std::string());
-        } else {
-            _impl->SetConfigForPlugins(config, deviceName);
-        }
+        _impl->ExtractAndSetDeviceConfig(config);
+        _impl->SetConfigForPlugins(any_copy(config), deviceName);
     });
 }
 
@@ -1699,6 +1726,19 @@ Any Core::get_config(const std::string& deviceName, const std::string& name) con
     OV_CORE_CALL_STATEMENT({
         auto parsed = parseDeviceNameIntoConfig(deviceName);
         return _impl->GetCPPPluginByName(parsed._deviceName).get_config(name, parsed._config);
+    });
+}
+
+void Core::get_config(const std::string& deviceName,
+                      const std::string& name,
+                      ov::Any& to,
+                      const ConfigMutability mutability) const {
+    OV_CORE_CALL_STATEMENT({
+        if (mutability == ConfigMutability::RO) {
+            any_lexical_cast(_impl->GetMetric(deviceName, name), to);
+        } else {
+            any_lexical_cast(get_config(deviceName, name), to);
+        }
     });
 }
 
@@ -1745,7 +1785,7 @@ RemoteContext Core::get_default_context(const std::string& deviceName) {
     OPENVINO_ASSERT(deviceName.find("AUTO") != 0, "AUTO device does not support remote context");
 
     OV_CORE_CALL_STATEMENT({
-        auto parsed = parseDeviceNameIntoConfig(deviceName, ParamMap());
+        auto parsed = parseDeviceNameIntoConfig(deviceName, ParamMap{});
         auto remoteContext = _impl->GetCPPPluginByName(parsed._deviceName).get_default_context(parsed._config);
         return {remoteContext._ptr, remoteContext._so};
     });

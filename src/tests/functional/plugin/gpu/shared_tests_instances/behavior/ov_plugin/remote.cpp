@@ -8,14 +8,14 @@
 using namespace ov::test;
 
 namespace {
-const std::vector<std::map<std::string, std::string>> configs;
+const std::vector<ov::runtime::ParamMap> configs;
 
 
 std::vector<std::pair<ov::runtime::ParamMap, ov::runtime::ParamMap>> generate_remote_params() {
         return {};
 }
 
-const std::vector<std::map<std::string, std::string>> MultiConfigs = {
+const std::vector<ov::runtime::ParamMap> MultiConfigs = {
         {{ MULTI_CONFIG_KEY(DEVICE_PRIORITIES) , CommonTestUtils::DEVICE_GPU}}
 };
 

@@ -13,7 +13,7 @@ namespace test {
 std::string OVRemoteTest::getTestCaseName(testing::TestParamInfo<RemoteTensorParams> obj) {
     ov::element::Type element_type;
     std::string target_device;
-    runtime::ConfigMap config;
+    runtime::ParamMap config;
     std::pair<runtime::ParamMap, runtime::ParamMap> param_pair;
     std::tie(element_type, target_device, config, param_pair) = obj.param;
     runtime::ParamMap context_parameters;
@@ -23,7 +23,9 @@ std::string OVRemoteTest::getTestCaseName(testing::TestParamInfo<RemoteTensorPar
     result << "element_type=" << element_type;
     result << "targetDevice=" << target_device;
     for (auto& configItem : config) {
-        result << "configItem=" << configItem.first << "_" << configItem.second << "_";
+        result << "configItem=" << configItem.first << "_";
+        configItem.second.print(result);
+        result << "_";
     }
     result << "__context_parameters=";
     for (auto& param : context_parameters) {

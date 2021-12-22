@@ -21,13 +21,15 @@ class OVExecutableNetworkBaseTest : public testing::WithParamInterface<InferRequ
 public:
     static std::string getTestCaseName(testing::TestParamInfo<InferRequestParams> obj) {
         std::string targetDevice;
-        std::map<std::string, std::string> configuration;
+        ov::runtime::ParamMap configuration;
         std::tie(targetDevice, configuration) = obj.param;
         std::ostringstream result;
         result << "targetDevice=" << targetDevice << "_";
         if (!configuration.empty()) {
             for (auto& configItem : configuration) {
-                result << "configItem=" << configItem.first << "_" << configItem.second << "_";
+                result << "configItem=" << configItem.first << "_";
+                configItem.second.print(result);
+                result << "_";
             }
         }
         return result.str();
@@ -69,7 +71,7 @@ public:
 protected:
     std::shared_ptr<ov::runtime::Core> core = utils::PluginCache::get().core();
     std::string targetDevice;
-    std::map<std::string, std::string> configuration;
+    ov::runtime::ParamMap configuration;
     std::shared_ptr<ov::Model> function;
 };
 
@@ -84,7 +86,7 @@ TEST(OVExecutableNetworkBaseTest, smoke_LoadNetworkToDefaultDeviceNoThrow) {
 }
 
 TEST_P(OVExecutableNetworkBaseTest, canLoadCorrectNetworkToGetExecutableWithIncorrectConfig) {
-    std::map<std::string, std::string> incorrectConfig = {{"abc", "def"}};
+    ov::runtime::ParamMap incorrectConfig = {{"abc", "def"}};
     EXPECT_ANY_THROW(auto execNet = core->compile_model(function, targetDevice, incorrectConfig));
 }
 

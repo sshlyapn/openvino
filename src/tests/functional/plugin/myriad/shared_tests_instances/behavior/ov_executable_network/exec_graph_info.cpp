@@ -12,13 +12,13 @@ const std::vector<ov::element::Type_t> netPrecisions = {
         ov::element::f16,
         ov::element::f32,
 };
-const std::vector<std::map<std::string, std::string>> configs = {
+const std::vector<ov::runtime::ParamMap> configs = {
         {},
 };
-const std::vector<std::map<std::string, std::string>> multiConfigs = {
+const std::vector<ov::runtime::ParamMap> multiConfigs = {
         {{InferenceEngine::MultiDeviceConfigParams::KEY_MULTI_DEVICE_PRIORITIES, CommonTestUtils::DEVICE_MYRIAD}}};
 
-const std::vector<std::map<std::string, std::string>> heteroConfigs = {
+const std::vector<ov::runtime::ParamMap> heteroConfigs = {
         {{"TARGET_FALLBACK", CommonTestUtils::DEVICE_MYRIAD}}};
 
 INSTANTIATE_TEST_SUITE_P(smoke_BehaviorTests,

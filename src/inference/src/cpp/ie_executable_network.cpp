@@ -4,6 +4,7 @@
 
 #include "cpp/ie_executable_network.hpp"
 
+#include "any_copy.hpp"
 #include "cpp/exception2status.hpp"
 #include "cpp_interfaces/interface/ie_iexecutable_network_internal.hpp"
 #include "ie_common.h"
@@ -207,7 +208,7 @@ void CompiledModel::export_model(std::ostream& networkModel) {
     OV_EXEC_NET_CALL_STATEMENT(_impl->Export(networkModel));
 }
 
-void CompiledModel::set_config(const ie::ParamMap& config) {
+void CompiledModel::set_config(const ParamMap& config) {
     OV_EXEC_NET_CALL_STATEMENT(_impl->SetConfig(config));
 }
 
@@ -217,6 +218,16 @@ ie::Parameter CompiledModel::get_config(const std::string& name) const {
 
 ie::Parameter CompiledModel::get_metric(const std::string& name) const {
     OV_EXEC_NET_CALL_STATEMENT(return {_impl->GetMetric(name), _so});
+}
+
+void CompiledModel::get_config(const std::string& name, Any& to, const ConfigMutability mutability) const {
+    OV_EXEC_NET_CALL_STATEMENT({
+        if (mutability == ConfigMutability::RO) {
+            any_lexical_cast(_impl->GetMetric(name), to);
+        } else {
+            any_lexical_cast(_impl->GetConfig(name), to);
+        }
+    });
 }
 
 RemoteContext CompiledModel::get_context() const {

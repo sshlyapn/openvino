@@ -19,6 +19,7 @@
 #include "cpp_interfaces/interface/ie_iplugin_internal.hpp"
 #include "so_ptr.hpp"
 #include "openvino/runtime/common.hpp"
+#include "any_copy.hpp"
 
 #if defined __GNUC__
 # pragma GCC diagnostic push
@@ -175,7 +176,7 @@ public:
         OV_PLUGIN_CALL_STATEMENT(_ptr->AddExtension(extension));
     }
 
-    void set_config(const ConfigMap& config) {
+    void set_config(const std::map<std::string, std::string>& config) {
         OV_PLUGIN_CALL_STATEMENT(_ptr->SetConfig(config));
     }
 
@@ -194,7 +195,7 @@ public:
     }
 
     ie::QueryNetworkResult query_model(const ie::CNNNetwork& network,
-                                       const ConfigMap& config) const {
+                                       const std::map<std::string, std::string>& config) const {
         ie::QueryNetworkResult res;
         OV_PLUGIN_CALL_STATEMENT(res = _ptr->QueryNetwork(network, config));
         OPENVINO_ASSERT(res.rc == ie::OK, res.resp.msg);

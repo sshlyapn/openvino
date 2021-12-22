@@ -79,7 +79,7 @@ using OVClassExecutableNetworkSetConfigFromFp32Test = OVClassExecutableNetworkGe
 TEST_P(OVClassExecutableNetworkSetConfigFromFp32Test, SetConfigFromFp32Throws) {
 ov::runtime::Core ie;
 
-std::map<std::string, std::string> initialConfig;
+ov::runtime::ParamMap initialConfig;
 initialConfig[GNA_CONFIG_KEY(DEVICE_MODE)] = InferenceEngine::GNAConfigParams::GNA_SW_FP32;
 ov::runtime::CompiledModel exeNetwork = ie.compile_model(simpleNetwork, deviceName, initialConfig);
 

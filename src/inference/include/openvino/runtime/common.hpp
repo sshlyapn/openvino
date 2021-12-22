@@ -9,8 +9,8 @@
  */
 #pragma once
 
-#include <chrono>
 #include <map>
+#include <openvino/core/any.hpp>
 #include <string>
 
 #include "openvino/core/visibility.hpp"
@@ -45,7 +45,7 @@ namespace ov {
 namespace ie = InferenceEngine;
 namespace runtime {
 /**
- * @brief This type of map is commonly used to pass set of parameters
+ * @brief This type of map is commonly used to pass set of configuration values
  */
 using ConfigMap = std::map<std::string, std::string>;
 

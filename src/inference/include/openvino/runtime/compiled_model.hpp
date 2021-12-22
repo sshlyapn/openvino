@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "openvino/core/model.hpp"
+#include "openvino/runtime/config.hpp"
 #include "openvino/runtime/infer_request.hpp"
 #include "openvino/runtime/parameter.hpp"
 #include "openvino/runtime/remote_context.hpp"
@@ -47,6 +48,8 @@ class OPENVINO_RUNTIME_API CompiledModel {
                   const std::shared_ptr<void>& so);
     friend class ov::runtime::Core;
     friend class ov::runtime::InferRequest;
+
+    void get_config(const std::string& name, ov::Any& to, const ConfigMutability mutability) const;
 
 public:
     /**
@@ -151,6 +154,18 @@ public:
      */
     void set_config(const ParamMap& config);
 
+    /**
+     * @brief Sets configuration for current executable network
+     *
+     * @tparam Configs Should be the pack of `std::pair<std::string, ov::Any>` types
+     * @param configs Optional pack of pairs: (config parameter name, config parameter value)
+     * @return nothing
+     */
+    template <typename... Configs>
+    util::EnableIfAllConfigs<void, Configs...> set_config(Configs&&... configs) {
+        set_config(ParamMap{std::forward<Configs>(configs)...});
+    }
+
     /** @brief Gets configuration for current executable network.
      *
      * The method is responsible to extract information
@@ -165,6 +180,22 @@ public:
     Any get_config(const std::string& name) const;
 
     /**
+     * @brief Gets configuration dedicated to device behaviour.
+     *
+     * The method is targeted to extract information which can be set via set_config method.
+     *
+     * @tparam T - type of returned value
+     * @param key  - config key object.
+     * @return Value of config corresponding to config key.
+     */
+    template <typename T, ConfigMutability mutability>
+    util::EnableIfRaedableConfig<T, mutability> get_config(const ov::Key<T, mutability>& key) const {
+        auto to = Any::make<T>();
+        get_config(key.str(), to, mutability);
+        return to.template as<T>();
+    }
+
+    /**
      * @brief Gets general runtime metric for an executable network.
      *
      * It can be model name, actual device ID on
@@ -174,6 +205,23 @@ public:
      * @return Metric parameter value
      */
     Any get_metric(const std::string& name) const;
+
+    /**
+     * @brief Gets general runtime metric for dedicated hardware.
+     *
+     * The method is needed to request common device properties
+     * which are executable network agnostic. It can be device name, temperature, other devices-specific values.
+     *
+     * @tparam T - type of returned value
+     * @param key - metric key object.
+     * @return Metric value corresponding to metric key.
+     */
+    template <typename T, ConfigMutability mutability>
+    util::EnableIfRaedableConfig<T, mutability> get_metric(const ov::Key<T, mutability>& key) const {
+        auto to = Any::make<T>();
+        get_config(key.str(), to, mutability);
+        return to.template as<T>();
+    }
 
     /**
      * @brief Returns pointer to plugin-specific shared context

@@ -10,7 +10,9 @@
 // TODO: fix namespaces
 using namespace ConformanceTests;
 
-namespace BehaviorTestsDefinitions {
+namespace ov {
+namespace test {
+namespace conformance {
 
 inline const std::string getPluginLibNameByDevice(const std::string& deviceName) {
     const std::map<std::string, std::string> devices{
@@ -18,14 +20,13 @@ inline const std::string getPluginLibNameByDevice(const std::string& deviceName)
             { "HDDL", "HDDLPlugin" },
             { "VPUX", "VPUXPlugin" },
             { "AUTO", "ov_auto_plugin" },
-            { "CPU", "ov_intel_cpu_plugin" },
+            { "CPU", "MKLDNNPlugin" },
             { "GNA", "ov_intel_gna_plugin" },
             { "GPU", "ov_intel_gpu_plugin" },
             { "HETERO", "ov_hetero_plugin" },
-            { "BATCH", "ov_auto_batch_plugin" },
             { "MULTI", "ov_multi_plugin" },
             { "MYRIAD", "myriadPlugin" },
-            { "TEMPLATE", "ov_template_plugin" },
+            { "TEMPLATE", "templatePlugin" },
     };
     if (devices.find(deviceName) == devices.end()) {
         throw std::runtime_error("Incorrect device name");
@@ -33,33 +34,26 @@ inline const std::string getPluginLibNameByDevice(const std::string& deviceName)
     return devices.at(deviceName);
 }
 
-inline const std::pair<std::string, std::string> generateDefaultMultiConfig() {
+inline const std::pair<std::string, ov::Any> generateDefaultMultiConfig() {
     return {MULTI_CONFIG_KEY(DEVICE_PRIORITIES), ConformanceTests::targetDevice};
 }
 
-inline const std::pair<std::string, std::string> generateDefaultHeteroConfig() {
+inline const std::pair<std::string, ov::Any> generateDefaultHeteroConfig() {
     return { "TARGET_FALLBACK" , ConformanceTests::targetDevice };
 }
 
-inline const std::pair<std::string, std::string> generateDefaultBatchConfig() {
-    // auto-batching with batch 1 (no real batching in fact, but full machinery is in action)
-    return { CONFIG_KEY(AUTO_BATCH_DEVICE_CONFIG) , std::string(ConformanceTests::targetDevice)};
-}
-
-inline const std::vector<std::map<std::string, std::string>> generateConfigs(const std::string& targetDevice,
-                                                                             const std::vector<std::map<std::string, std::string>>& config = {}) {
-    std::pair<std::string, std::string> defaultConfig;
+inline const std::vector<ov::runtime::ParamMap> generateConfigs(const std::string& targetDevice,
+                                                                         const std::vector<ov::runtime::ParamMap>& config = {}) {
+    std::pair<std::string, ov::Any> defaultConfig;
     if (targetDevice ==  std::string(CommonTestUtils::DEVICE_MULTI) || targetDevice ==  std::string(CommonTestUtils::DEVICE_AUTO)) {
         defaultConfig = generateDefaultMultiConfig();
     } else if (targetDevice ==  std::string(CommonTestUtils::DEVICE_HETERO)) {
         defaultConfig = generateDefaultHeteroConfig();
-    } else if (targetDevice ==  std::string(CommonTestUtils::DEVICE_BATCH)) {
-        defaultConfig = generateDefaultBatchConfig();
     } else {
         throw std::runtime_error("Incorrect target device: " + targetDevice);
     }
 
-    std::vector<std::map<std::string, std::string>> resultConfig;
+    std::vector<ov::runtime::ParamMap> resultConfig;
     if (config.empty()) {
         return {{defaultConfig}};
     }
@@ -76,16 +70,17 @@ inline const std::string generateComplexDeviceName(const std::string& deviceName
 
 inline const std::vector<std::string> returnAllPossibleDeviceCombination() {
     std::vector<std::string> res{ConformanceTests::targetDevice};
-    std::vector<std::string> devices{CommonTestUtils::DEVICE_HETERO, CommonTestUtils::DEVICE_AUTO,
-                                     CommonTestUtils::DEVICE_BATCH, CommonTestUtils::DEVICE_MULTI};
+    std::vector<std::string> devices{CommonTestUtils::DEVICE_HETERO, CommonTestUtils::DEVICE_AUTO, CommonTestUtils::DEVICE_MULTI};
     for (const auto& device : devices) {
         res.emplace_back(generateComplexDeviceName(device));
     }
     return res;
 }
 
-const std::vector<std::map<std::string, std::string>> emptyConfig = {
+const std::vector<ov::runtime::ParamMap> emptyConfig = {
         {},
 };
 
-}  // namespace BehaviorTestsDefinitions
+}  // namespace conformance
+}  // namespace test
+}  // namespace ov

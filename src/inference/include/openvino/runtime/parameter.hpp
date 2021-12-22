@@ -15,7 +15,7 @@
 namespace ov {
 namespace runtime {
 /**
- * @brief An std::map object containing parameters
+ * @brief This type of map is commonly used to return set of loaded from inference plugin
  */
 using ParamMap = std::map<std::string, Any>;
 }  // namespace runtime

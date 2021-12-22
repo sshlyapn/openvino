@@ -18,7 +18,7 @@ namespace test {
 
 using RemoteTensorParams = std::tuple<element::Type,        // element type
                                       std::string,          // target device
-                                      runtime::ConfigMap,   // config
+                                      runtime::ParamMap,    // config
                                       std::pair<runtime::ParamMap, runtime::ParamMap>>; // remote context and tensor parameters
 
 class OVRemoteTest : public testing::WithParamInterface<RemoteTensorParams>,
@@ -31,7 +31,7 @@ protected:
 
     element::Type element_type;
     std::string target_device;
-    runtime::ConfigMap config;
+    runtime::ParamMap config;
     runtime::ParamMap context_parameters;
     runtime::ParamMap tensor_parameters;
     std::shared_ptr<Model> function;

@@ -35,7 +35,7 @@ using OVClassNetworkTestP_VPU_GetMetric = OVClassNetworkTestP;
 
 TEST_P(OVClassNetworkTestP_VPU_GetMetric, smoke_OptimizationCapabilitiesReturnsFP16) {
     ov::runtime::Core ie;
-    ASSERT_METRIC_SUPPORTED(METRIC_KEY(OPTIMIZATION_CAPABILITIES))
+    ASSERT_METRIC_SUPPORTED(ov::optimization_capabilities)
 
     ov::Any optimizationCapabilitiesParameter;
     ASSERT_NO_THROW(optimizationCapabilitiesParameter =

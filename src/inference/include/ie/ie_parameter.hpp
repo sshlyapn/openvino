@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "ie_blob.h"
+#include "openvino/core/except.hpp"
 #include "openvino/runtime/parameter.hpp"
 
 namespace InferenceEngine {

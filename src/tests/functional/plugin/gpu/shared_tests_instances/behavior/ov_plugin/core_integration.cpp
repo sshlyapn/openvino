@@ -76,14 +76,13 @@ INSTANTIATE_TEST_SUITE_P(nightly_OVClassGetAvailableDevices, OVClassGetAvailable
 using OVClassGetMetricTest_GPU_DEVICE_TOTAL_MEM_SIZE = OVClassBaseTestP;
 TEST_P(OVClassGetMetricTest_GPU_DEVICE_TOTAL_MEM_SIZE, GetMetricAndPrintNoThrow) {
     ov::runtime::Core ie;
-    ov::Any p;
 
-    ASSERT_NO_THROW(p = ie.get_metric(deviceName, GPU_METRIC_KEY(DEVICE_TOTAL_MEM_SIZE)));
-    uint64_t t = p;
+    uint64_t t = 0;
+    ASSERT_NO_THROW(t = ie.get_metric(deviceName, ov::gpu::device_total_mem_size));
 
     std::cout << "GPU device total memory size: " << t << std::endl;
 
-    ASSERT_METRIC_SUPPORTED(GPU_METRIC_KEY(DEVICE_TOTAL_MEM_SIZE));
+    ASSERT_METRIC_SUPPORTED(ov::gpu::device_total_mem_size);
 }
 
 INSTANTIATE_TEST_SUITE_P(nightly_OVClassGetMetricTest,
@@ -93,13 +92,12 @@ INSTANTIATE_TEST_SUITE_P(nightly_OVClassGetMetricTest,
 using OVClassGetMetricTest_GPU_UARCH_VERSION = OVClassBaseTestP;
 TEST_P(OVClassGetMetricTest_GPU_UARCH_VERSION, GetMetricAndPrintNoThrow) {
     ov::runtime::Core ie;
-    ov::Any p;
 
-    ASSERT_NO_THROW(p = ie.get_metric(deviceName, GPU_METRIC_KEY(UARCH_VERSION)));
-    std::string t = p;
+    std::string t;
+    ASSERT_NO_THROW(t = ie.get_metric(deviceName, ov::gpu::uarch_version));
 
     std::cout << "GPU device uarch: " << t << std::endl;
-    ASSERT_METRIC_SUPPORTED(GPU_METRIC_KEY(UARCH_VERSION));
+    ASSERT_METRIC_SUPPORTED(ov::gpu::uarch_version);
 }
 
 INSTANTIATE_TEST_SUITE_P(nightly_OVClassGetMetricTest,
@@ -109,14 +107,13 @@ INSTANTIATE_TEST_SUITE_P(nightly_OVClassGetMetricTest,
 using OVClassGetMetricTest_GPU_EXECUTION_UNITS_COUNT = OVClassBaseTestP;
 TEST_P(OVClassGetMetricTest_GPU_EXECUTION_UNITS_COUNT, GetMetricAndPrintNoThrow) {
     ov::runtime::Core ie;
-    ov::Any p;
 
-    ASSERT_NO_THROW(p = ie.get_metric(deviceName, GPU_METRIC_KEY(EXECUTION_UNITS_COUNT)));
-    int t = p;
+    int t = 0;
+    ASSERT_NO_THROW(t = ie.get_metric(deviceName, ov::gpu::execution_units_count));
 
     std::cout << "GPU EUs count: " << t << std::endl;
 
-    ASSERT_METRIC_SUPPORTED(GPU_METRIC_KEY(EXECUTION_UNITS_COUNT));
+    ASSERT_METRIC_SUPPORTED(ov::gpu::execution_units_count);
 }
 
 INSTANTIATE_TEST_SUITE_P(nightly_OVClassGetMetricTest,
