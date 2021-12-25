@@ -165,18 +165,29 @@ std::string get_load_program_name(build_options opts) {
 void dump_graph_init(std::ofstream& graph,
                      const program& program,
                      std::function<bool(program_node const&)> const& filter) {
-    const auto extr_oformat = [](program_node* ptr) {
-        std::string out = fmt_to_str(ptr->get_output_layout().format);
+    const auto extr_oformat = [&program](program_node* ptr) {
+        auto output_layout = program.get_output_layout(*ptr);
+        std::string out = fmt_to_str(output_layout.format);
 
         if (!ptr->is_valid_output_layout())
-            out += " (invalid)";
+            out += " (invalid layout)";
 
         return out;
     };
 
-    const auto dump_mem_info = [](program_node* ptr) {
+    const auto extr_odt = [&program](program_node* ptr) {
+        auto output_layout = program.get_output_layout(*ptr);
+        std::string out = dt_to_str(output_layout.data_type);
+
+        if (!ptr->is_valid_output_layout())
+            out += " (invalid layout)";
+
+        return out;
+    };
+
+    const auto dump_mem_info = [&program](program_node* ptr) {
         std::string out = "size_info: ";
-        auto out_layout = ptr->get_output_layout();
+        auto out_layout = program.get_output_layout(*ptr);
         auto tensor_str = out_layout.size.to_string();
         auto padding = out_layout.data_padding;
         out += tensor_str;
@@ -185,6 +196,9 @@ void dump_graph_init(std::ofstream& graph,
         } else {
             out += "\nl: " + padding.lower_size().to_string() + "\nu: " + padding.upper_size().to_string();
         }
+
+        if (!ptr->is_valid_output_layout())
+            out += " (invalid layout)";
 
         return out;
     };
@@ -202,7 +216,7 @@ void dump_graph_init(std::ofstream& graph,
         std::string node_type_name = get_extr_type(node_type.name());
         graph << "    " << get_node_id(node) << "[label=\"" << node->id() << ":\n"
               << node_type_name << "\n out format: " + extr_oformat(node)
-              << "\n out data_type: " + dt_to_str(node->get_output_layout().data_type)
+              << "\n out data_type: " + extr_odt(node)
               << "\\nprocessing number: " << program.get_processing_order().get_processing_number(node)
               << "\\n color:" << (node->is_reusing_memory() ? std::to_string(node->get_reused_memory_color()) : "none")
               << (node->can_be_optimized() ? "\\n optimized out" : "");

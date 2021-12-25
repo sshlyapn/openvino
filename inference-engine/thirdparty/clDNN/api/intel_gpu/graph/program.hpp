@@ -212,6 +212,7 @@ public:
     std::string get_implementation_info(const primitive_id& id) const;
     const graph_optimizer_info& get_optimizer_passes_info() const;
     void save_pass_info(std::string pass_name);
+    layout get_output_layout(const program_node& node) const;
 
     void add_optimized_primitive_info(primitive_id optimized_primitive_id, std::vector<primitive_id> replaced_with_ids = {});
 

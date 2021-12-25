@@ -1134,13 +1134,13 @@ void program::dump_program(const char* stage,
 
 data_types program::get_inference_precision(const program_node& node) const {
     if (node.is_input()) {
-        return node.get_output_layout().data_type;
+        return get_output_layout(node).data_type;
     }
     std::vector<data_types> input_dts;
     for (auto& dep : node.get_dependencies()) {
-        input_dts.push_back(dep->get_output_layout().data_type);
+        input_dts.push_back(get_output_layout(*dep).data_type);
     }
-    data_types output_dt = node.get_output_layout().data_type;
+    data_types output_dt = get_output_layout(node).data_type;
 
     assert(!input_dts.empty());
     if (node.is_type<reorder>()) {
@@ -1210,8 +1210,8 @@ program::primitives_info program::get_current_stage_info() const {
                           dependencies,
                           users,
                           fused,
-                          p->get_output_layout(),
-                          fmt_to_str(p->get_output_layout().format),
+                          get_output_layout(*p),
+                          fmt_to_str(get_output_layout(*p).format),
                           get_implementation_info(p->id()),
                           get_inference_precision(*p),
                           p->selected_impl ? p->selected_impl->is_cpu() : false,
@@ -1461,4 +1461,8 @@ std::pair<int64_t, int64_t> program::get_estimated_device_mem_usage() {
     }
 
     return std::make_pair(const_sum, get_engine().get_used_device_memory(allocation_type::usm_device));
+}
+
+layout program::get_output_layout(const program_node& node) const {
+    return node.output_layout;
 }
