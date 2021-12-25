@@ -687,6 +687,41 @@ void prepare_primitive_fusing::fuse_simple_primitives(program &p) {
             return true;
         };
 
+        auto try_fuse_through = [&](program_node& node) -> std::vector<program_node*> {
+            // This function tries to fuse peer_node to first non reorder or reshape previous primitive.
+            // It returns chain of primitives (reshapes and reorders) including potential fused_node (e.g. Conv, FC, etc)
+            // at the end of vector, that should be checked later.
+            auto can_raise_up_through = [](program_node* node) {
+                if (!node->is_type<reshape>() && !node->is_type<reorder>())
+                    return false;
+
+                if (node->get_dependencies().empty())
+                    return false;
+
+                if (node->get_users().size() > 1)
+                    return false;
+
+                if (node->is_type<reorder>() &&
+                    node->get_output_layout().data_type != node->get_dependency(0).get_output_layout().data_type)
+                    return false;
+
+                return true;
+            };
+
+            std::vector<program_node*> pass_through;
+            program_node* fuse_through = &node;
+            pass_through.push_back(fuse_through);
+
+            bool can_raise_up = can_raise_up_through(fuse_through);
+            while (can_raise_up) {
+                fuse_through = &fuse_through->get_dependency(0);
+                can_raise_up = can_raise_up_through(fuse_through);
+                pass_through.push_back(fuse_through);
+            }
+
+            return pass_through;
+        };
+
         auto fuse_activation_f = [&](activation_node& activation_node) {
             auto& input_data = activation_node.get_dependency(0);
             if (activation_node.get_dependencies().size() >= 3)
@@ -824,7 +859,13 @@ void prepare_primitive_fusing::fuse_simple_primitives(program &p) {
         };
 
         auto fuse_quantize_f = [&](quantize_node& quantize_node) {
-            auto& input_data = quantize_node.get_dependency(0);
+            auto fuse_order = try_fuse_through(quantize_node.get_dependency(0));
+            bool use_fuse_through = fuse_order.size() > 1;
+
+            // Extract fused_node from vector
+            auto& input_data = *fuse_order.back();
+            fuse_order.pop_back();
+
             auto& input_lo = quantize_node.get_dependency(1);
             auto& input_hi = quantize_node.get_dependency(2);
 
@@ -913,10 +954,31 @@ void prepare_primitive_fusing::fuse_simple_primitives(program &p) {
 
             should_fuse |= input_data.is_type<scale>() && quantize_node.get_scale_shift_opt();
 
+            if (use_fuse_through) {
+                bool per_tensor_values = quantize_node.get_scale_shift_opt() &&
+                                         quantize_node.get_per_tensor_input_scale() &&
+                                         quantize_node.get_per_tensor_input_shift() &&
+                                         quantize_node.get_per_tensor_input_range() &&
+                                         quantize_node.get_per_tensor_output_scale() &&
+                                         quantize_node.get_per_tensor_output_shift() &&
+                                         quantize_node.get_per_tensor_output_range();
+
+                if (!per_tensor_values)
+                    return;
+
+                if (static_cast<bool>(quantize_node.get_output_layout().data_padding))
+                    return;
+
+                if (input_data.is_type<softmax>()) {
+                    auto softmax_primitive = input_data.as<softmax>().get_primitive();
+                    should_fuse |= softmax_primitive->dimension == softmax::dimension_t::normalize_f;
+                }
+            }
+
             if (!should_fuse)
                 return;
 
-            p.fuse_nodes(input_data, quantize_node, &fusing_history);
+            p.fuse_nodes(input_data, quantize_node, &fusing_history, fuse_order);
         };
 
         auto fuse_eltwise_f = [&](eltwise_node& node) {
@@ -938,7 +1000,18 @@ void prepare_primitive_fusing::fuse_simple_primitives(program &p) {
 
             std::vector<bool> can_fuse_parents = { false, false };
 
+            const int parents_num = 2;
+            std::vector<program_node*> pass_through[parents_num];
+
             for (size_t i = 0; i < parents.size(); i++) {
+                size_t second_input_idx = i ^ 1;
+                auto fuse_order = try_fuse_through(*parents[i]);
+                bool use_fuse_through = fuse_order.size() > 1;
+
+                // Extract fused_node from vector
+                parents[i] = fuse_order.back();
+                fuse_order.pop_back();
+
                 can_fuse_parents[i] = (parents[i]->is_type<convolution>() && conv_supports_fusings(parents[i]->as<convolution>())) ||
                                       ((prim->mode == eltwise_mode::sum || prim->mode == eltwise_mode::prod) &&
                                       ((parents[i]->is_type<binary_convolution>() && bin_conv_supports_eltw_fusings(parents[i]->as<binary_convolution>())) ||
@@ -960,6 +1033,16 @@ void prepare_primitive_fusing::fuse_simple_primitives(program &p) {
                                       (parents[i]->is_type<pooling>() && pooling_supports_fusings(parents[i]->as<pooling>())) ||
                                       (parents[i]->is_type<depth_to_space>() && dts_supports_fusings(parents[i]->as<depth_to_space>())) ||
                                       (parents[i]->is_type<reduce>() && reduce_supports_fusings(parents[i]->as<reduce>()))));
+
+                if (use_fuse_through) {
+                    if (!parents[second_input_idx]->is_constant() || parents[second_input_idx]->get_output_layout().size != cldnn::tensor(1))
+                        can_fuse_parents[i] = false;
+
+                    if (static_cast<bool>(node.get_output_layout().data_padding))
+                        can_fuse_parents[i] = false;
+
+                    pass_through[i] = fuse_order;
+                }
             }
 
             // Disable fusion to a node on constant path when second input is in data flow
@@ -1118,7 +1201,7 @@ void prepare_primitive_fusing::fuse_simple_primitives(program &p) {
                 recalc_processing_order = true;
             }
 
-            p.fuse_nodes(*fused_node, node, &fusing_history);
+            p.fuse_nodes(*fused_node, node, &fusing_history, pass_through[fused_idx]);
         };
 
         program_helpers::do_for_types<activation, scale, quantize, eltwise>(*node,

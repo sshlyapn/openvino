@@ -43,6 +43,10 @@ layout reshape_inst::calc_output_layout(reshape_node const& node) {
         sizes[need_recalc] = static_cast<int>(input_layout.size.count()) / shape_count;
 
     input_layout.size = tensor(sizes);
+    printf("Update reshape (%s, input %s: %s f %d dt %d) layout: %s f %d dt %d\n", node.id().c_str(), node.input().id().c_str(),
+            node.input().get_output_layout().size.to_string().c_str(), static_cast<int>(node.input().get_output_layout().format),
+            static_cast<int>(node.input().get_output_layout().data_type),
+            input_layout.size.to_string().c_str(), static_cast<int>(input_layout.format), static_cast<int>(input_layout.data_type));
     return input_layout;
 }
 

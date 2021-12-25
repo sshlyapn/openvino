@@ -262,6 +262,7 @@ device_info init_device_info(const cl::Device& device) {
         GPU_DEBUG_GET_INSTANCE(debug_config);
         GPU_DEBUG_IF(debug_config->disable_onednn)
             info.supports_immad = false;
+        info.supports_immad = true;
     } else {
         info.gfx_ver = {0, 0, 0};
         info.device_id = driver_dev_id();

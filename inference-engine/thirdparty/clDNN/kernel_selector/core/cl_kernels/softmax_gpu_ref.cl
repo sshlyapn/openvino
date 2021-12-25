@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include "include/acc_type.cl"
 #include "include/batch_headers/common.cl"
 
 
@@ -22,13 +21,13 @@ KERNEL(softmax)(__global INPUT0_TYPE* input, __global OUTPUT_TYPE* output)
     const uint in_depth_offset  = batch*INPUT0_BATCH_PITCH + other2*INPUT0_OTHER2_PITCH + other1*INPUT0_OTHER1_PITCH + other0*INPUT0_OTHER0_PITCH + INPUT0_OFFSET;
     const uint out_depth_offset = batch*OUTPUT_BATCH_PITCH + other2*OUTPUT_OTHER2_PITCH + other1*OUTPUT_OTHER1_PITCH + other0*OUTPUT_OTHER0_PITCH + OUTPUT_OFFSET;
 
-    UNIT_TYPE max_value = UNIT_VAL_MIN;
-    UNIT_TYPE data[INPUT0_CLASS_NUM];
+    ACCUMULATOR_TYPE max_value = UNIT_VAL_MIN;
+    ACCUMULATOR_TYPE data[INPUT0_CLASS_NUM];
 
     for (uint cls = 0; cls < INPUT0_CLASS_NUM; ++cls)
     {
         const uint index = in_depth_offset + cls*INPUT0_CLASS_PITCH;
-        UNIT_TYPE in = input[index];
+        ACCUMULATOR_TYPE in = input[index];
         max_value = max(max_value, in);
         data[cls] = in;
     }
@@ -43,8 +42,13 @@ KERNEL(softmax)(__global INPUT0_TYPE* input, __global OUTPUT_TYPE* output)
 
     for (uint cls = 0; cls < INPUT0_CLASS_NUM; ++cls)
     {
-        const UNIT_TYPE res = data[cls] / (UNIT_TYPE)denominator;
+        const ACCUMULATOR_TYPE res = data[cls] / denominator;
         const uint output_idx = out_depth_offset + cls*OUTPUT_CLASS_PITCH;
+#if HAS_FUSED_OPS
+        FUSED_OPS;
+        output[output_idx] = FUSED_OPS_RESULT;
+#else
         output[output_idx] = ACTIVATION(res, ACTIVATION_PARAMS);
+#endif
     }
 }

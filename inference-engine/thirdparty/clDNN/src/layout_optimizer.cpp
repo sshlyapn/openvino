@@ -1400,8 +1400,8 @@ impl_types layout_optimizer::get_preferred_impl_type(program_node& node, format 
             }
         }
     } else if (node.is_type<fully_connected>()) {
-        if (!_optimization_attributes.use_onednn_impls)
-            return impl_types::ocl;
+        // if (!_optimization_attributes.use_onednn_impls)
+        //     return impl_types::ocl;
 
         impl_types impl_candidate = impl_types::onednn;
 

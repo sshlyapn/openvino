@@ -518,6 +518,8 @@ void program::pre_optimize_graph(bool is_internal) {
 
     apply_opt_pass<strided_slice_optimize>();
 
+    printf("handle_reshape pass\n");
+
     apply_opt_pass<handle_reshape>();
 
     apply_opt_pass<prepare_padding>(output_size_handling_enabled);
@@ -996,7 +998,8 @@ bool program::extract_and_remove(program_node& node) {
 
 void program::fuse_nodes(program_node &fused_node,
                          program_node &peer_node,
-                         std::map<primitive_id, std::vector<std::pair<primitive_id, size_t>>>* fusing_history) {
+                         std::map<primitive_id, std::vector<std::pair<primitive_id, size_t>>>* fusing_history,
+                         std::vector<program_node*> pass_through) {
     auto peer_layout = peer_node.get_output_layout();
     fused_primitive_desc local_desc;
     local_desc.node = get_node_ptr(peer_node.id());
@@ -1026,7 +1029,9 @@ void program::fuse_nodes(program_node &fused_node,
     size_t deps_idx = 0;
     for (size_t i = 0; i < peer_node.get_dependencies().size(); i++) {
         auto& dep = peer_node.get_dependency(i);
-        if (dep.id() == fused_node.id()) {
+        // If there are no intermediate nodes, then skip dependencies between peer_node and fused node,
+        // otherwise - between peer_node and nearest node in the chain
+        if (dep.id() == (pass_through.empty() ? fused_node.id() : pass_through.front()->id())) {
             deps_idx++;
             continue;
         }
@@ -1082,12 +1087,43 @@ void program::fuse_nodes(program_node &fused_node,
         auto& dep = peer_node.get_dependency(peer_node.get_dependencies().size() - 1);
         remove_connection(dep, peer_node);
     }
-    replace_all_usages(peer_node, fused_node);
 
-    // Update output layout. Recalculation is not needed.
-    fused_node.merge_output_padding(needed_padding);
-    fused_node.set_output_layout(peer_layout, false);
-    fused_node.recalc_output_layout(true);
+    // Replace all usages on fused_node or on the first node in the chain
+    replace_all_usages(peer_node, pass_through.empty() ? fused_node : *pass_through.front());
+
+    // Update output layout
+    if (pass_through.empty()) {
+        fused_node.merge_output_padding(needed_padding);
+        printf("Set output layout in program - fused node is %s\n", fused_node.id().c_str());
+        fused_node.set_output_layout(peer_layout, false);
+        printf("Recalc output layout in program\n");
+        fused_node.recalc_output_layout(true);
+    } else {
+        // Update output data type of fused_node
+        // auto fused_node_layout = fused_node.get_output_layout();
+        // fused_node_layout.data_type = peer_layout.data_type;
+        // fused_node.set_output_layout(fused_node_layout, true);
+
+        // Propagate data type through all primitives in fused chain
+        for (auto& node : pass_through) {
+            if (node->is_type<reorder>()) {
+                printf("Processing reorder %s in fused chain\n", node->id().c_str());
+                // We can't modify reorder's output type directly, so add extra reorder to necessary data type
+                auto reorder_layout = node->get_output_layout();
+                reorder_layout.data_type = peer_layout.data_type;
+                // auto r_prim = std::make_shared<reorder>("reorder_to_dt_" + node->id(), node->id(), reorder_layout);
+                // add_intermediate(r_prim, *node->get_users().front(), 0);
+                node->set_output_layout(reorder_layout);
+            }
+        }
+        auto fused_node_layout = fused_node.get_output_layout();
+        printf("Set output layout in program - fused node is %s\n", fused_node.id().c_str());
+        fused_node_layout.data_type = peer_layout.data_type;
+        fused_node.set_output_layout(fused_node_layout, false);
+
+        printf("Recalc output layout in program\n");
+        fused_node.recalc_output_layout(true);
+    }
 }
 
 void program::remove_nodes(std::vector<program_node*>& to_remove) {

@@ -40,8 +40,7 @@ bool check_binarization(memory::ptr mem_input_low, memory::ptr mem_input_high, p
     return is_binarization;
 }
 
-
-void  prepare_quantization::prepare_scale_shift_opt(program &p, quantize_node& quantize_node) {
+void prepare_quantization::prepare_scale_shift_opt(program &p, quantize_node& quantize_node) {
     const auto& stream = p.get_stream();
 
     program_node &input_low_node = quantize_node.get_dependency(1);
@@ -82,6 +81,34 @@ void  prepare_quantization::prepare_scale_shift_opt(program &p, quantize_node& q
                         + (idx.feature[0] % sizes.feature[0])*pitches.feature[0]
                         + (idx.spatial[1] % sizes.spatial[1])*pitches.spatial[1]
                         + (idx.spatial[0] % sizes.spatial[0])*pitches.spatial[0];
+    };
+
+    // multiply:933
+    auto print_memory = [&] (std::string name, memory::ptr memory, size_t len = 30) {
+        using float_mem_lock = mem_lock<float, mem_lock_type::write>;
+        using uint16_t_mem_lock = mem_lock<uint16_t, mem_lock_type::write>;
+        switch (memory->get_layout().data_type) {
+            case data_types::f32: {
+                std::shared_ptr<float_mem_lock> data_lock_ptr = std::make_shared<float_mem_lock>(memory, stream);
+                float* data = data_lock_ptr->data();
+                printf("f32 %s: ", name.c_str());
+                for (size_t i = 0; i < std::min(len, data_lock_ptr->size()); i++) {
+                    printf("%f ", data[i]);
+                }
+                printf("\n");
+                return;
+            }
+            case data_types::f16: {
+                std::shared_ptr<uint16_t_mem_lock> data_lock_ptr = std::make_shared<uint16_t_mem_lock>(memory, stream);
+                uint16_t* data = data_lock_ptr->data();
+                printf("f16 %s: ", name.c_str());
+                for (size_t i = 0; i < std::min(len, data_lock_ptr->size()); i++) {
+                    printf("%f ", half_to_float(data[i]));
+                }
+                printf("\n");
+                return;
+            }
+        }
     };
 
     auto lock_memory = [&stream] (memory::ptr memory, std::function<void(std::size_t, float)>& set_data,
@@ -267,6 +294,20 @@ void  prepare_quantization::prepare_scale_shift_opt(program &p, quantize_node& q
     p.get_processing_order().insert(&quantize_node, &out_shift_node);
     p.get_processing_order().insert(&quantize_node, &out_scale_node);
 
+    printf("Quantize %s and user %s\n", quantize_node.id().c_str(), quantize_node.get_dependency(0).id().c_str());
+    if (quantize_node.get_dependency(0).id() == "reshape:1044") {
+        print_memory("mem_input_scale", mem_input_scale);
+        print_memory("mem_input_shift", mem_input_shift);
+        print_memory("mem_output_scale", mem_output_scale);
+        print_memory("mem_output_shift", mem_output_shift);
+
+
+        print_memory("mem_input_low", mem_input_low);
+        print_memory("mem_input_high", mem_input_high);
+        print_memory("mem_output_low", mem_output_low);
+        print_memory("mem_output_high", mem_output_high);
+    }
+
     quantize_node.set_scale_shift_opt();
 
     if (need_post_scale) {
@@ -327,6 +368,9 @@ void  prepare_quantization::prepare_scale_shift_opt(program &p, quantize_node& q
 }
 
 void prepare_quantization::handle_quantize_node(program& p, quantize_node& quantize_node) {
+    if (optimize_quantize(p, quantize_node))
+        return;
+
     if (quantize_node.get_primitive()->levels == 2) {
         prepare_packed_quantize(p, quantize_node);
     } else if (quantize_node.get_primitive()->levels <= 256 && !quantize_node.get_scale_shift_opt() && !quantize_node.is_constant()) {
@@ -757,6 +801,102 @@ void prepare_quantization::prepare_asymmetric_quantization(program &p, convoluti
     }
 
     new_conv_node.recalc_output_layout();
+}
+
+bool prepare_quantization::optimize_quantize(program &p, quantize_node& quantize_node) {
+    const auto& stream = p.get_stream();
+
+    auto& input = quantize_node.get_dependency(0);
+    auto parallel_quantizes_num = 0;
+    for (auto& usr : input.get_users()) {
+        if (usr->is_type<quantize>())
+            parallel_quantizes_num++;
+    }
+
+    if (parallel_quantizes_num < 2)
+        return false;
+
+    auto quantize_prim_first = quantize_node.get_primitive();
+
+    program_node &input_low_node_first = quantize_node.get_dependency(1);
+    program_node &input_high_node_first = quantize_node.get_dependency(2);
+    program_node &output_low_node_first = quantize_node.get_dependency(3);
+    program_node &output_high_node_first = quantize_node.get_dependency(4);
+
+    if (!input_low_node_first.is_type<data>() || !input_high_node_first.is_type<data>() ||
+        !output_low_node_first.is_type<data>() || !output_high_node_first.is_type<data>()) {
+        return false;
+    }
+
+    auto mem_input_low_first = input_low_node_first.as<data>().get_attached_memory_ptr();
+    auto mem_input_high_first = input_high_node_first.as<data>().get_attached_memory_ptr();
+    auto mem_output_low_first = output_low_node_first.as<data>().get_attached_memory_ptr();
+    auto mem_output_high_first = output_high_node_first.as<data>().get_attached_memory_ptr();
+
+    mem_lock<uint8_t, mem_lock_type::read> mem_input_low_lock_first{mem_input_low_first, stream};
+    mem_lock<uint8_t, mem_lock_type::read> mem_input_high_lock_first{mem_input_high_first, stream};
+    mem_lock<uint8_t, mem_lock_type::read> mem_output_low_lock_first{mem_output_low_first, stream};
+    mem_lock<uint8_t, mem_lock_type::read> mem_output_high_lock_first{mem_output_high_first, stream};
+
+    program_node* same_quantize = nullptr;
+    for (auto& usr : input.get_users()) {
+        if (!usr->is_type<quantize>() || usr == &quantize_node)
+            continue;
+
+        auto quantize_prim_second = usr->as<quantize>().get_primitive();
+
+        program_node &input_low_node_second = usr->get_dependency(1);
+        program_node &input_high_node_second = usr->get_dependency(2);
+        program_node &output_low_node_second = usr->get_dependency(3);
+        program_node &output_high_node_second = usr->get_dependency(4);
+
+        if (!input_low_node_second.is_type<data>() || !input_high_node_second.is_type<data>() ||
+            !output_low_node_second.is_type<data>() || !output_high_node_second.is_type<data>())
+            continue;
+
+        auto mem_input_low_second = input_low_node_second.as<data>().get_attached_memory_ptr();
+        auto mem_input_high_second = input_high_node_second.as<data>().get_attached_memory_ptr();
+        auto mem_output_low_second = output_low_node_second.as<data>().get_attached_memory_ptr();
+        auto mem_output_high_second = output_high_node_second.as<data>().get_attached_memory_ptr();
+
+        mem_lock<uint8_t, mem_lock_type::read> mem_input_low_lock_second{mem_input_low_second, stream};
+        mem_lock<uint8_t, mem_lock_type::read> mem_input_high_lock_second{mem_input_high_second, stream};
+        mem_lock<uint8_t, mem_lock_type::read> mem_output_low_lock_second{mem_output_low_second, stream};
+        mem_lock<uint8_t, mem_lock_type::read> mem_output_high_lock_second{mem_output_high_second, stream};
+
+        if (mem_input_low_first->count() != mem_input_low_second->count() || mem_input_high_first->count() != mem_input_high_second->count() ||
+            mem_output_low_first->count() != mem_output_low_second->count() || mem_output_high_first->count() != mem_output_high_second->count())
+            continue;
+
+        if (memcmp(mem_input_low_lock_first.data(), mem_input_low_lock_second.data(), mem_input_low_first->size()) != 0 ||
+            memcmp(mem_input_high_lock_first.data(), mem_input_high_lock_second.data(), mem_input_high_first->size()) != 0 ||
+            memcmp(mem_output_low_lock_first.data(), mem_output_low_lock_second.data(), mem_output_low_first->size()) != 0 ||
+            memcmp(mem_output_high_lock_first.data(), mem_output_high_lock_second.data(), mem_output_high_first->size()) != 0)
+            continue;
+
+        if (quantize_prim_first->output_data_type != quantize_prim_second->output_data_type ||
+            quantize_prim_first->levels != quantize_prim_second->levels)
+            continue;
+
+        same_quantize = usr;
+        break;
+    }
+
+    if (!same_quantize)
+        return false;
+
+    while (!quantize_node.get_dependencies().empty()) {
+        auto& dep = quantize_node.get_dependency(0);
+        p.remove_connection(dep, quantize_node);
+        p.remove_if_dangling(dep);
+    }
+
+    printf("Replace %s with %s\n", quantize_node.id().c_str(), same_quantize->id().c_str());
+
+    p.add_optimized_primitive_info(quantize_node.id(), {same_quantize->id()});
+    p.replace_all_usages(quantize_node, *same_quantize);
+
+    return true;
 }
 
 void prepare_quantization::run(program& p) {

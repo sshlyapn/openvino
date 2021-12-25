@@ -51,10 +51,21 @@ public:
         auto& kernel_selector = kernel_selector::gemm_kernel_selector::Instance();
         auto best_kernels = kernel_selector.GetBestKernels(gemm_params, gemm_optional_params);
 
+        printf("Gemm kernel creating %s\n", arg.id().c_str());
+        printf("Gemm input %s %d\n", arg.get_dependency(0).get_output_layout().size.to_string().c_str(),
+                                   static_cast<int>(arg.get_dependency(0).get_output_layout().data_type));
+        printf("Gemm wei %s %d\n", arg.get_dependency(1).get_output_layout().size.to_string().c_str(),
+                                   static_cast<int>(arg.get_dependency(1).get_output_layout().data_type));
+        printf("Gemm out %s %d\n", arg.get_output_layout().size.to_string().c_str(),
+                                   static_cast<int>(arg.get_output_layout().data_type));
+
+
         CLDNN_ERROR_BOOL(arg.id(),
                          "Best_kernel.empty()",
                          best_kernels.empty(),
                          "Cannot find a proper kernel with this arguments");
+
+        printf("Gemm kernel after %s\n", best_kernels[0].kernelName.c_str());
 
         return new gemm_impl(arg, best_kernels[0]);
     }

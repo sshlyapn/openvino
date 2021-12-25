@@ -111,6 +111,10 @@ SoftmaxKernelBase::DispatchData SoftmaxKernelBaseBF::SetDefault(const softmax_pa
     dispatchData.dataSetSize = flatten_input.Feature().v;
     dispatchData.dataSetsCount = input.Batch().v;
 
+    printf("Softmax base for %s\n", params.layerID.c_str());
+    printf("DataSetSize: %lu\n", dispatchData.dataSetSize);
+    printf("DataSetsCount: %lu\n", dispatchData.dataSetsCount);
+
     return dispatchData;
 }
 }  // namespace kernel_selector

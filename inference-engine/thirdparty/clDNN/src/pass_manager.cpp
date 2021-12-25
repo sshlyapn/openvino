@@ -68,7 +68,9 @@ void pass_manager::run(program& p, base_pass& pass) {
     if (pass_count < 10)
         dump_file_name += "0";
     dump_file_name += std::to_string(pass_count) + "_" + pass.get_name();
+    printf("Dump graph %s\n", pass.get_name().c_str());
     p.dump_program(dump_file_name.c_str(), true);
+    printf("Dump graph end %s\n", pass.get_name().c_str());
     pass.clean_marks(p);
     pass_count++;
 }

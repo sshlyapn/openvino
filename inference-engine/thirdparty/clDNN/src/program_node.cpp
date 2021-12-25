@@ -189,6 +189,7 @@ layout program_node::calc_output_layout() const {
 }
 
 layout program_node::get_output_layout(bool invalidate_users_if_changed) {
+    printf("Get output layout %s, valid %d\n", id().c_str(), valid_output_layout);
     if (valid_output_layout)
         return output_layout;
 

@@ -69,10 +69,18 @@ struct softmax_impl : typed_primitive_impl_ocl<softmax> {
         auto& kernel_selector = kernel_selector::softmax_kernel_selector::Instance();
         auto best_kernels = kernel_selector.GetBestKernels(sm_params, sm_optional_params);
 
+        printf("Softmax kernel creating %s, %d\n", arg.id().c_str(), static_cast<int>(primitive->dimension));
+        printf("Softmax input %s %d\n", arg.get_dependency(0).get_output_layout().size.to_string().c_str(),
+                                   static_cast<int>(arg.get_dependency(0).get_output_layout().data_type));
+        printf("Softmax out %s %d\n", arg.get_output_layout().size.to_string().c_str(),
+                                   static_cast<int>(arg.get_output_layout().data_type));
+
         CLDNN_ERROR_BOOL(arg.id(),
                          "Best_kernel.empty()",
                          best_kernels.empty(),
                          "Cannot find a proper kernel with this arguments");
+
+        printf("Softmax kernel %s\n", best_kernels[0].kernelName.c_str());
 
         auto softmax_node = new softmax_impl(arg, best_kernels[0]);
 

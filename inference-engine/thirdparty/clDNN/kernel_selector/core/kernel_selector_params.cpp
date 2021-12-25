@@ -502,9 +502,13 @@ ParamsKey base_params::GetParamsKey() const {
     bool bDifferentTypes = false;
     bool bFP16Used = (output.GetDType() == Datatype::F16);
 
+    int idx = 0;
     for (const auto& i : inputs) {
         k.EnableInputDataType(i.GetDType());
         k.EnableInputLayout(i.GetLayout());
+
+        printf("%d. DT %d\n", idx++, static_cast<int>(i.GetDType()));
+        printf("Layout %d\n", static_cast<int>(i.GetLayout()));
 
         bBatching |= (i.Batch().v > 1);
         bPitches |= (i.PitchesDifferFromLogicalDims());
@@ -516,24 +520,32 @@ ParamsKey base_params::GetParamsKey() const {
     k.EnableOutputDataType(output.GetDType());
     k.EnableOutputLayout(output.GetLayout());
 
+    printf("DT out %d\n", static_cast<int>(output.GetDType()));
+    printf("Layout out %d\n", static_cast<int>(output.GetLayout()));
+
     if (bBatching) {
+        printf("Batching!!\n");
         k.EnableBatching();
     }
 
     if (bPitches || output.PitchesDifferFromLogicalDims()) {
+        printf("Pitches!!\n");
         k.EnableTensorPitches();
     }
 
     if (bDifferentTypes) {
+        printf("DifferenTypes!!\n");
         k.EnableDifferentTypes();
     }
 
     if (bOffests || output.GetFirstElementOffset() != 0) {
+        printf("TensorOffset!!\n");
         k.EnableTensorOffset();
     }
 
     if (!engineInfo.bFP16Support && bFP16Used) {
         // I'm not sure it's the best idea, but we can live with it right now
+        printf("EMULATION???!!\n");
         k.EnableFP16Emulation();
     }
 

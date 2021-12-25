@@ -51,6 +51,7 @@ void handle_reshape::run(program& p) {
             }
         });
     }
+    printf("First part of reshape pass\n");
     // If graph contains sequence of reshape nodes, we can remove all except the last one
     // E.g. pattern permute+flatten+reshape (common for object detection topologies) is represented as
     // permute+reshape+reshape in cldnn and can be simplified to permute+reshape.
@@ -62,10 +63,13 @@ void handle_reshape::run(program& p) {
                 return;
 
             auto& out_node = node.get_users().front();
-            if (out_node->is_type<reshape>())
+            if (out_node->is_type<reshape>()) {
+                printf("Extract %s\n", node.id().c_str());
                 p.extract_and_remove(node);
+            }
         });
     }
+    printf("Second part of reshape pass\n");
 
     for (const auto& node : p.get_processing_order()) {
         if (node->is_type<reshape>()) {
@@ -74,7 +78,9 @@ void handle_reshape::run(program& p) {
             if (input_node.is_type<reorder>())
                 continue;
 
+            printf("Trigger here?\n");
             node->get_output_layout();
+            printf("Trigger here after?\n");
 
             // vector for storing nodes that are reorder type, for which splitted primitives are needed (except for the
             // first one where orginal reshape will be used)
@@ -136,16 +142,21 @@ void handle_reshape::run(program& p) {
                         format,
                         reshape_in_layout.data_type);
                     auto& reshape_input_node = p.get_or_create(reshape_input);
+                    printf("add reshape input node %s. Next %s\n", reshape_input_node.id().c_str(), reorder_reshape_node->id().c_str());
                     p.add_intermediate(reshape_input_node,
                                        *reorder_reshape_node,
                                        0,
                                        reshape_input_node.get_dependencies().empty());
                     reshape_reorder_id++;
+                    printf("Recalc output node %s\n", reshape_input_node.id().c_str());
                     reshape_input_node.recalc_output_layout();
+                    printf("Recalc output node after %s\n", reshape_input_node.id().c_str());
                 }
             }
 
+            printf("Reshape lalyout output %s\n", node->id().c_str());
             auto reshape_layout = node->get_output_layout();
+            printf("Reshape lalyout output after %s\n", node->id().c_str());
             if (!(node->is_output()) && (reshape_layout.format != cldnn::format::bfyx)) {
                 auto bfyx_layout = layout({reshape_layout.data_type, cldnn::format::bfyx, reshape_layout.size});
                 // when some primitive does an implicit reorder to some other format then we lose the info about pitches
@@ -176,4 +187,5 @@ void handle_reshape::run(program& p) {
             }
         }
     }
+    printf("Third part of reshape pass\n");
 }

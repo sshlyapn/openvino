@@ -26,12 +26,21 @@ layout resample_inst::calc_output_layout(resample_node const& node) {
     }
     if (node.has_fused_primitives()) {
         output_type = node.get_fused_output_layout().data_type;
+        printf("Resample %s has fused prim %lu and set DT %d!\n", node.id().c_str(), node.get_fused_primitives().size(),
+        static_cast<int>(output_type));
     }
 
     auto result_sizes = desc->output_size;
 
     CLDNN_ERROR_NOT_EQUAL(node.id(), "Input batch size", input_layout.size.batch[0], "output batch size", result_sizes.batch[0], "");
     CLDNN_ERROR_NOT_EQUAL(node.id(), "Input feature size", input_layout.size.feature[0], "output feature size", result_sizes.feature[0], "");
+
+
+
+    printf("Update resample (%s, input %s: %s f %d dt %d) layout: %s f %d dt %d\n", node.id().c_str(), node.input().id().c_str(),
+            node.input().get_output_layout().size.to_string().c_str(), static_cast<int>(node.input().get_output_layout().format),
+            static_cast<int>(node.input().get_output_layout().data_type),
+            result_sizes.to_string().c_str(), static_cast<int>(input_layout.format), static_cast<int>(output_type));
 
     auto result = layout({output_type, input_layout.format, result_sizes});
     return result;

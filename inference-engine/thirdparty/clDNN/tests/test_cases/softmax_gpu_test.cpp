@@ -117,6 +117,7 @@ TEST_F(softmax_gpu_xb_f32_test_fixture, input_same_values_batch_wise) {
 
 TEST_F(softmax_gpu_xb_f32_test_fixture, values_batch_wise) {
 
+
     float in_buf[in_size] = {
        //b0  b1
         2.0f, 2.0f, //x0
