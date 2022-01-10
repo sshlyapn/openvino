@@ -21,7 +21,7 @@ namespace behavior {
 typedef std::tuple<
         ov::element::Type_t,                // Element type
         std::string,                        // Device name
-        ov::runtime::ParamMap               // Config
+        ov::AnyMap               // Config
 > OVExecGraphImportExportTestParams;
 
 class OVExecGraphImportExportTest : public testing::WithParamInterface<OVExecGraphImportExportTestParams>,
@@ -30,7 +30,7 @@ class OVExecGraphImportExportTest : public testing::WithParamInterface<OVExecGra
     static std::string getTestCaseName(testing::TestParamInfo<OVExecGraphImportExportTestParams> obj) {
         ov::element::Type_t elementType;
         std::string targetDevice;
-        runtime::ParamMap configuration;
+        ov::AnyMap configuration;
         std::tie(elementType, targetDevice, configuration) = obj.param;
         std::ostringstream result;
         result << "targetDevice=" << targetDevice << "_";
@@ -62,7 +62,7 @@ class OVExecGraphImportExportTest : public testing::WithParamInterface<OVExecGra
     protected:
     std::shared_ptr<ov::runtime::Core> core = utils::PluginCache::get().core();
     std::string targetDevice;
-    runtime::ParamMap configuration;
+    ov::AnyMap configuration;
     ov::element::Type_t elementType;
     std::shared_ptr<ov::Model> function;
 };
@@ -230,7 +230,7 @@ TEST_P(OVExecGraphImportExportTest, readFromV10IR) {
     EXPECT_EQ(importedExecNet.output().get_element_type(), ov::element::f32);
 }
 
-static ov::runtime::ConfigMap any_copy(const ov::runtime::ParamMap& params) {
+static ov::runtime::ConfigMap any_copy(const ov::AnyMap& params) {
     auto to_config_string = [] (const Any& any) -> std::string {
         if (any.is<bool>()) {
             return any.as<bool>() ? "YES" : "NO";

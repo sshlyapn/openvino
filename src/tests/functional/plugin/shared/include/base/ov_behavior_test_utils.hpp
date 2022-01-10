@@ -23,7 +23,7 @@ namespace behavior {
 
 typedef std::tuple<
         std::string,            // Device name
-        ov::runtime::ParamMap   // Config
+        ov::AnyMap   // Config
 > InferRequestParams;
 
 class OVInferRequestTests : public testing::WithParamInterface<InferRequestParams>,
@@ -31,7 +31,7 @@ class OVInferRequestTests : public testing::WithParamInterface<InferRequestParam
 public:
     static std::string getTestCaseName(testing::TestParamInfo<InferRequestParams> obj) {
         std::string targetDevice;
-        ov::runtime::ParamMap configuration;
+        ov::AnyMap configuration;
         std::tie(targetDevice, configuration) = obj.param;
         std::ostringstream result;
         result << "targetDevice=" << targetDevice << "_";
@@ -50,7 +50,7 @@ public:
         SKIP_IF_CURRENT_TEST_IS_DISABLED()
         std::tie(targetDevice, configuration) = this->GetParam();
         function = ngraph::builder::subgraph::makeConvPoolRelu();
-        ov::runtime::ParamMap params;
+        ov::AnyMap params;
         for (auto&& v : configuration) {
             params.emplace(v.first, v.second);
         }
@@ -67,7 +67,7 @@ protected:
     ov::runtime::CompiledModel execNet;
     std::shared_ptr<ov::runtime::Core> core = utils::PluginCache::get().core();
     std::string targetDevice;
-    ov::runtime::ParamMap configuration;
+    ov::AnyMap configuration;
     std::shared_ptr<ov::Model> function;
 };
 

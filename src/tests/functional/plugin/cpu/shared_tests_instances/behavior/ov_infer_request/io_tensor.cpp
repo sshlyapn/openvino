@@ -9,17 +9,17 @@
 using namespace ov::test::behavior;
 
 namespace {
-const std::vector<ov::runtime::ParamMap> configs = {
+const std::vector<ov::AnyMap> configs = {
         {},
         {{InferenceEngine::PluginConfigParams::KEY_CPU_THROUGHPUT_STREAMS, InferenceEngine::PluginConfigParams::CPU_THROUGHPUT_AUTO}},
         {{InferenceEngine::PluginConfigParams::KEY_CPU_THROUGHPUT_STREAMS, "0"}, {InferenceEngine::PluginConfigParams::KEY_CPU_THREADS_NUM, "1"}}
 };
 
-const std::vector<ov::runtime::ParamMap> Multiconfigs = {
+const std::vector<ov::AnyMap> Multiconfigs = {
         {{ MULTI_CONFIG_KEY(DEVICE_PRIORITIES) , CommonTestUtils::DEVICE_CPU}}
 };
 
-const std::vector<ov::runtime::ParamMap> Autoconfigs = {
+const std::vector<ov::AnyMap> Autoconfigs = {
         {{ MULTI_CONFIG_KEY(DEVICE_PRIORITIES) , CommonTestUtils::DEVICE_CPU}}
 };
 

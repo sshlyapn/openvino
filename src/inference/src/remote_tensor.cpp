@@ -34,12 +34,12 @@ void RemoteTensor::type_check(const Tensor& tensor, const std::map<std::string, 
     }
 }
 
-ParamMap RemoteTensor::get_params() const {
+AnyMap RemoteTensor::get_params() const {
     OPENVINO_ASSERT(_impl != nullptr, "Remote tensor was not initialized.");
     type_check(*this);
     auto remote_impl = static_cast<ie::RemoteBlob*>(_impl.get());
     try {
-        ParamMap paramMap;
+        AnyMap paramMap;
         for (auto&& param : remote_impl->getParams()) {
             paramMap.emplace(param.first, Any{param.second, _so});
         }

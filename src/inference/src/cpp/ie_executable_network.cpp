@@ -208,7 +208,7 @@ void CompiledModel::export_model(std::ostream& networkModel) {
     OV_EXEC_NET_CALL_STATEMENT(_impl->Export(networkModel));
 }
 
-void CompiledModel::set_config(const ParamMap& config) {
+void CompiledModel::set_config(const AnyMap& config) {
     OV_EXEC_NET_CALL_STATEMENT(_impl->SetConfig(config));
 }
 

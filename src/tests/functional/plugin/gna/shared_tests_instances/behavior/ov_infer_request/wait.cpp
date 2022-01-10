@@ -9,7 +9,7 @@ namespace {
 INSTANTIATE_TEST_SUITE_P(smoke_BehaviorTests, OVInferRequestWaitTests,
         ::testing::Combine(
                 ::testing::Values(CommonTestUtils::DEVICE_GNA),
-                ::testing::Values(ov::runtime::ParamMap({}))),
+                ::testing::Values(ov::AnyMap({}))),
         OVInferRequestWaitTests::getTestCaseName);
 
 

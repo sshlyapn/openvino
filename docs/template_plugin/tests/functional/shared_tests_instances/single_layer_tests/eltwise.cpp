@@ -110,7 +110,7 @@ std::vector<ngraph::helpers::EltwiseTypes> eltwiseOpTypesSingleThread = {
         ngraph::helpers::EltwiseTypes::POWER,
 };
 
-ov::runtime::ParamMap additional_config_single_thread = {
+ov::AnyMap additional_config_single_thread = {
         {"CPU_THREADS_NUM", "1"}
 };
 

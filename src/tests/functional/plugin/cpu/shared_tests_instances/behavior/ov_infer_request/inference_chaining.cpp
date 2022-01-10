@@ -9,15 +9,15 @@ using namespace ov::test::behavior;
 
 namespace {
 
-const std::vector<ov::runtime::ParamMap> configs = {
+const std::vector<ov::AnyMap> configs = {
     {}
 };
 
-const std::vector<ov::runtime::ParamMap> HeteroConfigs = {
+const std::vector<ov::AnyMap> HeteroConfigs = {
     {{"TARGET_FALLBACK", CommonTestUtils::DEVICE_CPU}}
 };
 
-const std::vector<ov::runtime::ParamMap> AutoConfigs = {
+const std::vector<ov::AnyMap> AutoConfigs = {
     {{InferenceEngine::MultiDeviceConfigParams::KEY_MULTI_DEVICE_PRIORITIES, CommonTestUtils::DEVICE_CPU}}
 };
 

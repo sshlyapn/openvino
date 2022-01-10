@@ -13,7 +13,7 @@ const std::vector<ov::element::Type_t> netPrecisions = {
         ov::element::u8,
         ov::element::f32
 };
-const std::vector<ov::runtime::ParamMap> configs = {
+const std::vector<ov::AnyMap> configs = {
     {{"GNA_DEVICE_MODE", "GNA_SW_EXACT"}}
 };
 

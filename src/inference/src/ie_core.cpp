@@ -723,7 +723,7 @@ public:
         return res;
     }
 
-    Any GetMetric(const std::string& deviceName, const std::string& name, const ParamMap& options = {}) const override {
+    Any GetMetric(const std::string& deviceName, const std::string& name, const AnyMap& options = {}) const override {
         // HETERO case
         {
             if (deviceName.find("HETERO:") == 0) {
@@ -1065,7 +1065,7 @@ public:
     }
 
     /**
-     * @brief Get device config it is passed as pair of device_name and `ov::runtime::ParamMap`
+     * @brief Get device config it is passed as pair of device_name and `AnyMap`
      * @param configs All set of configs
      * @note  `device_name` is not allowed in form of MULTI:CPU, HETERO:GPU,CPU, AUTO:CPU
      *        just simple forms like CPU, GPU, MULTI, GPU.0, etc
@@ -1079,7 +1079,7 @@ public:
                     return device == parsed._deviceName;
                 });
             if (config_is_device_name_in_regestry) {
-                SetConfigForPlugins(any_copy(config.second.as<ov::runtime::ParamMap>()), config.first);
+                SetConfigForPlugins(any_copy(config.second.as<ov::AnyMap>()), config.first);
             }
         }
     }
@@ -1587,13 +1587,13 @@ ie::CNNNetwork toCNN(const std::shared_ptr<const ngraph::Function>& model) {
 
 }  // namespace
 
-CompiledModel Core::compile_model(const std::shared_ptr<const ov::Model>& model, const ParamMap& config) {
+CompiledModel Core::compile_model(const std::shared_ptr<const ov::Model>& model, const AnyMap& config) {
     return compile_model(model, ov::DEFAULT_DEVICE_NAME, config);
 }
 
 CompiledModel Core::compile_model(const std::shared_ptr<const ov::Model>& model,
                                   const std::string& deviceName,
-                                  const ParamMap& config) {
+                                  const AnyMap& config) {
     OV_CORE_CALL_STATEMENT({
         _impl->ExtractAndSetDeviceConfig(config);
         auto exec = _impl->LoadNetwork(toCNN(model), deviceName, any_copy(config));
@@ -1601,11 +1601,11 @@ CompiledModel Core::compile_model(const std::shared_ptr<const ov::Model>& model,
     });
 }
 
-CompiledModel Core::compile_model(const std::string& modelPath, const ParamMap& config) {
+CompiledModel Core::compile_model(const std::string& modelPath, const AnyMap& config) {
     return compile_model(modelPath, ov::DEFAULT_DEVICE_NAME, config);
 }
 
-CompiledModel Core::compile_model(const std::string& modelPath, const std::string& deviceName, const ParamMap& config) {
+CompiledModel Core::compile_model(const std::string& modelPath, const std::string& deviceName, const AnyMap& config) {
     OV_CORE_CALL_STATEMENT({
         _impl->ExtractAndSetDeviceConfig(config);
         auto exec = _impl->LoadNetwork(modelPath, deviceName, any_copy(config));
@@ -1615,7 +1615,7 @@ CompiledModel Core::compile_model(const std::string& modelPath, const std::strin
 
 CompiledModel Core::compile_model(const std::shared_ptr<const ov::Model>& model,
                                   const RemoteContext& context,
-                                  const ParamMap& config) {
+                                  const AnyMap& config) {
     OV_CORE_CALL_STATEMENT({
         _impl->ExtractAndSetDeviceConfig(config);
         auto exec = _impl->LoadNetwork(toCNN(model), context._impl, any_copy(config));
@@ -1643,7 +1643,7 @@ void Core::add_extension(const std::vector<std::shared_ptr<ov::Extension>>& exte
     OV_CORE_CALL_STATEMENT({ _impl->AddOVExtensions(extensions); });
 }
 
-CompiledModel Core::import_model(std::istream& modelStream, const std::string& deviceName, const ParamMap& config) {
+CompiledModel Core::import_model(std::istream& modelStream, const std::string& deviceName, const AnyMap& config) {
     OV_ITT_SCOPED_TASK(ov::itt::domains::IE, "Core::import_model");
     OV_CORE_CALL_STATEMENT({
         _impl->ExtractAndSetDeviceConfig(config);
@@ -1652,7 +1652,7 @@ CompiledModel Core::import_model(std::istream& modelStream, const std::string& d
     });
 }
 
-CompiledModel Core::import_model(std::istream& modelStream, const RemoteContext& context, const ParamMap& config) {
+CompiledModel Core::import_model(std::istream& modelStream, const RemoteContext& context, const AnyMap& config) {
     OV_ITT_SCOPED_TASK(ov::itt::domains::IE, "Core::import_model");
 
     using ExportMagic = std::array<char, 4>;
@@ -1680,7 +1680,7 @@ CompiledModel Core::import_model(std::istream& modelStream, const RemoteContext&
 
 SupportedOpsMap Core::query_model(const std::shared_ptr<const ov::Model>& model,
                                   const std::string& deviceName,
-                                  const ParamMap& config) const {
+                                  const AnyMap& config) const {
     OV_CORE_CALL_STATEMENT({
         _impl->ExtractAndSetDeviceConfig(config);
         auto qnResult = _impl->QueryNetwork(toCNN(model), deviceName, any_copy(config));
@@ -1688,14 +1688,14 @@ SupportedOpsMap Core::query_model(const std::shared_ptr<const ov::Model>& model,
     });
 }
 
-void Core::set_config(const ParamMap& config) {
+void Core::set_config(const AnyMap& config) {
     OV_CORE_CALL_STATEMENT({
         _impl->ExtractAndSetDeviceConfig(config);
         _impl->SetConfigForPlugins(any_copy(config), {});
     });
 }
 
-void Core::set_config(const std::string& deviceName, const ParamMap& config) {
+void Core::set_config(const std::string& deviceName, const AnyMap& config) {
     OPENVINO_ASSERT(deviceName.find("HETERO:") != 0,
                     "set_config is supported only for HETERO itself (without devices). "
                     "You can configure the devices with set_config before creating the HETERO on top.");
@@ -1767,7 +1767,7 @@ void Core::register_plugins(const std::string& xmlConfigFile) {
     OV_CORE_CALL_STATEMENT(_impl->RegisterPluginsInRegistry(xmlConfigFile););
 }
 
-RemoteContext Core::create_context(const std::string& deviceName, const ParamMap& params) {
+RemoteContext Core::create_context(const std::string& deviceName, const AnyMap& params) {
     OPENVINO_ASSERT(deviceName.find("HETERO") != 0, "HETERO device does not support remote context");
     OPENVINO_ASSERT(deviceName.find("MULTI") != 0, "MULTI device does not support remote context");
     OPENVINO_ASSERT(deviceName.find("AUTO") != 0, "AUTO device does not support remote context");
@@ -1785,7 +1785,7 @@ RemoteContext Core::get_default_context(const std::string& deviceName) {
     OPENVINO_ASSERT(deviceName.find("AUTO") != 0, "AUTO device does not support remote context");
 
     OV_CORE_CALL_STATEMENT({
-        auto parsed = parseDeviceNameIntoConfig(deviceName, ParamMap{});
+        auto parsed = parseDeviceNameIntoConfig(deviceName, AnyMap{});
         auto remoteContext = _impl->GetCPPPluginByName(parsed._deviceName).get_default_context(parsed._config);
         return {remoteContext._ptr, remoteContext._so};
     });

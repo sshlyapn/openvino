@@ -43,7 +43,7 @@ void OpImplCheckTest::SetUp() {
 std::string OpImplCheckTest::getTestCaseName(const testing::TestParamInfo<OpImplParams> &obj) {
     std::pair<ov::DiscreteTypeInfo, std::shared_ptr<ov::Model>> funcInfo;
     std::string targetDevice;
-    ov::runtime::ParamMap config;
+    ov::AnyMap config;
     std::tie(funcInfo, targetDevice, config) = obj.param;
 
     std::ostringstream result;

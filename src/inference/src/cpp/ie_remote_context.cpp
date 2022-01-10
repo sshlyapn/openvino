@@ -62,7 +62,7 @@ std::string RemoteContext::get_device_name() const {
     OV_REMOTE_CONTEXT_STATEMENT(return _impl->getDeviceName());
 }
 
-RemoteTensor RemoteContext::create_tensor(const element::Type& type, const Shape& shape, const ParamMap& params) {
+RemoteTensor RemoteContext::create_tensor(const element::Type& type, const Shape& shape, const AnyMap& params) {
     OV_REMOTE_CONTEXT_STATEMENT({
         auto blob = _impl->CreateBlob(
             {ie::details::convertPrecision(type), shape, ie::TensorDesc::getLayoutByRank(shape.size())},
@@ -81,8 +81,8 @@ Tensor RemoteContext::create_host_tensor(const element::Type element_type, const
     });
 }
 
-ParamMap RemoteContext::get_params() const {
-    ParamMap paramMap;
+AnyMap RemoteContext::get_params() const {
+    AnyMap paramMap;
     OV_REMOTE_CONTEXT_STATEMENT({
         for (auto&& param : _impl->getParams()) {
             paramMap.emplace(param.first, Any{param.second, _so});

@@ -23,7 +23,6 @@
 #include "openvino/op/op.hpp"
 #include "openvino/runtime/common.hpp"
 #include "openvino/runtime/compiled_model.hpp"
-#include "openvino/runtime/parameter.hpp"
 #include "openvino/runtime/remote_context.hpp"
 #include "openvino/runtime/tensor.hpp"
 
@@ -118,7 +117,7 @@ public:
      * operation
      * @return An executable network reference
      */
-    CompiledModel compile_model(const std::shared_ptr<const ov::Model>& model, const ParamMap& config = {});
+    CompiledModel compile_model(const std::shared_ptr<const ov::Model>& model, const AnyMap& config = {});
 
     /**
      * @brief Reads model and creates an executable network from IR or ONNX file to default device.
@@ -136,7 +135,7 @@ public:
     template <typename... Configs>
     util::EnableIfAllConfigs<CompiledModel, Configs...> compile_model(const std::shared_ptr<const ov::Model>& model,
                                                                       Configs&&... configs) {
-        return compile_model(model, ParamMap{std::forward<Configs>(configs)...});
+        return compile_model(model, AnyMap{std::forward<Configs>(configs)...});
     }
 
     /**
@@ -153,7 +152,7 @@ public:
      */
     CompiledModel compile_model(const std::shared_ptr<const ov::Model>& model,
                                 const std::string& device_name,
-                                const ParamMap& config = {});
+                                const AnyMap& config = {});
 
     /**
      * @brief Creates an executable network from a model object.
@@ -171,7 +170,7 @@ public:
     util::EnableIfAllConfigs<CompiledModel, Configs...> compile_model(const std::shared_ptr<const ov::Model>& model,
                                                                       const std::string& device_name,
                                                                       Configs&&... configs) {
-        return compile_model(model, device_name, ParamMap{std::forward<Configs>(configs)...});
+        return compile_model(model, device_name, AnyMap{std::forward<Configs>(configs)...});
     }
 
     /**
@@ -186,7 +185,7 @@ public:
      *
      * @return An executable network reference
      */
-    CompiledModel compile_model(const std::string& model_path, const ParamMap& config = {});
+    CompiledModel compile_model(const std::string& model_path, const AnyMap& config = {});
 
     /**
      * @brief Reads model and creates an executable network from IR or ONNX file to default device.
@@ -204,7 +203,7 @@ public:
     template <typename... Configs>
     util::EnableIfAllConfigs<CompiledModel, Configs...> compile_model(const std::string& model_path,
                                                                       Configs&&... configs) {
-        return compile_model(model_path, ParamMap{std::forward<Configs>(configs)...});
+        return compile_model(model_path, AnyMap{std::forward<Configs>(configs)...});
     }
 
     /**
@@ -222,7 +221,7 @@ public:
      */
     CompiledModel compile_model(const std::string& model_path,
                                 const std::string& device_name,
-                                const ParamMap& config = {});
+                                const AnyMap& config = {});
 
     /**
      * @brief Reads model and creates an executable network from IR or ONNX file
@@ -242,7 +241,7 @@ public:
     util::EnableIfAllConfigs<CompiledModel, Configs...> compile_model(const std::string& model_path,
                                                                       const std::string& device_name,
                                                                       Configs&&... configs) {
-        return compile_model(model_path, device_name, ParamMap{std::forward<Configs>(configs)...});
+        return compile_model(model_path, device_name, AnyMap{std::forward<Configs>(configs)...});
     }
 
     /**
@@ -255,7 +254,7 @@ public:
      */
     CompiledModel compile_model(const std::shared_ptr<const ov::Model>& model,
                                 const RemoteContext& context,
-                                const ParamMap& config = {});
+                                const AnyMap& config = {});
 
     /**
      * @brief Creates an executable network from a network object within a specified remote context.
@@ -270,7 +269,7 @@ public:
     util::EnableIfAllConfigs<CompiledModel, Configs...> compile_model(const std::shared_ptr<const ov::Model>& model,
                                                                       const RemoteContext& context,
                                                                       Configs&&... configs) {
-        return compile_model(model, context, ParamMap{std::forward<Configs>(configs)...});
+        return compile_model(model, context, AnyMap{std::forward<Configs>(configs)...});
     }
 
     /**
@@ -361,7 +360,7 @@ public:
      * operation*
      * @return An executable network reference
      */
-    CompiledModel import_model(std::istream& model_stream, const std::string& device_name, const ParamMap& config = {});
+    CompiledModel import_model(std::istream& model_stream, const std::string& device_name, const AnyMap& config = {});
 
     /**
      * @brief Creates an executable network from a previously exported one
@@ -376,7 +375,7 @@ public:
     util::EnableIfAllConfigs<CompiledModel, Configs...> import_model(std::istream& model_stream,
                                                                      const std::string& device_name,
                                                                      Configs&&... configs) {
-        return import_model(model_stream, device_name, ParamMap{std::forward<Configs>(configs)...});
+        return import_model(model_stream, device_name, AnyMap{std::forward<Configs>(configs)...});
     }
 
     /**
@@ -389,7 +388,7 @@ public:
      * operation
      * @return An executable network reference
      */
-    CompiledModel import_model(std::istream& model_stream, const RemoteContext& context, const ParamMap& config = {});
+    CompiledModel import_model(std::istream& model_stream, const RemoteContext& context, const AnyMap& config = {});
 
     /**
      * @brief Creates an executable network from a previously exported one within a specified
@@ -406,7 +405,7 @@ public:
     util::EnableIfAllConfigs<CompiledModel, Configs...> import_model(std::istream& model_stream,
                                                                      const RemoteContext& context,
                                                                      Configs&&... configs) {
-        return import_model(model_stream, context, ParamMap{std::forward<Configs>(configs)...});
+        return import_model(model_stream, context, AnyMap{std::forward<Configs>(configs)...});
     }
 
     /**
@@ -419,7 +418,7 @@ public:
      */
     SupportedOpsMap query_model(const std::shared_ptr<const ov::Model>& model,
                                 const std::string& device_name,
-                                const ParamMap& config = {}) const;
+                                const AnyMap& config = {}) const;
 
     /**
      * @brief Query device if it supports specified model with specified configuration
@@ -435,7 +434,7 @@ public:
     util::EnableIfAllConfigs<SupportedOpsMap, Configs...> query_model(const std::shared_ptr<const ov::Model>& model,
                                                                       const std::string& device_name,
                                                                       Configs&&... configs) const {
-        return query_model(model, device_name, ParamMap{std::forward<Configs>(configs)...});
+        return query_model(model, device_name, AnyMap{std::forward<Configs>(configs)...});
     }
 
     /**
@@ -444,7 +443,7 @@ public:
      *
      * @param config Map of pairs: (config parameter name, config parameter value)
      */
-    void set_config(const ParamMap& config);
+    void set_config(const AnyMap& config);
 
     /**
      * @brief Sets configuration for all the
@@ -456,7 +455,7 @@ public:
      */
     template <typename... Configs>
     util::EnableIfAllConfigs<void, Configs...> set_config(Configs&&... configs) {
-        set_config(ParamMap{std::forward<Configs>(configs)...});
+        set_config(AnyMap{std::forward<Configs>(configs)...});
     }
 
     /**
@@ -466,7 +465,7 @@ public:
      *
      * @param config Map of pairs: (config parameter name, config parameter value)
      */
-    void set_config(const std::string& device_name, const ParamMap& config);
+    void set_config(const std::string& device_name, const AnyMap& config);
 
     /**
      * @brief Sets configuration for device, acceptable keys can be found in ie_plugin_config.hpp
@@ -478,7 +477,7 @@ public:
      */
     template <typename... Configs>
     util::EnableIfAllConfigs<void, Configs...> set_config(const std::string& device_name, Configs&&... configs) {
-        set_config(device_name, ParamMap{std::forward<Configs>(configs)...});
+        set_config(device_name, AnyMap{std::forward<Configs>(configs)...});
     }
 
     /**
@@ -607,7 +606,7 @@ public:
      * @param params Map of device-specific shared context parameters.
      * @return A shared pointer to a created remote context.
      */
-    RemoteContext create_context(const std::string& device_name, const ParamMap& params);
+    RemoteContext create_context(const std::string& device_name, const AnyMap& params);
 
     /**
      * @brief Create a new shared context object on specified accelerator device
@@ -620,7 +619,7 @@ public:
     template <typename... Params>
     util::EnableIfAllConfigs<RemoteContext, Params...> create_context(const std::string& device_name,
                                                                       Params&&... params) {
-        return create_context(device_name, ParamMap{std::forward<Params>(params)...});
+        return create_context(device_name, AnyMap{std::forward<Params>(params)...});
     }
 
     /**

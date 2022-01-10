@@ -8,14 +8,14 @@
 using namespace ov::test::behavior;
 namespace {
 
-    const std::vector<ov::runtime::ParamMap> configs = {
+    const std::vector<ov::AnyMap> configs = {
             {},
     };
-    const std::vector<ov::runtime::ParamMap> multiConfigs = {
+    const std::vector<ov::AnyMap> multiConfigs = {
             {{ InferenceEngine::MultiDeviceConfigParams::KEY_MULTI_DEVICE_PRIORITIES , CommonTestUtils::DEVICE_CPU}}
     };
 
-    const std::vector<ov::runtime::ParamMap> heteroConfigs = {
+    const std::vector<ov::AnyMap> heteroConfigs = {
             {{"TARGET_FALLBACK", CommonTestUtils::DEVICE_CPU}}};
 
     INSTANTIATE_TEST_SUITE_P(smoke_BehaviorTests, OVExecutableNetworkBaseTest,
@@ -49,16 +49,16 @@ namespace {
             InferenceEngine::Precision::U16
     };
 
-    const std::vector<ov::runtime::ParamMap> configSetPrc = {
+    const std::vector<ov::AnyMap> configSetPrc = {
             {},
             {{InferenceEngine::PluginConfigParams::KEY_CPU_THROUGHPUT_STREAMS, InferenceEngine::PluginConfigParams::CPU_THROUGHPUT_AUTO}}
     };
 
-    const std::vector<ov::runtime::ParamMap> AutoConfigsSetPrc = {
+    const std::vector<ov::AnyMap> AutoConfigsSetPrc = {
             {{InferenceEngine::MultiDeviceConfigParams::KEY_MULTI_DEVICE_PRIORITIES , CommonTestUtils::DEVICE_CPU}},
     };
 
-    const std::vector<ov::runtime::ParamMap> MultiConfigsSetPrc = {
+    const std::vector<ov::AnyMap> MultiConfigsSetPrc = {
             {{InferenceEngine::MultiDeviceConfigParams::KEY_MULTI_DEVICE_PRIORITIES , CommonTestUtils::DEVICE_CPU}},
             {{InferenceEngine::MultiDeviceConfigParams::KEY_MULTI_DEVICE_PRIORITIES , CommonTestUtils::DEVICE_CPU},
              {InferenceEngine::PluginConfigParams::KEY_CPU_THROUGHPUT_STREAMS, InferenceEngine::PluginConfigParams::CPU_THROUGHPUT_AUTO}}

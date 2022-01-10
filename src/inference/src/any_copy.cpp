@@ -9,7 +9,7 @@
 #include "openvino/runtime/config.hpp"
 
 namespace ov {
-runtime::ConfigMap any_copy(const runtime::ParamMap& params) {
+runtime::ConfigMap any_copy(const ov::AnyMap& params) {
     auto to_config_string = [](const Any& any) -> std::string {
         if (any.is<bool>()) {
             return any.as<bool>() ? "YES" : "NO";

@@ -179,7 +179,7 @@ TEST_P(OVInferRequestIOTensorTest, canInferWithGetOut) {
 std::string OVInferRequestIOTensorSetPrecisionTest::getTestCaseName(const testing::TestParamInfo<OVInferRequestSetPrecisionParams>& obj) {
     element::Type type;
     std::string targetDevice;
-    ov::runtime::ParamMap configuration;
+    ov::AnyMap configuration;
     std::tie(type, targetDevice, configuration) = obj.param;
     std::ostringstream result;
     result << "type=" << type << "_";

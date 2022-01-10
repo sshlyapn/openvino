@@ -29,7 +29,6 @@ namespace ov {
 
 class Node;
 class RuntimeAttribute;
-class ParamMap;
 
 namespace runtime {
 class CompiledModel;
@@ -368,7 +367,6 @@ class OPENVINO_API Any {
     };
 
     friend class ::ov::RuntimeAttribute;
-    friend class ::ov::ParamMap;
     friend class ::InferenceEngine::InferencePlugin;
     friend class ::InferenceEngine::ExecutableNetwork;
     friend class ::ov::runtime::CompiledModel;

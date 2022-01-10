@@ -657,7 +657,7 @@ std::vector<benchmark_app::InputsInfo> getInputsInfo(const std::string& shape_st
 }
 
 #ifdef USE_OPENCV
-void dump_config(const std::string& filename, const std::map<std::string, std::map<std::string, std::string>>& config) {
+void dump_config(const std::string& filename, const std::map<std::string, ov::AnyMap>& config) {
     auto plugin_to_opencv_format = [](const std::string& str) -> std::string {
         if (str.find("_") != std::string::npos) {
             slog::warn
@@ -677,14 +677,18 @@ void dump_config(const std::string& filename, const std::map<std::string, std::m
         throw std::runtime_error("Error: Can't open config file : " + filename);
     for (auto device_it = config.begin(); device_it != config.end(); ++device_it) {
         fs << plugin_to_opencv_format(device_it->first) << "{:";
-        for (auto param_it = device_it->second.begin(); param_it != device_it->second.end(); ++param_it)
-            fs << param_it->first << param_it->second;
+        std::stringstream strm;
+        for (auto param_it = device_it->second.begin(); param_it != device_it->second.end(); ++param_it) {
+            strm << param_it->first;
+            param_it->second.print(strm);
+        }
+        fs << strm.str();
         fs << "}";
     }
     fs.release();
 }
 
-void load_config(const std::string& filename, std::map<std::string, std::map<std::string, std::string>>& config) {
+void load_config(const std::string& filename, std::map<std::string, ov::AnyMap>& config) {
     auto opencv_to_plugin_format = [](const std::string& str) -> std::string {
         std::string new_str(str);
         auto pos = new_str.find("_");

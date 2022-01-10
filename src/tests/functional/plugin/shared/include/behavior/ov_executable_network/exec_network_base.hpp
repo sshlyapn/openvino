@@ -21,7 +21,7 @@ class OVExecutableNetworkBaseTest : public testing::WithParamInterface<InferRequ
 public:
     static std::string getTestCaseName(testing::TestParamInfo<InferRequestParams> obj) {
         std::string targetDevice;
-        ov::runtime::ParamMap configuration;
+        ov::AnyMap configuration;
         std::tie(targetDevice, configuration) = obj.param;
         std::ostringstream result;
         result << "targetDevice=" << targetDevice << "_";
@@ -71,7 +71,7 @@ public:
 protected:
     std::shared_ptr<ov::runtime::Core> core = utils::PluginCache::get().core();
     std::string targetDevice;
-    ov::runtime::ParamMap configuration;
+    ov::AnyMap configuration;
     std::shared_ptr<ov::Model> function;
 };
 
@@ -86,7 +86,7 @@ TEST(OVExecutableNetworkBaseTest, smoke_LoadNetworkToDefaultDeviceNoThrow) {
 }
 
 TEST_P(OVExecutableNetworkBaseTest, canLoadCorrectNetworkToGetExecutableWithIncorrectConfig) {
-    ov::runtime::ParamMap incorrectConfig = {{"abc", "def"}};
+    ov::AnyMap incorrectConfig = {{"abc", "def"}};
     EXPECT_ANY_THROW(auto execNet = core->compile_model(function, targetDevice, incorrectConfig));
 }
 

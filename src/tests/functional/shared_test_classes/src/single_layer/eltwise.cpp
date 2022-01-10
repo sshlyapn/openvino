@@ -19,7 +19,7 @@ std::string EltwiseLayerTest::getTestCaseName(const testing::TestParamInfo<Eltwi
     CommonTestUtils::OpType opType;
     ngraph::helpers::EltwiseTypes eltwiseOpType;
     std::string targetName;
-    runtime::ParamMap additional_config;
+    ov::AnyMap additional_config;
     std::tie(shapes, eltwiseOpType, secondaryInputType, opType, netType, inType, outType, targetName, additional_config) = obj.param;
     std::ostringstream results;
 

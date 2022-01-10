@@ -6,7 +6,7 @@
 
 using namespace ov::test::behavior;
 namespace {
-const std::vector<ov::runtime::ParamMap> configs = {
+const std::vector<ov::AnyMap> configs = {
         {}
 };
 INSTANTIATE_TEST_SUITE_P(smoke_BehaviorTests, OVExecutableNetworkBaseTest,

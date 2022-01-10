@@ -7,11 +7,11 @@
 using namespace ov::test::behavior;
 
 namespace {
-const std::vector<ov::runtime::ParamMap> configs = {
+const std::vector<ov::AnyMap> configs = {
         {},
 };
 
-const std::vector<ov::runtime::ParamMap> multiConfigs = {
+const std::vector<ov::AnyMap> multiConfigs = {
         {{MULTI_CONFIG_KEY(DEVICE_PRIORITIES) , CommonTestUtils::DEVICE_GNA}}
 };
 

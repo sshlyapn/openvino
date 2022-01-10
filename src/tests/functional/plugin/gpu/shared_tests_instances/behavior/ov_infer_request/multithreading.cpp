@@ -10,12 +10,12 @@ using namespace ov::test::behavior;
 
 namespace {
 
-const std::vector<ov::runtime::ParamMap> configs = {
+const std::vector<ov::AnyMap> configs = {
         {},
         {{InferenceEngine::PluginConfigParams::KEY_GPU_THROUGHPUT_STREAMS, InferenceEngine::PluginConfigParams::GPU_THROUGHPUT_AUTO}},
 };
 
-const std::vector<ov::runtime::ParamMap> Multiconfigs = {
+const std::vector<ov::AnyMap> Multiconfigs = {
         {{ MULTI_CONFIG_KEY(DEVICE_PRIORITIES) , CommonTestUtils::DEVICE_GPU}}
 };
 

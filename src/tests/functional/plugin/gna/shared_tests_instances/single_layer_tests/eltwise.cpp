@@ -41,7 +41,7 @@ std::vector<ngraph::helpers::EltwiseTypes> eltwiseOpTypes = {
         ngraph::helpers::EltwiseTypes::ADD
 };
 
-std::vector<ov::runtime::ParamMap> additional_config = {
+std::vector<ov::AnyMap> additional_config = {
         {
                 {"GNA_DEVICE_MODE", "GNA_SW_EXACT"},
                 {"GNA_SCALE_FACTOR_0", "1638.4"},

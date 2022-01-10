@@ -28,7 +28,7 @@ RemoteBlobImpl::RemoteBlobImpl(ClContext::Ptr context,
     _handle(nullptr), _allocator(nullptr), m_memObject(nullptr), lockedHolder(nullptr) {
 }
 
-ParamMap RemoteBlobImpl::getParams() const {
+AnyMap RemoteBlobImpl::getParams() const {
     assert(m_memObject != nullptr);
     auto params = m_memObject->get_internal_params();
 
@@ -249,7 +249,7 @@ void RemoteAllocator::unlock(void* handle) noexcept {
 }
 
 ExecutionContextImpl::ExecutionContextImpl(const std::shared_ptr<IInferencePlugin> plugin,
-    const ParamMap& params,
+    const AnyMap& params,
     const Config& config) :
     m_plugin(plugin),
     m_type(ContextType::OCL),
@@ -315,8 +315,8 @@ ExecutionContextImpl::ExecutionContextImpl(const std::shared_ptr<IInferencePlugi
                                      engine_params.task_executor);
 }
 
-ParamMap ExecutionContextImpl::getParams() const {
-    ParamMap ret = { { GPU_PARAM_KEY(OCL_CONTEXT), m_engine->get_user_context() } };
+AnyMap ExecutionContextImpl::getParams() const {
+    AnyMap ret = { { GPU_PARAM_KEY(OCL_CONTEXT), m_engine->get_user_context() } };
 
     switch (m_type) {
     case OCL:

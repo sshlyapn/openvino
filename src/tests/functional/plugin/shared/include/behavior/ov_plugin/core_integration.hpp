@@ -241,7 +241,7 @@ TEST_P(OVClassBasicTestP, accessToUnregisteredPluginThrows) {
     ASSERT_THROW(ie.unload_plugin(deviceName), ov::Exception);
     OV_ASSERT_NO_THROW(ie.get_versions(deviceName));
     OV_ASSERT_NO_THROW(ie.unload_plugin(deviceName));
-    OV_ASSERT_NO_THROW(ie.set_config(deviceName, runtime::ParamMap{}));
+    OV_ASSERT_NO_THROW(ie.set_config(deviceName, ov::AnyMap{}));
     OV_ASSERT_NO_THROW(ie.get_versions(deviceName));
     OV_ASSERT_NO_THROW(ie.unload_plugin(deviceName));
 }
@@ -1043,7 +1043,7 @@ TEST_P(OVClassLoadNetworkAfterCoreRecreateTest, LoadAfterRecreateCoresAndPlugins
                                         CommonTestUtils::DEVICE_CPU);
         ASSERT_EQ(3, versions.size());
     }
-    ov::runtime::ParamMap config;
+    ov::AnyMap config;
     if (deviceName == CommonTestUtils::DEVICE_CPU) {
         config.insert(ov::enable_profiling(true));
     }

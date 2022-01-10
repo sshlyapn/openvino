@@ -218,19 +218,19 @@ public:
         OV_PLUGIN_CALL_STATEMENT(return {_ptr->ImportNetwork(networkModel, context, config), _so});
     }
 
-    ie::Parameter get_metric(const std::string& name, const ie::ParamMap& options) const {
+    Any get_metric(const std::string& name, const AnyMap& options) const {
         OV_PLUGIN_CALL_STATEMENT(return {_ptr->GetMetric(name, options), _so});
     }
 
-    SoPtr<ie::RemoteContext> create_context(const ie::ParamMap& params) {
+    SoPtr<ie::RemoteContext> create_context(const AnyMap& params) {
         OV_PLUGIN_CALL_STATEMENT(return {_ptr->CreateContext(params), _so});
     }
 
-    SoPtr<ie::RemoteContext> get_default_context(const ie::ParamMap& params) {
+    SoPtr<ie::RemoteContext> get_default_context(const AnyMap& params) {
         OV_PLUGIN_CALL_STATEMENT(return {_ptr->GetDefaultContext(params), _so});
     }
 
-    ie::Parameter get_config(const std::string& name, const ie::ParamMap& options) const {
+    Any get_config(const std::string& name, const AnyMap& options) const {
         OV_PLUGIN_CALL_STATEMENT(return {_ptr->GetConfig(name, options), _so});
     }
 };

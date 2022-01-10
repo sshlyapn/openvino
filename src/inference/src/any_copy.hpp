@@ -10,12 +10,11 @@
 #include <openvino/core/any.hpp>
 #include <openvino/runtime/common.hpp>
 #include <openvino/runtime/config.hpp>
-#include <openvino/runtime/parameter.hpp>
 #include <ostream>
 #include <string>
 
 namespace ov {
-runtime::ConfigMap any_copy(const runtime::ParamMap& config_map);
+runtime::ConfigMap any_copy(const ov::AnyMap& config_map);
 
 void any_lexical_cast(const Any& any, ov::Any& to);
 

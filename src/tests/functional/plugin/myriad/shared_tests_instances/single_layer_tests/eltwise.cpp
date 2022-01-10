@@ -13,7 +13,7 @@ using namespace ov::test::subgraph;
 
 namespace {
 
-using Config = ov::runtime::ParamMap;
+using Config = ov::AnyMap;
 
 std::vector<std::vector<ov::Shape>>  inShapes = {
         {{2}},

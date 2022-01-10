@@ -19,7 +19,6 @@
 #include "openvino/core/model.hpp"
 #include "openvino/runtime/config.hpp"
 #include "openvino/runtime/infer_request.hpp"
-#include "openvino/runtime/parameter.hpp"
 #include "openvino/runtime/remote_context.hpp"
 
 namespace InferenceEngine {
@@ -152,7 +151,7 @@ public:
      *
      * @param config Map of pairs: (config parameter name, config parameter value)
      */
-    void set_config(const ParamMap& config);
+    void set_config(const AnyMap& config);
 
     /**
      * @brief Sets configuration for current executable network
@@ -163,7 +162,7 @@ public:
      */
     template <typename... Configs>
     util::EnableIfAllConfigs<void, Configs...> set_config(Configs&&... configs) {
-        set_config(ParamMap{std::forward<Configs>(configs)...});
+        set_config(AnyMap{std::forward<Configs>(configs)...});
     }
 
     /** @brief Gets configuration for current executable network.

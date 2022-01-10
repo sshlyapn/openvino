@@ -26,7 +26,7 @@ struct OVInferRequestIOTensorTest : public OVInferRequestTests {
 using OVInferRequestSetPrecisionParams = std::tuple<
         element::Type,                                                     // element type
         std::string,                                                       // Device name
-        ov::runtime::ParamMap                                              // Config
+        ov::AnyMap                                              // Config
 >;
 struct OVInferRequestIOTensorSetPrecisionTest : public testing::WithParamInterface<OVInferRequestSetPrecisionParams>,
                                                 public CommonTestUtils::TestsCommon {
@@ -38,7 +38,7 @@ struct OVInferRequestIOTensorSetPrecisionTest : public testing::WithParamInterfa
     runtime::CompiledModel execNet;
     runtime::InferRequest req;
     std::string         target_device;
-    runtime::ParamMap   config;
+    ov::AnyMap   config;
     element::Type       element_type;
 };
 } // namespace behavior

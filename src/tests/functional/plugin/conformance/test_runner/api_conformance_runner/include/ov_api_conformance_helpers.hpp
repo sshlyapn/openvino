@@ -42,8 +42,8 @@ inline const std::pair<std::string, ov::Any> generateDefaultHeteroConfig() {
     return { "TARGET_FALLBACK" , ConformanceTests::targetDevice };
 }
 
-inline const std::vector<ov::runtime::ParamMap> generateConfigs(const std::string& targetDevice,
-                                                                         const std::vector<ov::runtime::ParamMap>& config = {}) {
+inline const std::vector<ov::AnyMap> generateConfigs(const std::string& targetDevice,
+                                                                         const std::vector<ov::AnyMap>& config = {}) {
     std::pair<std::string, ov::Any> defaultConfig;
     if (targetDevice ==  std::string(CommonTestUtils::DEVICE_MULTI) || targetDevice ==  std::string(CommonTestUtils::DEVICE_AUTO)) {
         defaultConfig = generateDefaultMultiConfig();
@@ -53,7 +53,7 @@ inline const std::vector<ov::runtime::ParamMap> generateConfigs(const std::strin
         throw std::runtime_error("Incorrect target device: " + targetDevice);
     }
 
-    std::vector<ov::runtime::ParamMap> resultConfig;
+    std::vector<ov::AnyMap> resultConfig;
     if (config.empty()) {
         return {{defaultConfig}};
     }
@@ -77,7 +77,7 @@ inline const std::vector<std::string> returnAllPossibleDeviceCombination() {
     return res;
 }
 
-const std::vector<ov::runtime::ParamMap> emptyConfig = {
+const std::vector<ov::AnyMap> emptyConfig = {
         {},
 };
 

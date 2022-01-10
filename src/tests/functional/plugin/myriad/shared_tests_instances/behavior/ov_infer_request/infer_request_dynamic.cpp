@@ -18,11 +18,11 @@ const std::vector<InferenceEngine::Precision> netPrecisions = {
     InferenceEngine::Precision::FP16
 };
 
-const std::vector<ov::runtime::ParamMap> configs = {
+const std::vector<ov::AnyMap> configs = {
     {}
 };
 
-const std::vector<ov::runtime::ParamMap> HeteroConfigs = {
+const std::vector<ov::AnyMap> HeteroConfigs = {
     {{"TARGET_FALLBACK", CommonTestUtils::DEVICE_MYRIAD}}
 };
 

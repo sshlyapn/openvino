@@ -10,7 +10,7 @@ using namespace ov::test::behavior;
 
 namespace {
 
-const std::vector<ov::runtime::ParamMap> configs = {
+const std::vector<ov::AnyMap> configs = {
     {}
 };
 
