@@ -996,7 +996,8 @@ bool program::extract_and_remove(program_node& node) {
 
 void program::fuse_nodes(program_node &fused_node,
                          program_node &peer_node,
-                         std::map<primitive_id, std::vector<std::pair<primitive_id, size_t>>>* fusing_history) {
+                         std::map<primitive_id, std::vector<std::pair<primitive_id, size_t>>>* fusing_history,
+                         std::vector<program_node*> fuse_through) {
     auto peer_layout = peer_node.get_output_layout();
     fused_primitive_desc local_desc;
     local_desc.node = get_node_ptr(peer_node.id());
@@ -1026,7 +1027,9 @@ void program::fuse_nodes(program_node &fused_node,
     size_t deps_idx = 0;
     for (size_t i = 0; i < peer_node.get_dependencies().size(); i++) {
         auto& dep = peer_node.get_dependency(i);
-        if (dep.id() == fused_node.id()) {
+        // If there are no intermediate nodes, then skip dependencies between peer_node and fused node,
+        // otherwise - between peer_node and nearest node in the fuse_through chain
+        if (dep.id() == (fuse_through.empty() ? fused_node.id() : fuse_through.front()->id())) {
             deps_idx++;
             continue;
         }
@@ -1082,12 +1085,41 @@ void program::fuse_nodes(program_node &fused_node,
         auto& dep = peer_node.get_dependency(peer_node.get_dependencies().size() - 1);
         remove_connection(dep, peer_node);
     }
-    replace_all_usages(peer_node, fused_node);
 
-    // Update output layout. Recalculation is not needed.
-    fused_node.merge_output_padding(needed_padding);
-    fused_node.set_output_layout(peer_layout, false);
-    fused_node.recalc_output_layout(true);
+    // Replace all usages on fused_node or on the first node in the fuse_through chain
+    replace_all_usages(peer_node, fuse_through.empty() ? fused_node : *fuse_through.front());
+
+    // Update output layout
+    if (fuse_through.empty()) {
+        fused_node.merge_output_padding(needed_padding);
+        fused_node.set_output_layout(peer_layout, false);
+        fused_node.recalc_output_layout(true);
+    } else {
+        auto fused_node_layout = fused_node.get_output_layout();
+        if (fused_node_layout.data_type != peer_layout.data_type) {
+            // Keep original shape and format and modify data type only
+            fused_node_layout.data_type = peer_layout.data_type;
+
+            auto node_itr = fuse_through.rbegin();
+            while (node_itr != fuse_through.rend()) {
+                auto node = *node_itr++;
+                if (node->is_type<reorder>()) {
+                    // We can't modify reorder's output type directly, so replace old node with new one
+                    auto reorder_layout = node->get_output_layout();
+                    reorder_layout.data_type = peer_layout.data_type;
+                    auto r_prim = std::make_shared<reorder>(node->id() + "_reorder_to_req_dt", node->id(), reorder_layout);
+                    add_intermediate(r_prim, *node->get_users().front(), 0);
+
+                    add_optimized_primitive_info(node->id());
+                    extract_and_remove(*node);
+                } else {
+                    node->recalc_output_layout(true);
+                }
+            }
+        }
+        fused_node.set_output_layout(fused_node_layout, false);
+        fused_node.recalc_output_layout(true);
+    }
 }
 
 void program::remove_nodes(std::vector<program_node*>& to_remove) {
