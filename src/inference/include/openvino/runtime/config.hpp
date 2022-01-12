@@ -39,12 +39,12 @@ struct AllConfigs;
 template <typename T, typename... Args>
 struct AllConfigs<T, Args...> {
     constexpr static const bool value =
-        std::is_same<T, std::pair<std::string, ov::Any>>::value && AllConfigs<Args...>::value;
+        std::is_convertible<T, std::pair<std::string, ov::Any>>::value && AllConfigs<Args...>::value;
 };
 
 template <typename T>
 struct AllConfigs<T> {
-    constexpr static const bool value = std::is_same<T, std::pair<std::string, ov::Any>>::value;
+    constexpr static const bool value = std::is_convertible<T, std::pair<std::string, ov::Any>>::value;
 };
 
 template <typename T, typename... Args>
@@ -54,6 +54,44 @@ template <typename T, ConfigMutability mutability>
 using EnableIfRaedableConfig =
     typename std::enable_if<mutability == ConfigMutability::RO || mutability == ConfigMutability::RW, T>::type;
 
+/**
+ * @brief This class us used to bind configuration key string with paramter type
+ * @tparam T type of parameter used to pass or get configuration
+ */
+template <typename T, ConfigMutability mutability_ = ConfigMutability::RW>
+struct BaseKey {
+    using value_type = T;                                  //!< Configuration parameter type
+    constexpr static const auto mutability = mutability_;  //!< Configuration parameter readability
+
+    /**
+     * @brief Constructs configuration key variable
+     * @param str_ configuration key string
+     */
+    constexpr BaseKey(const char* str_) : _str{str_} {}
+
+    /**
+     * @brief return configuration key string
+     * @return Pointer to const string key representation
+     */
+    const char* str() const {
+        return _str;
+    }
+
+    /**
+     * @brief compares configuration key string
+     * @return true if string is the same
+     */
+    bool operator==(const std::string& str) const {
+        return _str == str;
+    }
+
+private:
+    const char* _str = nullptr;
+};
+template <typename T, ConfigMutability M>
+inline std::ostream& operator<<(std::ostream& os, const BaseKey<T, M>& key) {
+    return os << key.str();
+}
 }  // namespace util
 /** @endcond */
 
@@ -62,15 +100,17 @@ using EnableIfRaedableConfig =
  * @tparam T type of parameter used to pass or get configuration
  */
 template <typename T, ConfigMutability mutability_ = ConfigMutability::RW>
-struct Key {
-    using value_type = T;                                  //!< Configuration parameter type
-    constexpr static const auto mutability = mutability_;  //!< Configuration parameter readability
+struct Key : public util::BaseKey<T, mutability_> {
+    using util::BaseKey<T, mutability_>::BaseKey;
 
-    /**
-     * @brief Constructs configuration key variable
-     * @param str_ configuration key string
-     */
-    constexpr Key(const char* str_) : _str{str_} {}
+    struct Pair : std::pair<std::string, Any> {
+        using std::pair<std::string, Any>::pair;
+#ifdef OPENVINO_DEV
+        operator Any() && {
+            return std::move(second);
+        }
+#endif
+    };
 
     /**
      * @brief Constructs configuration
@@ -79,20 +119,9 @@ struct Key {
      * @return Pair of string key representation and type erased paramter.
      */
     template <typename... Args>
-    inline std::pair<std::string, Any> operator()(Args&&... args) const {
-        return {_str, Any::make<T>(std::forward<Args>(args)...)};
+    inline Pair operator()(Args&&... args) const {
+        return {this->str(), Any::make<T>(std::forward<Args>(args)...)};
     }
-
-    /**
-     * @brief return configuration key string
-     * @return Pointer to const string key representation
-     */
-    const char* str() const {
-        return _str;
-    }
-
-private:
-    const char* _str = nullptr;
 };
 
 /**
@@ -100,32 +129,49 @@ private:
  * @tparam T type of parameter used to pass or get configuration
  */
 template <typename T>
-struct Key<T, ConfigMutability::RO> {
-    using value_type = T;                                           //!< Configuration parameter type
-    constexpr static const auto mutability = ConfigMutability::RO;  //!< Configuration parameter readability
+struct Key<T, ConfigMutability::RO> : public util::BaseKey<T, ConfigMutability::RO> {
+    using util::BaseKey<T, ConfigMutability::RO>::BaseKey;
+/** @cond INTERNAL */
+#ifdef OPENVINO_DEV
+    template <typename... Args>
+    inline Any operator()(Args&&... args) const {
+        return Any::make<T>(std::forward<Args>(args)...);
+    }
+#endif
+    /** @endcond */
+};
 
-    /**
-     * @brief Constructs configuration key variable
-     * @param str_ configuration key string
-     */
-    constexpr Key(const char* str_) : _str{str_} {}
-
-    /**
-     * @brief return configuration key string
-     * @return Pointer to const string key representation
-     */
-    const char* str() const {
-        return _str;
+class KeyVector : public Key<std::vector<std::string>, ConfigMutability::RO> {
+    static const char* get_str(const char* str) {
+        return str;
+    }
+    static const char* get_str(const std::string& str) {
+        return str.c_str();
+    }
+    static const std::vector<std::string>& get_str(const std::vector<std::string>& arg) {
+        return arg;
+    }
+    template <typename T, ConfigMutability M>
+    static const char* get_str(const Key<T, M>& key) {
+        return key.str();
     }
 
-private:
-    const char* _str = nullptr;
+public:
+    using Key<std::vector<std::string>, ConfigMutability::RO>::Key;
+/** @cond INTERNAL */
+#ifdef OPENVINO_DEV
+    template <typename... Args>
+    inline Any operator()(Args&&... args) const {
+        return std::vector<std::string>{get_str(std::forward<Args>(args))...};
+    }
+#endif
+    /** @endcond */
 };
 
 /**
  * @brief Metric to get a std::vector<std::string> of available device IDs
  */
-static constexpr Key<std::vector<std::string>, ConfigMutability::RO> available_devices{"AVAILABLE_DEVICES"};
+static constexpr KeyVector available_devices{"AVAILABLE_DEVICES"};
 
 /**
  * @brief Metric to get a std::vector<std::string> of supported metrics.
@@ -136,7 +182,7 @@ static constexpr Key<std::vector<std::string>, ConfigMutability::RO> available_d
  * can be passed to ExecutableNetwork::GetMetric.
  *
  */
-static constexpr Key<std::vector<std::string>, ConfigMutability::RO> supported_metrics{"SUPPORTED_METRICS"};
+static constexpr KeyVector supported_metrics{"SUPPORTED_METRICS"};
 
 /**
  * @brief Metric to get a std::vector<std::string> of supported config keys.
@@ -148,13 +194,12 @@ static constexpr Key<std::vector<std::string>, ConfigMutability::RO> supported_m
  * ExecutableNetwork::GetConfig.
  *
  */
-static constexpr Key<std::vector<std::string>, ConfigMutability::RO> supported_config_keys{"SUPPORTED_CONFIG_KEYS"};
+static constexpr KeyVector supported_config_keys{"SUPPORTED_CONFIG_KEYS"};
 
 /**
  * @brief Metric to get a std::vector<std::string> of optimization options per device.
  */
-static constexpr Key<std::vector<std::string>, ConfigMutability::RO> optimization_capabilities{
-    "OPTIMIZATION_CAPABILITIES"};
+static constexpr KeyVector optimization_capabilities{"OPTIMIZATION_CAPABILITIES"};
 
 /**
  * @brief Metric which defines support of import/export functionality by plugin
@@ -162,9 +207,9 @@ static constexpr Key<std::vector<std::string>, ConfigMutability::RO> optimizatio
 static constexpr Key<bool, ConfigMutability::RO> import_export_support{"IMPORT_EXPORT_SUPPORT"};
 
 /**
- * @brief Metric to get a name of network
+ * @brief Metric to get a name of model_name
  */
-static constexpr Key<std::string, ConfigMutability::RO> network_name{"NETWORK_NAME"};
+static constexpr Key<std::string, ConfigMutability::RO> model_name{"NETWORK_NAME"};
 
 /**
  * @brief Metric to get an unsigned integer value of optimal number of executable network infer requests.
@@ -465,7 +510,7 @@ struct Config {
     template <typename... Configs>
     inline util::EnableIfAllConfigs<std::pair<std::string, Any>, Configs...> operator()(const std::string& device_name,
                                                                                         Configs&&... configs) const {
-        return {device_name, AnyMap{configs...}};
+        return {device_name, AnyMap{std::pair<std::string, Any>{configs...}}};
     }
 };
 
@@ -548,17 +593,17 @@ static constexpr Key<bool, ConfigMutability::RW> dump_graph_dot{"HETERO_DUMP_GRA
  */
 static constexpr device::Priorities target_fallback{"TARGET_FALLBACK"};
 
-namespace runtime {
+namespace execution {
 
 /**
  * @brief The number of executor logical partitions
  */
-static constexpr Key<int32_t, ConfigMutability::RW> streams{"RUNTIME_STREAMS"};
+static constexpr Key<int32_t, ConfigMutability::RW> streams{"STREAMS"};
 
 /**
  * @brief Maximum number of concurent tasks executed by execututor
  */
-static constexpr Key<int32_t, ConfigMutability::RW> concurrency{"RUNTIME_CONCURRENCY"};
+static constexpr Key<int32_t, ConfigMutability::RW> concurrency{"CONCURRENCY"};
 
 /**
  * @brief Enum to define possible affinity patterns
@@ -611,6 +656,6 @@ inline std::istream& operator>>(std::istream& is, Affinity& affinity) {
  * @note The setting is ignored, if the OpenVINO compiled with OpenMP and any affinity-related OpenMP's
  * environment variable is set (as affinity is configured explicitly)
  */
-static constexpr Key<Affinity> affinity{"RUNTIME_AFFINITY"};
-}  // namespace runtime
+static constexpr Key<Affinity> affinity{"AFFINITY"};
+}  // namespace execution
 }  // namespace ov
