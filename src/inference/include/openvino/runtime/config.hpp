@@ -217,6 +217,19 @@ static constexpr Key<std::string, ConfigMutability::RO> model_name{"NETWORK_NAME
 static constexpr Key<uint32_t, ConfigMutability::RO> optimal_number_of_infer_requests{
     "OPTIMAL_NUMBER_OF_INFER_REQUESTS"};
 
+/**
+ * @brief Metric to query information optimal batch size for the given device and the network
+ *
+ * Metric returns a value of unsigned int type,
+ * Returns optimal batch size for a given network on the given device. The returned value is aligned to power of 2.
+ * Also, MODEL_PTR is the required option for this metric since the optimal batch size depends on the model,
+ * so if the MODEL_PTR is not given, the result of the metric is always 1.
+ * For the GPU the metric is queried automatically whenever the OpenVINO performance hint for the throughput is used,
+ * so that the result (>1) governs the automatic batching (transparently to the application).
+ * The automatic batching can be disabled with ALLOW_AUTO_BATCHING set to NO
+ */
+static constexpr Key<unsigned int, ConfigMutability::RO> optimal_batch_size{"OPTIMAL_BATCH_SIZE"};
+
 namespace hint {
 
 /**
@@ -566,7 +579,7 @@ inline std::istream& operator>>(std::istream& is, Type& device_type) {
 /**
  * @brief Metric to get a type of device. See Type enum definition for possible return values
  */
-static constexpr Key<Type, ConfigMutability::RO> type{"DEVICE_TYPE"};
+static constexpr Key<Type, ConfigMutability::RO> type{"OV_DEVICE_TYPE"};
 
 /**
  * @brief Metric which defines Giga OPS per second count (GFLOPS or GIOPS) for a set of precisions supported by
