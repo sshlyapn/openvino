@@ -109,7 +109,7 @@ void TransformationsPipeline::apply(std::shared_ptr<ov::Model> func) {
 
     bool use_onednn = false;
 #ifdef ENABLE_ONEDNN_FOR_GPU
-    use_onednn = device_info.supports_immad;
+    use_onednn = device_info.supports_immad || device_info.supports_imad;
 #endif
 
     bool enableInt8;

@@ -78,7 +78,7 @@ public:
         params.runtime_type = cldnn::runtime_types::ocl;
         if (external_queue) {
             params.queue_type = cldnn::stream::detect_queue_type(params.engine_type, external_queue);
-        } else if (dev->get_info().supports_immad) {
+        } else if (dev->get_info().supports_immad || dev->get_info().supports_imad) {
             params.queue_type = cldnn::queue_types::in_order;
         } else {
             params.queue_type = cldnn::queue_types::out_of_order;

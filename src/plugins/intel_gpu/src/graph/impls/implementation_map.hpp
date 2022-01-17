@@ -9,6 +9,7 @@
 #include <typeinfo>
 #include <tuple>
 #include <string>
+#include "to_string_utils.h"
 
 namespace cldnn {
 
@@ -41,6 +42,21 @@ struct primitive_impl;
 
 template <class PType>
 struct typed_program_node;
+
+namespace {
+    template <typename key_type>
+    std::string key_to_string(const key_type& /*key*/) { return std::string(""); }
+
+    template <>
+    std::string key_to_string(const int32_t& key) { return std::to_string(key); }
+
+    template <>
+    std::string key_to_string(const std::tuple<data_types, format::type>& key) {
+        std::string dt = dt_to_str(std::get<0>(key));
+        std::string format = fmt_to_str(std::get<1>(key));
+        return format + "_" + dt;
+    }
+} // namespace
 
 template <typename primitive_kind>
 struct implementation_key {
@@ -147,8 +163,9 @@ public:
                 return factory;
             }
         }
+        std::string key_desc = ::key_to_string<key_type>(key);
         throw std::runtime_error(std::string("implementation_map for ") + typeid(primitive_kind).name() +
-                                     " could not find any implementation to match key");
+                                     " could not find any implementation to match key <" + key_desc + ">");
     }
 
     // check if for a given engine and type there exist an implementation

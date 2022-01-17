@@ -1464,7 +1464,11 @@ impl_types layout_optimizer::get_preferred_impl_type(program_node& node, format 
             }
         }
     } else if (node.is_type<fully_connected>()) {
-        if (!_optimization_attributes.use_onednn_impls)
+        auto& engine = node.get_program().get_engine();
+        bool use_onednn = _optimization_attributes.use_onednn_impls ||
+                          (engine.get_device_info().supports_imad && engine.configuration().queue_type == queue_types::in_order);
+
+        if (!use_onednn)
             return impl_types::ocl;
 
         impl_types impl_candidate = impl_types::onednn;
