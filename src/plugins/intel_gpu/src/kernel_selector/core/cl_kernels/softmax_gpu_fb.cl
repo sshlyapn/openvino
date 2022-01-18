@@ -28,9 +28,14 @@ UNIT_TYPE FUNC(find_max_value)(__local UNIT_TYPE* partial_max, const int global_
     return partial_max[batch_offset];
 }
 
-KERNEL (softmax_gpu_continoues_yxfb)(const __global UNIT_TYPE* input, __global UNIT_TYPE* output)
-{
-    const uint data_sets_count = DATA_SETS_COUNT;   //how many data sets are in the processing payload     
+KERNEL (softmax_gpu_continuous_yxfb)(
+    const __global UNIT_TYPE* input,
+    __global UNIT_TYPE* output
+#if HAS_FUSED_OPS_DECLS
+    , FUSED_OPS_DECLS
+#endif
+) {
+    const uint data_sets_count = DATA_SETS_COUNT;   //how many data sets are in the processing payload
 
     const int global_id = get_global_id(0);
     const int idx = global_id / data_sets_count;

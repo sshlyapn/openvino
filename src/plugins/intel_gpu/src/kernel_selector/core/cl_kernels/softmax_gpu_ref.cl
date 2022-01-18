@@ -7,8 +7,13 @@
 
 
 __attribute__((intel_reqd_sub_group_size(16)))
-KERNEL(softmax)(__global INPUT0_TYPE* input, __global OUTPUT_TYPE* output)
-{
+KERNEL(softmax)(
+    __global INPUT0_TYPE* input,
+    __global OUTPUT_TYPE* output
+#if HAS_FUSED_OPS_DECLS
+    , FUSED_OPS_DECLS
+#endif
+) {
 #if INPUT0_DIMS == 5
     const uint other0 = (uint)get_global_id(0) % INPUT0_OTHER0_SIZE;
     const uint other2 = (uint)get_global_id(0) / INPUT0_OTHER0_SIZE;
