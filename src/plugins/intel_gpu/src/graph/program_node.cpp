@@ -29,7 +29,7 @@ program_node::program_node(std::shared_ptr<primitive> prim, program& prog)
         output_layout.data_padding = prim->output_padding;
 }
 
-void program_node::replace_dependency(size_t idx, program_node& new_dep) {
+void program_node::replace_dependency(size_t idx, program_node& new_dep, bool remove_if_dangling) {
     if (idx >= dependencies.size())
         return;
     if (dependencies[idx] == &new_dep)
@@ -39,16 +39,18 @@ void program_node::replace_dependency(size_t idx, program_node& new_dep) {
     if (it != dependencies[idx]->users.end()) {
         dependencies[idx]->users.erase(it);
     }
-    myprog.remove_if_dangling(*dependencies[idx]);
+
+    if (remove_if_dangling)
+        myprog.remove_if_dangling(*dependencies[idx]);
 
     dependencies[idx] = &new_dep;
     new_dep.users.push_back(this);
 }
 
-void program_node::replace_dependency(program_node const& old_dep, program_node& new_dep) {
+void program_node::replace_dependency(program_node const& old_dep, program_node& new_dep, bool remove_if_dangling) {
     for (size_t i = 0; i < dependencies.size(); ++i)
         if (dependencies[i] == &old_dep)
-            return replace_dependency(i, new_dep);
+            return replace_dependency(i, new_dep, remove_if_dangling);
 }
 
 std::vector<primitive_id> program_node::get_dependencies_ids() const {
