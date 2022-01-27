@@ -746,10 +746,7 @@ void prepare_primitive_fusing::fuse_simple_primitives(program &p) {
 
             should_fuse |= input_data.is_type<scale>();
 
-            // Here we need to check that Eltwise already has fused ops to avoid missing Activation primitive in
-            // case `Conv -> Eltwise -> Activation` which will be replaced via fused_conv_eltwise primitive later
-            // without handling any fused ops
-            should_fuse |= input_data.is_type<eltwise>() && eltwise_supports_fusings(input_data.as<eltwise>()) && input_data.has_fused_primitives();
+            should_fuse |= input_data.is_type<eltwise>() && eltwise_supports_fusings(input_data.as<eltwise>());
 
             if (!should_fuse)
                 return;
@@ -831,6 +828,14 @@ void prepare_primitive_fusing::fuse_simple_primitives(program &p) {
 
             auto out_layout = quantize_node.get_output_layout();
             auto in_layout = input_data.get_output_layout();
+
+            bool per_tensor_values = quantize_node.get_scale_shift_opt() &&
+                                     quantize_node.get_per_tensor_input_scale() &&
+                                     quantize_node.get_per_tensor_input_shift() &&
+                                     quantize_node.get_per_tensor_input_range() &&
+                                     quantize_node.get_per_tensor_output_scale() &&
+                                     quantize_node.get_per_tensor_output_shift() &&
+                                     quantize_node.get_per_tensor_output_range();
 
             if (input_data.get_users().size() != 1)
                 return;
@@ -917,6 +922,11 @@ void prepare_primitive_fusing::fuse_simple_primitives(program &p) {
             should_fuse |= input_data.is_type<eltwise>() && eltwise_supports_fusings(input_data.as<eltwise>()) && quantize_node.get_scale_shift_opt();
 
             should_fuse |= input_data.is_type<scale>() && quantize_node.get_scale_shift_opt();
+
+            should_fuse |= input_data.is_type<softmax>() &&
+                           input_data.as<softmax>().get_primitive()->dimension == softmax::dimension_t::normalize_f &&
+                           per_tensor_values;
+
 
             if (!should_fuse)
                 return;

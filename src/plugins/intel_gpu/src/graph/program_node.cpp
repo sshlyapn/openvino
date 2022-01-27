@@ -98,10 +98,10 @@ std::unique_ptr<json_composite> program_node::desc_to_json() const {
 
     node_info->add("output layout", output_layout_info);
 
-    node_info->add("in data flow", bool_to_str(data_flow));
     node_info->add("constant", bool_to_str(constant));
     node_info->add("in data flow", bool_to_str(data_flow));
     node_info->add("output", bool_to_str(output));
+    node_info->add("optimized", bool_to_str(optimized));
 
     json_composite fused_nodes_info;
     size_t index = 0;
