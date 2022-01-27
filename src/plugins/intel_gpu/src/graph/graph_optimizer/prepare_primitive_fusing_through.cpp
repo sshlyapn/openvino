@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2021 Intel Corporation
+// Copyright (C) 2022 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -122,11 +122,6 @@ void prepare_primitive_fusing_through::run(program& p) {
         if (new_prev->is_type<input_layout>())
             continue;
 
-        // printf("Fuse through size %lu for %s:\n", fuse_through_order.size(), node->id().c_str());
-        // for (auto& nn : fuse_through_order) {
-        //     printf("-> %s\n", nn->id().c_str());
-        // }
-
         std::vector<cldnn::program_node*> dependencies;
         for (auto dep : node->get_dependencies()) {
             if (dep == input_node)
@@ -158,7 +153,6 @@ void prepare_primitive_fusing_through::run(program& p) {
                 auto reorder_layout = itermediate_node->get_output_layout();
                 reorder_layout.data_type = target_dt;
                 auto r_prim = std::make_shared<reorder>(itermediate_node->id() + "_reorder_to_req_dt", itermediate_node->id(), reorder_layout);
-                p.add_intermediate(r_prim, *itermediate_node->get_users().front(), 0);
                 auto& new_reorder = p.get_or_create(r_prim);
 
                 p.add_intermediate(new_reorder, *itermediate_node->get_users().front(), *itermediate_node);

@@ -91,12 +91,11 @@ TEST_P(softmax_quantize, basic) {
 
 INSTANTIATE_TEST_SUITE_P(fusings_gpu, softmax_quantize,
     ::testing::ValuesIn(std::vector<softmax_test_params>{
-                        // Fusing to SoftMax not allowed for non-fusing through cases
-                        softmax_test_params{ CASE_SOFTMAX_FP32_1, 3, 3 },
+                        softmax_test_params{ CASE_SOFTMAX_FP32_1, 2, 3 },
                         softmax_test_params{ CASE_SOFTMAX_FP32_2, 3, 3 },
                         softmax_test_params{ CASE_SOFTMAX_FP32_3, 3, 3 },
 
-                        softmax_test_params{ CASE_SOFTMAX_FP16_1, 3, 3 },
+                        softmax_test_params{ CASE_SOFTMAX_FP16_1, 2, 3 },
                         softmax_test_params{ CASE_SOFTMAX_FP16_2, 3, 3 },
                         softmax_test_params{ CASE_SOFTMAX_FP16_3, 3, 3 },
 }));
