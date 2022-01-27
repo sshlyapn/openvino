@@ -158,7 +158,6 @@ void prepare_primitive_fusing_through::run(program& p) {
                 auto reorder_layout = itermediate_node->get_output_layout();
                 reorder_layout.data_type = target_dt;
                 auto r_prim = std::make_shared<reorder>(itermediate_node->id() + "_reorder_to_req_dt", itermediate_node->id(), reorder_layout);
-                p.add_intermediate(r_prim, *itermediate_node->get_users().front(), 0);
                 auto& new_reorder = p.get_or_create(r_prim);
 
                 p.add_intermediate(new_reorder, *itermediate_node->get_users().front(), *itermediate_node);
