@@ -11,6 +11,7 @@
 #include "reshape_inst.h"
 #include "data_inst.h"
 #include "eltwise_inst.h"
+#include "mutable_data_inst.h"
 #include <vector>
 #include <memory>
 
@@ -63,6 +64,9 @@ void prepare_primitive_fusing_through::run(program& p) {
     while (node_itr != p.get_processing_order().end()) {
         auto& node = (*node_itr++);
         cldnn::program_node* input_node;
+
+        if (node->is_output() || node->is_constant())
+            continue;
 
         if (node->is_type<activation>()) {
             if (node->get_dependencies().size() > 1)
@@ -119,7 +123,9 @@ void prepare_primitive_fusing_through::run(program& p) {
         auto new_prev = fuse_through_order[fuse_through_order.size() - 1];
         auto new_next = fuse_through_order[fuse_through_order.size() - 2];
 
-        if (new_prev->is_type<input_layout>())
+        if (new_prev->is_type<input_layout>() ||
+            new_prev->is_type<mutable_data>() ||
+            new_prev->is_type<quantize>())
             continue;
 
         std::vector<cldnn::program_node*> dependencies;
