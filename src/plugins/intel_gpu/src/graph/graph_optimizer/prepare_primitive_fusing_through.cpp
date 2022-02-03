@@ -62,7 +62,7 @@ void prepare_primitive_fusing_through::run(program& p) {
 
     auto node_itr = p.get_processing_order().begin();
     while (node_itr != p.get_processing_order().end()) {
-        auto& node = (*node_itr++);
+        auto node = (*node_itr++);
         cldnn::program_node* input_node;
 
         if (node->is_output() || node->is_constant())
