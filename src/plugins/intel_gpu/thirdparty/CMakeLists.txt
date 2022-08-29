@@ -29,6 +29,7 @@ if(ENABLE_ONEDNN_FOR_GPU)
             INSTALL_DIR "${ONEDNN_INSTALL_DIR}"
             PREFIX "${ONEDNN_PREFIX_DIR}"
             EXCLUDE_FROM_ALL ON
+            BUILD_ALWAYS ON
             CMAKE_ARGS
                 "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
                 "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}"
