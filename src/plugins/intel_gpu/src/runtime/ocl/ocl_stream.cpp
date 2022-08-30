@@ -260,7 +260,8 @@ void set_arguments_impl(ocl_kernel_type& kernel,
 sync_methods get_expected_sync_method(const engine_configuration &config) {
     // return config.enable_profiling ? sync_methods::events : config.queue_type == queue_types::out_of_order ? sync_methods::barriers
     //                                                                                                        : sync_methods::none;
-    return sync_methods::events;
+    // return sync_methods::events;
+    return sync_methods::barriers;
 }
 
 }  // namespace
@@ -377,7 +378,8 @@ event::ptr ocl_stream::enqueue_kernel(kernel& kernel,
         }
         dep_events_ptr = &dep_events;
     } else if (sync_method == sync_methods::barriers) {
-        sync_events(deps, is_output);
+        enqueue_barrier();
+        // sync_events(deps, is_output);
     }
 
     cl::Event ret_ev;
@@ -421,7 +423,9 @@ event::ptr ocl_stream::enqueue_marker(std::vector<event::ptr> const& deps, bool 
 
         return std::make_shared<ocl_event>(ret_ev, ++_queue_counter);
     } else if (sync_method == sync_methods::barriers) {
-        sync_events(deps, is_output);
+        // sync_events(deps, is_output);
+        // return std::make_shared<ocl_user_event>(_engine.get_cl_context(), true);
+        enqueue_barrier();
         return std::make_shared<ocl_event>(_last_barrier_ev, _last_barrier);
     } else {
         return std::make_shared<ocl_user_event>(_engine.get_cl_context(), true);

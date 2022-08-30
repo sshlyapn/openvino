@@ -334,7 +334,7 @@ void network::reset_execution(bool wait) {
         std::vector<event::ptr> events;
         for (auto& pair : _events) {
             auto& ev = pair.second;
-            if (ev->is_set())
+            if (!ev || ev->is_set())
                 continue;
 
             events.push_back(ev);
