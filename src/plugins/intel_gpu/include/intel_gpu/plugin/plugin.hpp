@@ -78,7 +78,8 @@ public:
         if (external_queue) {
             params.queue_type = cldnn::stream::detect_queue_type(params.engine_type, external_queue);
         } else if (dev->get_info().supports_immad) {
-            params.queue_type = cldnn::queue_types::in_order;
+            params.queue_type = cldnn::queue_types::out_of_order;
+            // params.queue_type = cldnn::queue_types::in_order;
         } else {
             params.queue_type = cldnn::queue_types::out_of_order;
         }

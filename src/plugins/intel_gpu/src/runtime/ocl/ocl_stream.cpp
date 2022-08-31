@@ -258,8 +258,9 @@ void set_arguments_impl(ocl_kernel_type& kernel,
 }
 
 sync_methods get_expected_sync_method(const engine_configuration &config) {
-    return config.enable_profiling ? sync_methods::events : config.queue_type == queue_types::out_of_order ? sync_methods::barriers
-                                                                                                           : sync_methods::none;
+    // return config.enable_profiling ? sync_methods::events : config.queue_type == queue_types::out_of_order ? sync_methods::barriers
+    //                                                                                                        : sync_methods::none;
+    return sync_methods::events;
 }
 
 }  // namespace
@@ -271,6 +272,7 @@ ocl_stream::ocl_stream(const ocl_engine &engine)
     auto context = engine.get_cl_context();
     auto device = engine.get_cl_device();
     auto config = engine.configuration();
+    printf("Create OOO queue: %d\n", config.queue_type == queue_types::out_of_order);
     ocl::command_queues_builder queue_builder;
     queue_builder.set_profiling(config.enable_profiling);
     queue_builder.set_out_of_order((config.queue_type == queue_types::out_of_order));
@@ -291,7 +293,8 @@ ocl_stream::ocl_stream(const ocl_engine &engine)
     _command_queue = queue_builder.build(context, device);
 
 #ifdef ENABLE_ONEDNN_FOR_GPU
-    if (config.queue_type == queue_types::in_order) {
+    {
+    // if (config.queue_type == queue_types::in_order) {
         auto onednn_engine = engine.get_onednn_engine();
         _onednn_stream = std::make_shared<dnnl::stream>(dnnl::ocl_interop::make_stream(engine.get_onednn_engine(), _command_queue.get()));
     }
@@ -310,7 +313,8 @@ ocl_stream::ocl_stream(const ocl_engine &engine, void *handle)
 
 #ifdef ENABLE_ONEDNN_FOR_GPU
     auto config = engine.configuration();
-    if (config.queue_type == queue_types::in_order) {
+    {
+    // if (config.queue_type == queue_types::in_order) {
         auto onednn_engine = engine.get_onednn_engine();
         _onednn_stream = std::make_shared<dnnl::stream>(dnnl::ocl_interop::make_stream(engine.get_onednn_engine(), _command_queue.get()));
     }
@@ -434,6 +438,10 @@ event::ptr ocl_stream::create_user_event(bool set) {
 
 event::ptr ocl_stream::create_base_event() {
     cl::Event ret_ev;
+    return std::make_shared<ocl_event>(ret_ev, ++_queue_counter);
+}
+
+event::ptr ocl_stream::create_event(cl::Event ret_ev) {
     return std::make_shared<ocl_event>(ret_ev, ++_queue_counter);
 }
 
