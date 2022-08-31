@@ -14,9 +14,9 @@ static size_t img_size = 800;
 static std::string kernel_code =
     "__attribute__((intel_reqd_sub_group_size(16)))"
     "__attribute__((reqd_work_group_size(16, 1, 1)))"
-    "void kernel simple_reorder(const __global uchar* src, __global float* dst) {"
+    "void kernel simple_reorder(const __global uchar* src, __global uchar* dst) {"
     "    uint gid = get_global_id(0);"
-    "    dst[gid] = convert_float(src[gid]) * 0.33f;"
+    "    dst[gid] = convert_uchar(convert_float(src[gid]) * 0.33f);"
     "}";
 static size_t max_iter = 1000;
 
@@ -32,6 +32,17 @@ static void fill_input(uint8_t* ptr, size_t size) {
     for (size_t i = 0; i < size; i++) {
         ptr[i] = static_cast<uint8_t>(i % 255);
     }
+}
+
+static size_t get_event_time(const cl::Event& event) {
+    cl_ulong start;
+    cl_ulong end;
+    event.getProfilingInfo(CL_PROFILING_COMMAND_START, &start);
+    event.getProfilingInfo(CL_PROFILING_COMMAND_END, &end);
+
+    auto diff = std::chrono::nanoseconds(end - start);
+    auto period = std::make_shared<cldnn::instrumentation::profiling_period_basic>(diff);
+    return std::chrono::duration_cast<std::chrono::microseconds>(period->value()).count();
 }
 
 static void run_test(std::function<void()> preprocessing,
@@ -284,11 +295,12 @@ TEST(mem_perf_test_to_device, DISABLED_usm_host) {
     validate_result(static_cast<float*>(output_buffer_host.get()), img_size * img_size);
 }
 
-TEST(mem_perf_test_to_device, DISABLED_usm_device) {
+TEST(mem_perf_test_to_device, usm_device) {
     auto ocl_instance = std::make_shared<OpenCL>();
     auto& ctx = ocl_instance->_context;
     auto& device = ocl_instance->_device;
     auto& usm_helper = *ocl_instance->_usm_helper;
+    size_t buffer_size_elements = 3 * 224 * 224;
 
     if (!ocl_instance->_supports_usm)
         GTEST_SKIP();
@@ -298,26 +310,26 @@ TEST(mem_perf_test_to_device, DISABLED_usm_device) {
     cl::Program program(ctx, kernel_code);
     checkStatus(program.build(device, ""), "build");
     cl::UsmMemory input_buffer_host(usm_helper);
-    input_buffer_host.allocateHost(sizeof(uint8_t) * img_size * img_size);
+    input_buffer_host.allocateHost(sizeof(uint8_t) * buffer_size_elements);
     cl::UsmMemory input_buffer_device(usm_helper);
-    input_buffer_device.allocateDevice(sizeof(uint8_t) * img_size * img_size);
+    input_buffer_device.allocateDevice(sizeof(uint8_t) * buffer_size_elements);
     cl::UsmMemory input_buffer_device_second(usm_helper);
-    input_buffer_device_second.allocateDevice(sizeof(uint8_t) * img_size * img_size);
+    input_buffer_device_second.allocateDevice(sizeof(uint8_t) * buffer_size_elements);
     cl::UsmMemory output_buffer(usm_helper);
-    output_buffer.allocateDevice(sizeof(float) * img_size * img_size);
+    output_buffer.allocateDevice(sizeof(uint8_t) * buffer_size_elements);
     cl::UsmMemory output_buffer_host(usm_helper);
-    output_buffer_host.allocateHost(sizeof(float) * img_size * img_size);
+    output_buffer_host.allocateHost(sizeof(uint8_t) * buffer_size_elements);
     cl::Kernel kernel1(program, "simple_reorder");
     cl::KernelIntel kernel(kernel1, usm_helper);
 
     cl::CommandQueue queue(ctx, device);
 
     run_test([&](){
-        fill_input(static_cast<uint8_t*>(input_buffer_host.get()), img_size * img_size);
+        fill_input(static_cast<uint8_t*>(input_buffer_host.get()), buffer_size_elements);
         usm_helper.enqueue_memcpy(queue,
                                   input_buffer_device.get(),
                                   input_buffer_host.get(),
-                                  img_size * img_size,
+                                  buffer_size_elements,
                                   true,
                                   nullptr,
                                   nullptr);
@@ -326,7 +338,7 @@ TEST(mem_perf_test_to_device, DISABLED_usm_device) {
         usm_helper.enqueue_memcpy(queue,
                                   input_buffer_device_second.get(),
                                   input_buffer_device.get(),
-                                  img_size * img_size,
+                                  buffer_size_elements,
                                   false,
                                   nullptr,
                                   &copy_ev);
@@ -335,25 +347,26 @@ TEST(mem_perf_test_to_device, DISABLED_usm_device) {
         kernel.setArgUsm(1, output_buffer);
         cl::Event ev;
         std::vector<cl::Event> dep_ev = {copy_ev};
-        queue.enqueueNDRangeKernel(kernel, cl::NDRange(), cl::NDRange(img_size*img_size), cl::NDRange(16), &dep_ev, &ev);
+        queue.enqueueNDRangeKernel(kernel, cl::NDRange(), cl::NDRange(buffer_size_elements), cl::NDRange(16), &dep_ev, &ev);
         cl::WaitForEvents({ev});
     });
 
     usm_helper.enqueue_memcpy(queue,
                               output_buffer_host.get(),
                               output_buffer.get(),
-                              sizeof(float) * img_size * img_size,
+                              sizeof(float) * buffer_size_elements,
                               true,
                               nullptr,
                               nullptr);
-    validate_result(static_cast<float*>(output_buffer_host.get()), img_size * img_size);
+    // validate_result(static_cast<float*>(output_buffer_host.get()), buffer_size_elements);
 }
 
-TEST(mem_perf_test_to_device, DISABLED_usm_device_copy) {
+TEST(mem_perf_test_to_device, usm_device_copy) {
     auto ocl_instance = std::make_shared<OpenCL>();
     auto& ctx = ocl_instance->_context;
     auto& device = ocl_instance->_device;
     auto& usm_helper = *ocl_instance->_usm_helper;
+    size_t buffer_size_elements = 3 * 224 * 224;
 
     if (!ocl_instance->_supports_usm)
         GTEST_SKIP();
@@ -363,26 +376,26 @@ TEST(mem_perf_test_to_device, DISABLED_usm_device_copy) {
     cl::Program program(ctx, kernel_code);
     checkStatus(program.build(device, ""), "build");
     cl::UsmMemory input_buffer_host(usm_helper);
-    input_buffer_host.allocateHost(sizeof(uint8_t) * img_size * img_size);
+    input_buffer_host.allocateHost(sizeof(uint8_t) * buffer_size_elements);
     cl::UsmMemory input_buffer_device(usm_helper);
-    input_buffer_device.allocateDevice(sizeof(uint8_t) * img_size * img_size);
+    input_buffer_device.allocateDevice(sizeof(uint8_t) * buffer_size_elements);
     cl::UsmMemory output_buffer(usm_helper);
-    output_buffer.allocateDevice(sizeof(float) * img_size * img_size);
+    output_buffer.allocateDevice(sizeof(uint8_t) * buffer_size_elements);
     cl::UsmMemory output_buffer_host(usm_helper);
-    output_buffer_host.allocateHost(sizeof(float) * img_size * img_size);
+    output_buffer_host.allocateHost(sizeof(uint8_t) * buffer_size_elements);
     cl::Kernel kernel1(program, "simple_reorder");
     cl::KernelIntel kernel(kernel1, usm_helper);
 
     cl::CommandQueue queue(ctx, device);
 
     run_test([&](){
-        fill_input(static_cast<uint8_t*>(input_buffer_host.get()), img_size * img_size);
+        fill_input(static_cast<uint8_t*>(input_buffer_host.get()), buffer_size_elements);
     }, [&]() {
         cl::Event copy_ev;
         usm_helper.enqueue_memcpy(queue,
                                   input_buffer_device.get(),
                                   input_buffer_host.get(),
-                                  sizeof(uint8_t) * img_size * img_size,
+                                  sizeof(uint8_t) * buffer_size_elements,
                                   false,
                                   nullptr,
                                   &copy_ev);
@@ -390,25 +403,27 @@ TEST(mem_perf_test_to_device, DISABLED_usm_device_copy) {
         kernel.setArgUsm(1, output_buffer);
         cl::Event ev;
         std::vector<cl::Event> dep_ev = {copy_ev};
-        queue.enqueueNDRangeKernel(kernel, cl::NDRange(), cl::NDRange(img_size*img_size), cl::NDRange(16), &dep_ev, &ev);
+        queue.enqueueNDRangeKernel(kernel, cl::NDRange(), cl::NDRange(buffer_size_elements), cl::NDRange(16), &dep_ev, &ev);
         cl::WaitForEvents({ev});
     });
 
     usm_helper.enqueue_memcpy(queue,
                               output_buffer_host.get(),
                               output_buffer.get(),
-                              sizeof(float) * img_size * img_size,
+                              sizeof(uint8_t) * buffer_size_elements,
                               true,
                               nullptr,
                               nullptr);
-    validate_result(static_cast<float*>(output_buffer_host.get()), img_size * img_size);
+    // validate_result(static_cast<uint8_t*>(output_buffer_host.get()), buffer_size_elements);
 }
 
-TEST(mem_perf_test_to_device, DISABLED_cl_buffer_to_usm_device) {
+TEST(mem_perf_test_to_device, cl_buffer_to_usm_device) {
     auto ocl_instance = std::make_shared<OpenCL>();
     auto& ctx = ocl_instance->_context;
     auto& device = ocl_instance->_device;
     auto& usm_helper = *ocl_instance->_usm_helper;
+
+    size_t buffer_size_elements = 3 * 224 * 224;
 
     if (!ocl_instance->_supports_usm)
         GTEST_SKIP();
@@ -417,13 +432,13 @@ TEST(mem_perf_test_to_device, DISABLED_cl_buffer_to_usm_device) {
 
     cl::Program program(ctx, kernel_code);
     checkStatus(program.build(device, ""), "build");
-    cl::Buffer input_buffer(ctx, CL_MEM_READ_WRITE, sizeof(uint8_t) * img_size * img_size);
+    cl::Buffer input_buffer(ctx, CL_MEM_READ_WRITE, sizeof(uint8_t) * buffer_size_elements);
     cl::UsmMemory input_buffer_host(usm_helper);
-    input_buffer_host.allocateHost(sizeof(uint8_t) * img_size * img_size);
+    input_buffer_host.allocateHost(sizeof(uint8_t) * buffer_size_elements);
     cl::UsmMemory output_buffer_device(usm_helper);
-    output_buffer_device.allocateDevice(sizeof(float) * img_size * img_size);
+    output_buffer_device.allocateDevice(sizeof(uint8_t) * buffer_size_elements);
     cl::UsmMemory output_buffer_host(usm_helper);
-    output_buffer_host.allocateHost(sizeof(float) * img_size * img_size);
+    output_buffer_host.allocateHost(sizeof(uint8_t) * buffer_size_elements);
 
     cl::Kernel kernel1(program, "simple_reorder");
     cl::KernelIntel kernel(kernel1, usm_helper);
@@ -431,24 +446,24 @@ TEST(mem_perf_test_to_device, DISABLED_cl_buffer_to_usm_device) {
     cl::CommandQueue queue(ctx, device);
 
     run_test([&](){
-        fill_input(static_cast<uint8_t*>(input_buffer_host.get()), img_size * img_size);
-        queue.enqueueWriteBuffer(input_buffer, CL_TRUE, 0, img_size*img_size, input_buffer_host.get(), nullptr, nullptr);
+        fill_input(static_cast<uint8_t*>(input_buffer_host.get()), buffer_size_elements);
+        queue.enqueueWriteBuffer(input_buffer, CL_TRUE, 0, buffer_size_elements, input_buffer_host.get(), nullptr, nullptr);
     }, [&]() {
         kernel.setArg(0, input_buffer);
         kernel.setArgUsm(1, output_buffer_device);
         cl::Event ev;
-        queue.enqueueNDRangeKernel(kernel, cl::NDRange(), cl::NDRange(img_size*img_size), cl::NDRange(16), nullptr, &ev);
+        queue.enqueueNDRangeKernel(kernel, cl::NDRange(), cl::NDRange(buffer_size_elements), cl::NDRange(16), nullptr, &ev);
         cl::WaitForEvents({ev});
     });
 
     usm_helper.enqueue_memcpy(queue,
                               output_buffer_host.get(),
                               output_buffer_device.get(),
-                              sizeof(float) * img_size * img_size,
+                              sizeof(uint8_t) * buffer_size_elements,
                               true,
                               nullptr,
                               nullptr);
-    validate_result(static_cast<float*>(output_buffer_host.get()), img_size * img_size);
+    // validate_result(static_cast<uint8_t*>(output_buffer_host.get()), buffer_size_elements);
 }
 
 TEST(mem_perf_test_to_host, DISABLED_buffer_lock_rw) {
@@ -763,4 +778,195 @@ TEST(mem_perf_test_to_host_and_back_to_device, DISABLED_buffer_copy_host_ptr_eve
     });
 
     validate_result(static_cast<float*>(output_buffer_host.data()), img_size * img_size);
+}
+
+TEST(mem_perf_test_to_device_events, usm_device) {
+    auto ocl_instance = std::make_shared<OpenCL>(true, true);
+    auto& ctx = ocl_instance->_context;
+    auto& device = ocl_instance->_device;
+    auto& usm_helper = *ocl_instance->_usm_helper;
+    size_t buffer_size_elements = 3 * 224 * 224;
+
+    if (!ocl_instance->_supports_usm)
+        GTEST_SKIP();
+
+    std::cout << "Time of copying data from device buffer cl::UsmMemory (UsmDevice type) to cl::UsmMemory (UsmDevice type)" << std::endl;
+
+    cl::Program program(ctx, kernel_code);
+    checkStatus(program.build(device, ""), "build");
+    cl::UsmMemory input_buffer_host(usm_helper);
+    input_buffer_host.allocateHost(sizeof(uint8_t) * buffer_size_elements);
+    cl::UsmMemory input_buffer_device(usm_helper);
+    input_buffer_device.allocateDevice(sizeof(uint8_t) * buffer_size_elements);
+    cl::UsmMemory input_buffer_device_second(usm_helper);
+    input_buffer_device_second.allocateDevice(sizeof(uint8_t) * buffer_size_elements);
+    cl::UsmMemory output_buffer(usm_helper);
+    output_buffer.allocateDevice(sizeof(uint8_t) * buffer_size_elements);
+    cl::UsmMemory output_buffer_host(usm_helper);
+    output_buffer_host.allocateHost(sizeof(uint8_t) * buffer_size_elements);
+    cl::Kernel kernel1(program, "simple_reorder");
+    cl::KernelIntel kernel(kernel1, usm_helper);
+
+    cl_command_queue_properties props = CL_QUEUE_PROFILING_ENABLE;
+
+    cl::CommandQueue queue(ctx, device, props);
+
+    size_t profiling_sum = 0;
+
+    run_test([&](){
+        fill_input(static_cast<uint8_t*>(input_buffer_host.get()), buffer_size_elements);
+        usm_helper.enqueue_memcpy(queue,
+                                  input_buffer_device.get(),
+                                  input_buffer_host.get(),
+                                  buffer_size_elements,
+                                  true,
+                                  nullptr,
+                                  nullptr);
+    }, [&]() {
+        cl::Event copy_ev;
+        usm_helper.enqueue_memcpy(queue,
+                                  input_buffer_device_second.get(),
+                                  input_buffer_device.get(),
+                                  buffer_size_elements,
+                                  false,
+                                  nullptr,
+                                  &copy_ev);
+
+        cl::WaitForEvents({copy_ev});
+        profiling_sum += get_event_time(copy_ev);
+
+        kernel.setArgUsm(0, input_buffer_device_second);
+        kernel.setArgUsm(1, output_buffer);
+        cl::Event ev;
+        std::vector<cl::Event> dep_ev = {copy_ev};
+        queue.enqueueNDRangeKernel(kernel, cl::NDRange(), cl::NDRange(buffer_size_elements), cl::NDRange(16), &dep_ev, &ev);
+
+        cl::WaitForEvents({ev});
+    });
+
+    printf("Result: %lu us\n", profiling_sum  / max_iter);
+
+    usm_helper.enqueue_memcpy(queue,
+                              output_buffer_host.get(),
+                              output_buffer.get(),
+                              sizeof(float) * buffer_size_elements,
+                              true,
+                              nullptr,
+                              nullptr);
+    // validate_result(static_cast<float*>(output_buffer_host.get()), buffer_size_elements);
+}
+
+TEST(mem_perf_test_to_device_events, usm_device_copy) {
+    auto ocl_instance = std::make_shared<OpenCL>(true, true);
+    auto& ctx = ocl_instance->_context;
+    auto& device = ocl_instance->_device;
+    auto& usm_helper = *ocl_instance->_usm_helper;
+    size_t buffer_size_elements = 3 * 224 * 224;
+
+    if (!ocl_instance->_supports_usm)
+        GTEST_SKIP();
+
+    std::cout << "Time of copying data from host buffer cl::UsmMemory (UsmHost type) to cl::UsmMemory (UsmDevice type)" << std::endl;
+
+    cl::Program program(ctx, kernel_code);
+    checkStatus(program.build(device, ""), "build");
+    cl::UsmMemory input_buffer_host(usm_helper);
+    input_buffer_host.allocateHost(sizeof(uint8_t) * buffer_size_elements);
+    cl::UsmMemory input_buffer_device(usm_helper);
+    input_buffer_device.allocateDevice(sizeof(uint8_t) * buffer_size_elements);
+    cl::UsmMemory output_buffer(usm_helper);
+    output_buffer.allocateDevice(sizeof(uint8_t) * buffer_size_elements);
+    cl::UsmMemory output_buffer_host(usm_helper);
+    output_buffer_host.allocateHost(sizeof(uint8_t) * buffer_size_elements);
+    cl::Kernel kernel1(program, "simple_reorder");
+    cl::KernelIntel kernel(kernel1, usm_helper);
+
+    cl_command_queue_properties props = CL_QUEUE_PROFILING_ENABLE;
+
+    cl::CommandQueue queue(ctx, device, props);
+
+    size_t profiling_sum = 0;
+
+    run_test([&](){
+        fill_input(static_cast<uint8_t*>(input_buffer_host.get()), buffer_size_elements);
+    }, [&]() {
+        cl::Event copy_ev;
+        usm_helper.enqueue_memcpy(queue,
+                                  input_buffer_device.get(),
+                                  input_buffer_host.get(),
+                                  sizeof(uint8_t) * buffer_size_elements,
+                                  false,
+                                  nullptr,
+                                  &copy_ev);
+
+        cl::WaitForEvents({copy_ev});
+        profiling_sum += get_event_time(copy_ev);
+
+        kernel.setArgUsm(0, input_buffer_device);
+        kernel.setArgUsm(1, output_buffer);
+        cl::Event ev;
+        std::vector<cl::Event> dep_ev = {copy_ev};
+        queue.enqueueNDRangeKernel(kernel, cl::NDRange(), cl::NDRange(buffer_size_elements), cl::NDRange(16), &dep_ev, &ev);
+        cl::WaitForEvents({ev});
+    });
+
+    printf("Result: %lu us\n", profiling_sum  / max_iter);
+
+    usm_helper.enqueue_memcpy(queue,
+                              output_buffer_host.get(),
+                              output_buffer.get(),
+                              sizeof(uint8_t) * buffer_size_elements,
+                              true,
+                              nullptr,
+                              nullptr);
+    // validate_result(static_cast<uint8_t*>(output_buffer_host.get()), buffer_size_elements);
+}
+
+TEST(mem_perf_test_to_device_events, cl_buffer_to_usm_device) {
+    auto ocl_instance = std::make_shared<OpenCL>(true, true);
+    auto& ctx = ocl_instance->_context;
+    auto& device = ocl_instance->_device;
+    auto& usm_helper = *ocl_instance->_usm_helper;
+
+    size_t buffer_size_elements = 3 * 224 * 224;
+
+    if (!ocl_instance->_supports_usm)
+        GTEST_SKIP();
+
+    std::cout << "Time of kernel execution w/o copying the data (input buffer is cl::Buffer located in device memory)" << std::endl;
+
+    cl::Program program(ctx, kernel_code);
+    checkStatus(program.build(device, ""), "build");
+    cl::Buffer input_buffer(ctx, CL_MEM_READ_WRITE, sizeof(uint8_t) * buffer_size_elements);
+    cl::UsmMemory input_buffer_host(usm_helper);
+    input_buffer_host.allocateHost(sizeof(uint8_t) * buffer_size_elements);
+    cl::UsmMemory output_buffer_device(usm_helper);
+    output_buffer_device.allocateDevice(sizeof(uint8_t) * buffer_size_elements);
+    cl::UsmMemory output_buffer_host(usm_helper);
+    output_buffer_host.allocateHost(sizeof(uint8_t) * buffer_size_elements);
+
+    cl::Kernel kernel1(program, "simple_reorder");
+    cl::KernelIntel kernel(kernel1, usm_helper);
+
+    cl::CommandQueue queue(ctx, device);
+
+    run_test([&](){
+        fill_input(static_cast<uint8_t*>(input_buffer_host.get()), buffer_size_elements);
+        queue.enqueueWriteBuffer(input_buffer, CL_TRUE, 0, buffer_size_elements, input_buffer_host.get(), nullptr, nullptr);
+    }, [&]() {
+        kernel.setArg(0, input_buffer);
+        kernel.setArgUsm(1, output_buffer_device);
+        cl::Event ev;
+        queue.enqueueNDRangeKernel(kernel, cl::NDRange(), cl::NDRange(buffer_size_elements), cl::NDRange(16), nullptr, &ev);
+        cl::WaitForEvents({ev});
+    });
+
+    usm_helper.enqueue_memcpy(queue,
+                              output_buffer_host.get(),
+                              output_buffer_device.get(),
+                              sizeof(uint8_t) * buffer_size_elements,
+                              true,
+                              nullptr,
+                              nullptr);
+    // validate_result(static_cast<uint8_t*>(output_buffer_host.get()), buffer_size_elements);
 }

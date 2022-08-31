@@ -23,7 +23,7 @@ struct OpenCL {
     bool _supports_usm;
     bool _out_of_order_queue;
 
-    OpenCL(bool out_of_order_queue = true)
+    OpenCL(bool out_of_order_queue = true, bool profiling_enabled = false)
     {
         // get Intel iGPU OCL device, create context and queue
         {
@@ -62,6 +62,13 @@ struct OpenCL {
                         _usm_helper = std::make_shared<cl::UsmHelper>(_context, _device, _supports_usm);
 
                         cl_command_queue_properties props = _out_of_order_queue ? CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE : CL_NONE;
+
+                        if (profiling_enabled) {
+                            props |= CL_QUEUE_PROFILING_ENABLE;
+                            printf("Profiling enabled\n");
+                            props = CL_QUEUE_PROFILING_ENABLE;
+                        }
+
                         _queue = cl::CommandQueue(_context, _device, props);
 
                         return;
