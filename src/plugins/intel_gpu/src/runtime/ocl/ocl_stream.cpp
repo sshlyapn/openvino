@@ -8,6 +8,7 @@
 #include "ocl_command_queues_builder.hpp"
 #include "ocl_kernel.hpp"
 #include "ocl_common.hpp"
+#include "cldnn_itt.hpp"
 
 #include <cassert>
 #include <iomanip>
@@ -258,8 +259,9 @@ void set_arguments_impl(ocl_kernel_type& kernel,
 }
 
 sync_methods get_expected_sync_method(const engine_configuration &config) {
-    return config.enable_profiling ? sync_methods::events : config.queue_type == queue_types::out_of_order ? sync_methods::barriers
-                                                                                                           : sync_methods::none;
+    return sync_methods::events;
+    // return config.enable_profiling ? sync_methods::events : config.queue_type == queue_types::out_of_order ? sync_methods::barriers
+    //                                                                                                        : sync_methods::none;
 }
 
 }  // namespace
@@ -357,6 +359,7 @@ event::ptr ocl_stream::enqueue_kernel(kernel& kernel,
                                       const kernel_arguments_data& /* args */,
                                       std::vector<event::ptr> const& deps,
                                       bool is_output) {
+    OV_ITT_SCOPED_TASK(itt::domains::CLDNN, "ocl_stream::enqueue_kernel");
     auto& ocl_kernel = downcast<ocl::ocl_kernel>(kernel);
 
     auto& kern = ocl_kernel.get_handle();
@@ -386,6 +389,16 @@ event::ptr ocl_stream::enqueue_kernel(kernel& kernel,
         throw ocl_error(err);
     }
 
+    auto cached_event = ocl_kernel.get_event();
+    if (cached_event) {
+        cached_event->reset();
+        cached_event->set(ret_ev);
+        return cached_event;
+    } else {
+        std::shared_ptr<ocl_event> return_event = std::make_shared<ocl_event>(ret_ev, ++_queue_counter);
+        ocl_kernel.set_event(return_event);
+        return return_event;
+    }
     return std::make_shared<ocl_event>(ret_ev, ++_queue_counter);
 }
 

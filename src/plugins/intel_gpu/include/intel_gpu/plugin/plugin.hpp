@@ -82,6 +82,7 @@ public:
         } else {
             params.queue_type = cldnn::queue_types::out_of_order;
         }
+        // params.queue_type = cldnn::queue_types::in_order;
         params.use_unified_shared_memory = true;
         params.task_executor = std::make_shared<InferenceEngine::CPUStreamsExecutor>(config.task_exec_config);
         return params;
