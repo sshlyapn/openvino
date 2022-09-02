@@ -22,7 +22,6 @@ public:
 
     cl::Event get() override { return _event; }
     cl::Event& get_ref() { return _event; }
-    cl::Event set(cl::Event event) { return _event = event; }
 
 private:
     bool _callback_set = false;

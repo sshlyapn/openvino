@@ -379,27 +379,32 @@ event::ptr ocl_stream::enqueue_kernel(kernel& kernel,
         sync_events(deps, is_output);
     }
 
+    auto cached_event = ocl_kernel.get_event();
     cl::Event ret_ev;
+    cl::Event* ret_ev_ptr;
+
+    if (cached_event) {
+        cached_event->reset();
+        ret_ev_ptr = &cached_event->get_ref();
+    } else {
+        ret_ev_ptr = &ret_ev;
+    }
 
     bool set_output_event = sync_method == sync_methods::events || is_output;
 
     try {
-        _command_queue.enqueueNDRangeKernel(kern, cl::NullRange, global, local, dep_events_ptr, set_output_event ? &ret_ev : nullptr);
+        _command_queue.enqueueNDRangeKernel(kern, cl::NullRange, global, local, dep_events_ptr, set_output_event ? ret_ev_ptr : nullptr);
     } catch (cl::Error const& err) {
         throw ocl_error(err);
     }
 
-    auto cached_event = ocl_kernel.get_event();
     if (cached_event) {
-        cached_event->reset();
-        cached_event->set(ret_ev);
         return cached_event;
     } else {
-        std::shared_ptr<ocl_event> return_event = std::make_shared<ocl_event>(ret_ev, ++_queue_counter);
-        ocl_kernel.set_event(return_event);
-        return return_event;
+        auto event = std::make_shared<ocl_event>(*ret_ev_ptr, ++_queue_counter);
+        ocl_kernel.set_event(event);
+        return event;
     }
-    return std::make_shared<ocl_event>(ret_ev, ++_queue_counter);
 }
 
 void ocl_stream::enqueue_barrier() {
