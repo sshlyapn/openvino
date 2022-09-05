@@ -261,17 +261,9 @@ protected:
     event::ptr execute_impl(const std::vector<event::ptr>& events,
                             typed_primitive_inst<PType>& instance) override {
         auto& network = instance.get_network();
-        auto& engine = network.get_engine();
         auto& stream = network.get_stream();
         auto& ocl_stream = dynamic_cast<cldnn::ocl::ocl_stream&>(stream);
-        auto profiling = engine.configuration().enable_profiling;
         auto net_id = network.get_id();
-        event::ptr event;
-
-        if (profiling) {
-            stream.finish();
-            event = stream.create_user_event(false);
-        }
 
         if (!instance.can_be_optimized()) {
             std::vector<cl_event> cl_events;
@@ -282,16 +274,13 @@ protected:
                         cl_events.push_back(ocl_base_ev->get().get());
                 }
             }
-            cl_event return_event = dnnl::ocl_interop::execute(_prim, stream.get_onednn_stream(), _args[net_id], cl_events);
+            cl_event return_event;
+            dnnl::ocl_interop::execute(_prim, stream.get_onednn_stream(), _args[net_id], cl_events, &return_event);
             return ocl_stream.create_event(cl::Event(return_event));
+        } else {
+            return nullptr;
         }
 
-        if (profiling) {
-            stream.finish();
-            event->set();
-        }
-
-        return event;
     }
 };
 

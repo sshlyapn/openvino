@@ -441,7 +441,7 @@ event::ptr ocl_stream::create_base_event() {
     return std::make_shared<ocl_event>(ret_ev, ++_queue_counter);
 }
 
-event::ptr ocl_stream::create_event(cl::Event ret_ev) {
+event::ptr ocl_stream::create_event(const cl::Event& ret_ev) {
     return std::make_shared<ocl_event>(ret_ev, ++_queue_counter);
 }
 
