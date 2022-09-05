@@ -260,7 +260,8 @@ void set_arguments_impl(ocl_kernel_type& kernel,
 sync_methods get_expected_sync_method(const engine_configuration &config) {
     // return config.enable_profiling ? sync_methods::events : config.queue_type == queue_types::out_of_order ? sync_methods::barriers
     //                                                                                                        : sync_methods::none;
-    return sync_methods::events;
+    return sync_methods::barriers;
+    // return sync_methods::events;
 }
 
 }  // namespace

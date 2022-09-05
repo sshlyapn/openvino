@@ -80,15 +80,16 @@ public:
     event::ptr create_event(cl::Event ret_ev);
 
     const cl::UsmHelper& get_usm_helper() const { return _engine.get_usm_helper(); }
+    sync_methods get_sync_method() const { return sync_method; }
 
     static queue_types detect_queue_type(void* queue_handle);
 
 #ifdef ENABLE_ONEDNN_FOR_GPU
     dnnl::stream& get_onednn_stream() const override;
 #endif
+    void sync_events(std::vector<event::ptr> const& deps, bool is_output = false);
 
 private:
-    void sync_events(std::vector<event::ptr> const& deps, bool is_output = false);
 
     const ocl_engine& _engine;
     ocl_queue_type _command_queue;

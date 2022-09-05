@@ -261,35 +261,51 @@ protected:
     event::ptr execute_impl(const std::vector<event::ptr>& events,
                             typed_primitive_inst<PType>& instance) override {
         auto& network = instance.get_network();
-        auto& engine = network.get_engine();
+        // auto& engine = network.get_engine();
         auto& stream = network.get_stream();
         auto& ocl_stream = dynamic_cast<cldnn::ocl::ocl_stream&>(stream);
-        auto profiling = engine.configuration().enable_profiling;
+        // auto profiling = engine.configuration().enable_profiling;
+        auto sync_method = ocl_stream.get_sync_method();
         auto net_id = network.get_id();
         event::ptr event;
 
-        if (profiling) {
-            stream.finish();
-            event = stream.create_user_event(false);
+        auto users = instance.node.get_users();
+        bool is_output = is_any_user_cpu(users) || instance.node.is_output();
+        bool set_output_event = sync_method == ocl::sync_methods::events || is_output;
+
+        if (is_output) {
+            printf("OneDNN OUTPUT!\n");
         }
+
+        // if (profiling) {
+        //     stream.finish();
+        //     event = stream.create_user_event(false);
+        // }
+
+        if (sync_method == ocl::sync_methods::barriers)
+            ocl_stream.sync_events(events, is_output);
 
         if (!instance.can_be_optimized()) {
             std::vector<cl_event> cl_events;
-            cl_events.reserve(events.size());
-            for (auto& event : events) {
-                if (auto ocl_base_ev = std::dynamic_pointer_cast<cldnn::ocl::ocl_base_event>(event)) {
-                    if (ocl_base_ev->get().get() != nullptr)
-                        cl_events.push_back(ocl_base_ev->get().get());
+            if (sync_method == ocl::sync_methods::barriers) {
+                cl_events.reserve(events.size());
+                for (auto& event : events) {
+                    if (auto ocl_base_ev = std::dynamic_pointer_cast<cldnn::ocl::ocl_base_event>(event)) {
+                        if (ocl_base_ev->get().get() != nullptr)
+                            cl_events.push_back(ocl_base_ev->get().get());
+                    }
                 }
             }
-            cl_event return_event = dnnl::ocl_interop::execute(_prim, stream.get_onednn_stream(), _args[net_id], cl_events);
-            return ocl_stream.create_event(cl::Event(return_event));
+            cl_event return_event;
+            dnnl::ocl_interop::execute(_prim, stream.get_onednn_stream(), _args[net_id], cl_events, set_output_event ? &return_event : nullptr,
+                                       sync_method == ocl::sync_methods::barriers);
+            return !set_output_event ? ocl_stream.create_base_event() : ocl_stream.create_event(cl::Event(return_event));
         }
 
-        if (profiling) {
-            stream.finish();
-            event->set();
-        }
+        // if (profiling) {
+        //     stream.finish();
+        //     event->set();
+        // }
 
         return event;
     }
