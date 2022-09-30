@@ -16,5 +16,6 @@ public:
     KernelsPriority GetKernelsPriority(const Params& params, const optional_params& options) const override;
     ParamsKey GetSupportedKey() const override;
     JitConstants GetJitConstants(const reorder_params& params) const override;
+    bool Validate(const Params& params, const optional_params& options) const override;
 };
 }  // namespace kernel_selector

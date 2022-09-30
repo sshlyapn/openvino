@@ -21,6 +21,7 @@
 #include "functional_test_utils/blob_utils.hpp"
 #include "openvino/core/preprocess/pre_post_process.hpp"
 #include "transformations/utils/utils.hpp"
+#include "transformations/serialize.hpp"
 
 using namespace ::testing;
 
@@ -719,6 +720,220 @@ TEST_P(OVRemoteTensor_TestsWithContext, smoke_canCreateManyTensorsOnSameMem) {
 
 INSTANTIATE_TEST_SUITE_P(smoke_RemoteTensor, OVRemoteTensor_TestsWithContext, ::testing::ValuesIn(ov_with_auto_batching),
                          OVRemoteTensor_TestsWithContext::getTestCaseName);
+
+TEST_F(OVRemoteTensor_Test, NV12_to_Grayscale) {
+#if defined(ANDROID)
+    GTEST_SKIP();
+#endif
+    const int height = 8;
+    const int width = 8;
+    const int feature = 1;
+
+    // ------------------------------------------------------
+    // Prepare input data
+    ov::Tensor fake_image_data_y = FuncTestUtils::create_and_fill_tensor(ov::element::u8, {1, feature, height, width}, 50, 0, 1);
+    ov::Tensor fake_image_data_uv = FuncTestUtils::create_and_fill_tensor(ov::element::f32, {1, feature, height, width});
+
+    auto ie = ov::Core();
+
+    for (size_t i = 0; i < fake_image_data_y.get_size(); i++) {
+        auto ptr = static_cast<uint8_t*>(fake_image_data_y.data());
+        auto ptr2 = static_cast<float*>(fake_image_data_uv.data());
+        ptr2[i] = static_cast<float>(ptr[i]) / 255;
+    }
+
+    // ------------------------------------------------------
+    // inference using remote tensor
+    auto fn_ptr_remote = ngraph::builder::subgraph::makeConvPoolRelu({1, feature, height, width});
+
+    using namespace ov::preprocess;
+    auto p = PrePostProcessor(fn_ptr_remote);
+    p.input().tensor().set_element_type(ov::element::u8)
+                      .set_layout("NHWC")
+                      .set_memory_type(GPU_CONFIG_KEY(SURFACE));
+    p.input().model().set_layout("NCHW");
+    auto function = p.build();
+
+    auto param_input_y = fn_ptr_remote->get_parameters().at(0);
+
+    auto exec_net = ie.compile_model(function, CommonTestUtils::DEVICE_GPU);
+    auto inf_req_remote = exec_net.create_infer_request();
+
+    auto cldnn_context = exec_net.get_context().as<ov::intel_gpu::ocl::ClContext>();
+    cl_context ctx = cldnn_context.get();
+    auto ocl_instance = std::make_shared<OpenCL>(ctx);
+    cl_int err;
+
+    cl_image_format image_format;
+    cl_image_desc image_desc = { 0 };
+    image_format.image_channel_order = CL_R;
+    image_format.image_channel_data_type = CL_UNORM_INT8;
+    image_desc.image_type = CL_MEM_OBJECT_IMAGE2D;
+    image_desc.image_width = width;
+    image_desc.image_height = height;
+    cl_mem nv12_image_plane_y = clCreateImage(ocl_instance->_context.get(), CL_MEM_READ_WRITE, &image_format, &image_desc, NULL, &err);
+    ASSERT_EQ(err, 0);
+
+    size_t origin[3] = { 0, 0, 0 };
+    size_t y_region[3] = { (size_t)width, (size_t)height, 1 };
+
+    err = clEnqueueWriteImage(ocl_instance->_queue.get(), nv12_image_plane_y,
+        true, origin, y_region, 0, 0, fake_image_data_y.data(), 0, NULL, NULL);
+    ASSERT_EQ(err, 0);
+
+    cl::Image2D img_y = cl::Image2D(nv12_image_plane_y);
+
+    auto tensor_remote_y = cldnn_context.create_tensor(param_input_y->get_element_type(), fake_image_data_y.get_shape(), img_y);
+    inf_req_remote.set_tensor(*param_input_y->output(0).get_tensor().get_names().begin(), tensor_remote_y);
+
+    inf_req_remote.infer();
+    auto output_tensor_shared = inf_req_remote.get_tensor(function->get_results().at(0));
+
+    // ------------------------------------------------------
+    // regular inference
+    auto fn_ptr_regular = ngraph::builder::subgraph::makeConvPoolRelu({1, 1, height, width});
+
+    using namespace ov::preprocess;
+    auto p_reg = PrePostProcessor(fn_ptr_regular);
+    p_reg.input().tensor().set_element_type(ov::element::f32)
+                          .set_memory_type(GPU_CONFIG_KEY(BUFFER));
+    p_reg.input().model().set_layout("NHWC");
+    auto function_regular = p_reg.build();
+
+    auto exec_net_regular = ie.compile_model(function_regular, CommonTestUtils::DEVICE_GPU);
+    auto inf_req_regular = exec_net_regular.create_infer_request();
+    inf_req_regular.set_tensor(param_input_y, fake_image_data_uv);
+
+    inf_req_regular.infer();
+    auto output_tensor_regular = inf_req_regular.get_tensor(exec_net_regular.output());
+
+    // ------------------------------------------------------
+    // compare results
+    ASSERT_EQ(output_tensor_regular.get_size(), output_tensor_shared.get_size());
+    ASSERT_NO_THROW(output_tensor_regular.data());
+    ASSERT_NO_THROW(output_tensor_shared.data());
+    float thr = 0.1;
+    FuncTestUtils::compare_tensor(output_tensor_shared, output_tensor_regular, thr);
+}
+
+TEST_F(OVRemoteTensor_Test, NV12_to_Grayscale_v2) {
+#if defined(ANDROID)
+    GTEST_SKIP();
+#endif
+    const int height = 8;
+    const int width = 8;
+    const int feature = 1;
+
+    // ------------------------------------------------------
+    // Prepare input data
+    ov::Tensor fake_image_data = FuncTestUtils::create_and_fill_tensor(ov::element::u8, {1, feature, height, width}, 50, 0, 1);
+    ov::Tensor fake_image_regular = FuncTestUtils::create_and_fill_tensor(ov::element::f32, {1, feature, height, width});
+
+    auto ptr = static_cast<uint8_t*>(fake_image_data.data());
+    auto ptr2 = static_cast<float*>(fake_image_regular.data());
+    for (size_t i = 0; i < fake_image_data.get_size(); i++) {
+        ptr2[i] = static_cast<float>(ptr[i]) / 255;
+    }
+
+    auto ie = ov::Core();
+
+    // ------------------------------------------------------
+    // inference using remote tensor
+    auto fn_ptr_remote = ngraph::builder::subgraph::makeConvPoolRelu({1, feature, height, width});
+
+
+    std::cout << "Apply preprocessing\n";
+    using namespace ov::preprocess;
+    auto p = PrePostProcessor(fn_ptr_remote);
+    p.input().tensor().set_color_format(ov::preprocess::ColorFormat::NV12_TWO_PLANES, {"y", "uv"});
+    p.input().tensor().set_element_type(ov::element::u8).set_memory_type(GPU_CONFIG_KEY(SURFACE));
+
+    // p.input().tensor().set_color_format(ov::preprocess::ColorFormat::NV12_TWO_PLANES, {"y", "uv"});
+    p.input().preprocess().convert_color(ov::preprocess::ColorFormat::GRAY);
+    p.input().model().set_layout("NCHW");
+    auto function = p.build();
+
+    ngraph::pass::Manager serialize_manager;
+        serialize_manager.register_pass<ngraph::pass::Serialize>(
+            "./temp_graph.xml", "./temp_graph.bin", ngraph::pass::Serialize::Version::IR_V10);
+        serialize_manager.run_passes(function);
+
+    std::cout << "Apply preprocessing - finished\n";
+
+
+    // p = PrePostProcessor(fn_ptr_remote);
+    // p.input().tensor().set_element_type(ov::element::u8)
+    //                   .set_layout("NHWC")
+    //                   .set_memory_type(GPU_CONFIG_KEY(SURFACE));
+    // p.input().model().set_layout("NCHW");
+    // auto function = p.build();
+
+    auto param_input_y = fn_ptr_remote->get_parameters().at(0);
+    for (auto& params : fn_ptr_remote->get_parameters()) {
+        std::cout << "Parameter: " << params->get_friendly_name() << std::endl;
+    }
+
+    auto exec_net = ie.compile_model(function, CommonTestUtils::DEVICE_GPU);
+    auto inf_req_remote = exec_net.create_infer_request();
+
+    auto cldnn_context = exec_net.get_context().as<ov::intel_gpu::ocl::ClContext>();
+    cl_context ctx = cldnn_context.get();
+    auto ocl_instance = std::make_shared<OpenCL>(ctx);
+    cl_int err;
+
+    cl_image_format image_format;
+    cl_image_desc image_desc = { 0 };
+    image_format.image_channel_order = CL_R;
+    image_format.image_channel_data_type = CL_UNORM_INT8;
+    image_desc.image_type = CL_MEM_OBJECT_IMAGE2D;
+    image_desc.image_width = width;
+    image_desc.image_height = height;
+    cl_mem nv12_image_plane_y = clCreateImage(ocl_instance->_context.get(), CL_MEM_READ_WRITE, &image_format, &image_desc, NULL, &err);
+    ASSERT_EQ(err, 0);
+
+    size_t origin[3] = { 0, 0, 0 };
+    size_t y_region[3] = { (size_t)width, (size_t)height, 1 };
+
+    err = clEnqueueWriteImage(ocl_instance->_queue.get(), nv12_image_plane_y,
+        true, origin, y_region, 0, 0, fake_image_data.data(), 0, NULL, NULL);
+    ASSERT_EQ(err, 0);
+
+    cl::Image2D img_y = cl::Image2D(nv12_image_plane_y);
+
+    auto tensor_remote_y = cldnn_context.create_tensor(param_input_y->get_element_type(), fake_image_data.get_shape(), img_y);
+    inf_req_remote.set_tensor(*param_input_y->output(0).get_tensor().get_names().begin(), tensor_remote_y);
+
+    inf_req_remote.infer();
+    auto output_tensor_shared = inf_req_remote.get_tensor(function->get_results().at(0));
+
+    // ------------------------------------------------------
+    // regular inference
+    auto fn_ptr_regular = ngraph::builder::subgraph::makeConvPoolRelu({1, 1, height, width});
+
+    using namespace ov::preprocess;
+    auto p_reg = PrePostProcessor(fn_ptr_regular);
+    p_reg.input().tensor().set_element_type(ov::element::f32)
+                          .set_memory_type(GPU_CONFIG_KEY(BUFFER));
+    p_reg.input().model().set_layout("NHWC");
+    auto function_regular = p_reg.build();
+
+    auto param_input_y_regular = function_regular->get_parameters().at(0);
+
+    auto exec_net_regular = ie.compile_model(function_regular, CommonTestUtils::DEVICE_GPU);
+    auto inf_req_regular = exec_net_regular.create_infer_request();
+    inf_req_regular.set_tensor(param_input_y_regular, fake_image_regular);
+
+    inf_req_regular.infer();
+    auto output_tensor_regular = inf_req_regular.get_tensor(exec_net_regular.output());
+
+    // ------------------------------------------------------
+    // compare results
+    ASSERT_EQ(output_tensor_regular.get_size(), output_tensor_shared.get_size());
+    ASSERT_NO_THROW(output_tensor_regular.data());
+    ASSERT_NO_THROW(output_tensor_shared.data());
+    float thr = 0.1;
+    FuncTestUtils::compare_tensor(output_tensor_shared, output_tensor_regular, thr);
+}
 
 TEST_F(OVRemoteTensor_Test, NV12toBGR_image_ConvertTranspose) {
 #if defined(ANDROID)

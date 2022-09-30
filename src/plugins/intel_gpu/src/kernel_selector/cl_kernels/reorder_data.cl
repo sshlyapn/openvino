@@ -41,7 +41,7 @@ inline uint FUNC(get_output_index)(uint b, uint f, uint w, uint z, uint y, uint 
 }
 
 KERNEL (reorder_data)(
-#if INPUT0_LAYOUT_NV12 || INPUT0_LAYOUT_IMAGE_2D_RGBA
+#if INPUT0_LAYOUT_NV12 || INPUT0_LAYOUT_IMAGE_2D_RGBA || SURFACE_INPUT
     read_only image2d_t input,
 #else
     const __global INPUT_REORDER_TYPE* input,
@@ -89,7 +89,7 @@ KERNEL (reorder_data)(
     const uint w = gid_yx / INPUT0_SIZE_X / INPUT0_SIZE_Y / INPUT0_SIZE_Z % INPUT0_SIZE_W;
 #endif
 
-#if defined INPUT0_LAYOUT_NV12
+#if defined INPUT0_LAYOUT_NV12 && !SURFACE_INPUT
     const sampler_t sampler = CLK_NORMALIZED_COORDS_FALSE | CLK_FILTER_NEAREST | CLK_ADDRESS_CLAMP;
     float4 colorVYU = read_imagef(input, sampler, (int2)(x, y));
 
@@ -132,12 +132,27 @@ KERNEL (reorder_data)(
     uint8 msv = RESHAPE_DIMS(INPUT0, MEAN_SUBTRACT, b, f, w, z, y, x);
     res = MEAN_OP(res, mean_subtract[GET_DATA_INDEX_SAFE(MEAN_SUBTRACT, msv.s1, msv.s2, /*msv.s3, msv.s4,*/ msv.s5, msv.s6)]);
 #endif
+#elif SURFACE_INPUT
+#define OUTPUT_REORDER_TYPE4      MAKE_VECTOR_TYPE(OUTPUT_REORDER_TYPE, 4)
+#if SURFACE_DST_TYPE_HALF
+    OUTPUT_REORDER_TYPE4 Y = read_imageh(input, (int2)(x, y));
+#elif SURFACE_DST_TYPE_UINT
+    OUTPUT_REORDER_TYPE4 Y = read_imageui(input, (int2)(x, y));
+#elif SURFACE_DST_TYPE_INT
+    OUTPUT_REORDER_TYPE4 Y = read_imagei(input, (int2)(x, y));
+#elif SURFACE_DST_TYPE_FLOAT
+    OUTPUT_REORDER_TYPE4 Y = read_imagef(input, (int2)(x, y));
+#else
+    #error "reorder_data.cl: unsupported surface output type"
+#endif
+    OUTPUT_REORDER_TYPE res = Y.x;
+    printf("x=%d, y=%d, Y = %f\n", x, y, Y.x);
 #else
     CALC_TYPE res = TO_CALC_TYPE(input[input_idx]);
 #endif
 #endif
 
-#if defined INPUT0_LAYOUT_NV12
+#if defined INPUT0_LAYOUT_NV12 && !SURFACE_INPUT
     uint8 ov = RESHAPE_DIMS(INPUT0, OUTPUT, b, 0, w, z, y, x);
     uint output_idx = FUNC_CALL(get_output_index)(ov.s1, ov.s2, ov.s3, ov.s4, ov.s5, ov.s6);
     output[output_idx] = ACTIVATION_FUNC_TYPED(OUTPUT_REORDER, TO_OUTPUT_REORDER_TYPE(R), NL_M, NL_N);

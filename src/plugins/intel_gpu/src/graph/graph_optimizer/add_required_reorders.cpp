@@ -10,6 +10,7 @@
 #include "program_node.h"
 #include "mutable_data_inst.h"
 #include "tensor_type.h"
+#include "convert_color_inst.h"
 #include <memory>
 #include <vector>
 #include <stdexcept>
@@ -265,9 +266,14 @@ void add_required_reorders::run(program& p) {
             auto node = *dep_itr++;
             // do not add a reorder if usr or node are reorders or does not belong to data_flow
             if (!usr->is_type<reorder>() && node->is_in_data_flow()) {
-                if ((usr->get_output_layout() != node->get_output_layout())) {
-                    add_reorder(p, node, usr);
+                if (usr->is_type<convert_color>()) {
+                    auto reorder_prim = node->as<reorder>().get_primitive();
+                    if (reorder_prim->surface_input)
+                        continue;
                 }
+
+                if (usr->get_output_layout() != node->get_output_layout())
+                    add_reorder(p, node, usr);
             }
         }
     }

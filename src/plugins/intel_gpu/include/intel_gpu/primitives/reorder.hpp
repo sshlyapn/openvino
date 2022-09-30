@@ -136,6 +136,8 @@ struct reorder : public primitive_base<reorder> {
         mean_mode(mode) {}
 
     /// @brief Requested memory format.
+    bool surface_input = false;
+    /// @brief Requested memory format.
     format output_format;
     /// @brief Primitive id to get mean subtract values. Ignored if subtract_per_featrue is set.
     primitive_id mean;
