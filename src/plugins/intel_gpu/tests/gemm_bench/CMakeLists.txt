@@ -7,17 +7,20 @@ if(SUGGEST_OVERRIDE_SUPPORTED)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-suggest-override")
 endif()
 
-set(TARGET_NAME "clDNN_unit_tests64")
+set(TARGET_NAME "gemm_bench")
 
 file(GLOB_RECURSE SOURCES_MAIN
     "${CMAKE_CURRENT_SOURCE_DIR}/*.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/*.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../test_utils/*.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../test_utils/*.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../test_utils/*.cpp"
   )
 
 if (MSVC)
   file(GLOB SOURCES_NATVIS
-    "${CMAKE_CURRENT_SOURCE_DIR}/float16.natvis"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../float16.natvis"
   )
 endif()
 
@@ -26,7 +29,6 @@ set(SOURCES_ALL
     ${SOURCES_NATVIS}
   )
 
-list(REMOVE_ITEM SOURCES_ALL "${CMAKE_CURRENT_SOURCE_DIR}/gemm_bench/main.cpp")
 add_executable(${TARGET_NAME} ${SOURCES_ALL})
 
 set_ie_threading_interface_for(${TARGET_NAME})
@@ -47,8 +49,8 @@ target_link_libraries(${TARGET_NAME} PRIVATE openvino_intel_gpu_graph
                                              ngraph_reference
                                              gmock)
 
-target_include_directories(${TARGET_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
-                                                  ${CMAKE_CURRENT_SOURCE_DIR}/test_utils/
+target_include_directories(${TARGET_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../
+                                                  ${CMAKE_CURRENT_SOURCE_DIR}/../test_utils/
                                                   $<TARGET_PROPERTY:openvino_intel_gpu_kernels,INTERFACE_INCLUDE_DIRECTORIES>
                                                   $<TARGET_PROPERTY:openvino_intel_gpu_runtime,INTERFACE_INCLUDE_DIRECTORIES>
                                                   ${CMAKE_HOME_DIRECTORY}/src/core/reference/include/)
@@ -66,5 +68,3 @@ install(TARGETS ${TARGET_NAME}
         RUNTIME DESTINATION tests
         COMPONENT tests
         EXCLUDE_FROM_ALL)
-
-add_subdirectory(gemm_bench)
