@@ -15,8 +15,8 @@
 namespace cldnn {
 namespace onednn {
 
-struct fully_connected_onednn : typed_primitive_onednn_impl<fully_connected, dnnl::inner_product_forward::desc> {
-    using parent = typed_primitive_onednn_impl<fully_connected, dnnl::inner_product_forward::desc>;
+struct fully_connected_onednn : typed_primitive_onednn_impl<fully_connected, dnnl::matmul::desc> {
+    using parent = typed_primitive_onednn_impl<fully_connected, dnnl::matmul::desc>;
     using parent::parent;
 
 protected:
@@ -92,7 +92,7 @@ protected:
         return weights_reorder_params;
     }
 
-    static std::shared_ptr<dnnl::inner_product_forward::desc> get_fully_connected_descriptor(const fully_connected_node& arg) {
+    static std::shared_ptr<dnnl::matmul::desc> get_fully_connected_descriptor(const fully_connected_node& arg) {
         auto prim = arg.get_primitive();
 
         auto& input = arg.get_dependency(0);
@@ -105,21 +105,36 @@ protected:
             combine_bf_with_first_spatial_dim(output_layout);
         }
 
-        auto input_md = onednn::layout_to_memory_desc(input_layout, dnnl::memory::format_tag::undef, false);
-        auto weights_md = onednn::layout_to_memory_desc(weights.get_output_layout(), dnnl::memory::format_tag::any);
+        auto input_md = onednn::layout_to_memory_desc(input_layout, dnnl::memory::format_tag::ab, false);
+        auto weights_md = onednn::layout_to_memory_desc(weights.get_output_layout(), dnnl::memory::format_tag::ba);
         auto output_md = onednn::layout_to_memory_desc(output_layout, dnnl::memory::format_tag::ab, false);
 
+        // if (arg.bias_term()) {
+        //     auto bias_md = onednn::layout_to_memory_desc(arg.get_dependency(2).get_output_layout(), dnnl::memory::format_tag::any, true);
+        //     return std::make_shared<dnnl::matmul::desc>(
+        //         dnnl::prop_kind::forward_inference,
+        //         input_md,
+        //         weights_md,
+        //         bias_md,
+        //         output_md);
+        // } else {
+        //     return std::make_shared<dnnl::matmul::desc>(
+        //         dnnl::prop_kind::forward_inference,
+        //         input_md,
+        //         weights_md,
+        //         output_md);
+        // }
+
         if (arg.bias_term()) {
-            auto bias_md = onednn::layout_to_memory_desc(arg.get_dependency(2).get_output_layout(), dnnl::memory::format_tag::any, true);
-            return std::make_shared<dnnl::inner_product_forward::desc>(
-                dnnl::prop_kind::forward_inference,
+            auto bias_md = onednn::layout_to_memory_desc(arg.get_dependency(2).get_output_layout(), dnnl::memory::format_tag::ab);
+            // (void) bias_md;
+            return std::make_shared<dnnl::matmul::desc>(
                 input_md,
                 weights_md,
                 bias_md,
                 output_md);
         } else {
-            return std::make_shared<dnnl::inner_product_forward::desc>(
-                dnnl::prop_kind::forward_inference,
+            return std::make_shared<dnnl::matmul::desc>(
                 input_md,
                 weights_md,
                 output_md);
@@ -133,7 +148,7 @@ public:
         auto attr = arg.get_onednn_primitive_attributes();
         dnnl::primitive_desc prim_desc{&desc->data, attr.get(), engine.get_onednn_engine(), nullptr};
 
-        return new fully_connected_onednn(arg, desc, attr, prim_desc, get_weights_reorder(arg, prim_desc));
+        return new fully_connected_onednn(arg, desc, attr, prim_desc);
     }
 };
 

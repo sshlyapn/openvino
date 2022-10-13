@@ -62,6 +62,8 @@ std::map<program_node*, format::type> get_preferred_formats(program& p, layout_o
     }
 
     float onednn_usage_ratio = all_impls_counter ? static_cast<float>(onednn_impls_counter) / static_cast<float>(all_impls_counter) : 0.f;
+    printf("Original ratio %f\n", onednn_usage_ratio);
+    onednn_usage_ratio = 1.0f;
 
     GPU_DEBUG_IF(debug_config->verbose >= 1) {
         GPU_DEBUG_COUT << "----------------------------------------------" << std::endl;
