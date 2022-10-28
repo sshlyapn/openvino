@@ -579,7 +579,7 @@ void inline fill_tensor(ov::Tensor& tensor,
                         const int seed = 1) {
     auto element_type = tensor.get_element_type();
     switch (element_type) {
-#define CASE(X) case X: CommonTestUtils::fill_data_random<X>(tensor, range, start_from, k, seed); break;
+#define CASE(X) case X: CommonTestUtils::fill_tensor_random<X>(tensor, range, start_from, k, seed); break;
     CASE(ov::element::f64)
     CASE(ov::element::f32)
     CASE(ov::element::f16)

@@ -265,8 +265,8 @@ void inline fill_random_unique_sequence(T* rawBlobDataPtr,
  * - With k = 4 numbers resolution will 1/4 so outputs only .0 .25 .50 0.75 and etc.
  */
 template<ov::element::Type_t DT>
-void inline fill_data_random(ov::Tensor& tensor, const uint32_t range = 10, int32_t start_from = 0,
-                             const int32_t k = 1, const int seed = 1) {
+void inline fill_tensor_random(ov::Tensor& tensor, const uint32_t range = 10, int32_t start_from = 0,
+                               const int32_t k = 1, const int seed = 1) {
     using T = typename ov::element_type_traits<DT>::value_type;
     auto *rawBlobDataPtr = static_cast<T*>(tensor.data());
     if (DT == ov::element::u4 || DT == ov::element::i4 ||
@@ -279,8 +279,8 @@ void inline fill_data_random(ov::Tensor& tensor, const uint32_t range = 10, int3
 
 template<ov::element::Type_t DT>
 void inline
-fill_data_random_float(ov::Tensor& tensor, const uint32_t range, int32_t start_from, const int32_t k,
-                       const int seed = 1) {
+fill_tensor_random_float(ov::Tensor& tensor, const uint32_t range, int32_t start_from, const int32_t k,
+                         const int seed = 1) {
     using T = typename ov::element_type_traits<DT>::value_type;
     std::default_random_engine random(seed);
     // 1/k is the resolution of the floating point numbers
@@ -298,6 +298,31 @@ fill_data_random_float(ov::Tensor& tensor, const uint32_t range, int32_t start_f
             rawBlobDataPtr[i] = static_cast<T>(value);
         }
     }
+}
+
+template<>
+void inline fill_tensor_random<ov::element::f32>(ov::Tensor& tensor,
+                                                 const uint32_t range,
+                                                 int32_t start_from,
+                                                 const int32_t k,
+                                                 const int seed) {
+    fill_tensor_random_float<ov::element::f32>(tensor, range, start_from, k, seed);
+}
+
+template<>
+void inline fill_tensor_random<ov::element::f16>(ov::Tensor& tensor,
+                                                 const uint32_t range,
+                                                 int32_t start_from,
+                                                 const int32_t k, const int seed) {
+    fill_tensor_random_float<ov::element::f16>(tensor, range, start_from, k, seed);
+}
+
+template<>
+void inline fill_tensor_random<ov::element::bf16>(ov::Tensor& tensor,
+                                                  const uint32_t range,
+                                                  int32_t start_from,
+                                                  const int32_t k, const int seed) {
+    fill_tensor_random_float<ov::element::bf16>(tensor, range, start_from, k, seed);
 }
 
 /** @brief Fill blob with random data.
@@ -485,31 +510,6 @@ void inline fill_data_random<InferenceEngine::Precision::BF16>(InferenceEngine::
                                                                int32_t start_from,
                                                                const int32_t k, const int seed) {
     fill_data_random_float<InferenceEngine::Precision::BF16>(blob, range, start_from, k, seed);
-}
-
-template<>
-void inline fill_data_random<ov::element::f32>(ov::Tensor& tensor,
-                                               const uint32_t range,
-                                               int32_t start_from,
-                                               const int32_t k,
-                                               const int seed) {
-    fill_data_random_float<ov::element::f32>(tensor, range, start_from, k, seed);
-}
-
-template<>
-void inline fill_data_random<ov::element::f16>(ov::Tensor& tensor,
-                                               const uint32_t range,
-                                               int32_t start_from,
-                                               const int32_t k, const int seed) {
-    fill_data_random_float<ov::element::f16>(tensor, range, start_from, k, seed);
-}
-
-template<>
-void inline fill_data_random<ov::element::bf16>(ov::Tensor& tensor,
-                                                const uint32_t range,
-                                                int32_t start_from,
-                                                const int32_t k, const int seed) {
-    fill_data_random_float<ov::element::bf16>(tensor, range, start_from, k, seed);
 }
 
 template<typename T>
