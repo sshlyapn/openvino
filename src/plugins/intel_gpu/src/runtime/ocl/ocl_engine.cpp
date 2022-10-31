@@ -90,18 +90,7 @@ const cl::UsmHelper& ocl_engine::get_usm_helper() const {
 }
 
 allocation_type ocl_engine::detect_allocation_type(const void* memory) const {
-    ocl::gpu_usm::detect_allocation_type(this, memory);
-    auto cl_alloc_type = get_usm_helper().get_usm_allocation_type(memory);
-
-    allocation_type res;
-    switch (cl_alloc_type) {
-        case CL_MEM_TYPE_DEVICE_INTEL: res = allocation_type::usm_device; break;
-        case CL_MEM_TYPE_HOST_INTEL: res = allocation_type::usm_host; break;
-        case CL_MEM_TYPE_SHARED_INTEL: res = allocation_type::usm_shared; break;
-        default: res = allocation_type::unknown; break;
-    }
-
-    return res;
+    return ocl::gpu_usm::detect_allocation_type(this, memory);
 }
 
 memory::ptr ocl_engine::allocate_memory(const layout& layout, allocation_type type, bool reset) {

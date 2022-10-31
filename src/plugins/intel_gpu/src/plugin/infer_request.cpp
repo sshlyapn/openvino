@@ -162,6 +162,18 @@ void InferRequest::copyResultToOutputBlob(cldnn::memory::ptr src, InferenceEngin
     }
 }
 
+template void InferRequest::copyResultToOutputBlob<float, double>(cldnn::memory::ptr, InferenceEngine::Blob::Ptr, bool);
+template void InferRequest::copyResultToOutputBlob<float, float>(cldnn::memory::ptr, InferenceEngine::Blob::Ptr, bool);
+template void InferRequest::copyResultToOutputBlob<uint16_t, uint16_t>(cldnn::memory::ptr, InferenceEngine::Blob::Ptr, bool);
+template void InferRequest::copyResultToOutputBlob<int64_t, int64_t>(cldnn::memory::ptr, InferenceEngine::Blob::Ptr, bool);
+template void InferRequest::copyResultToOutputBlob<int32_t, int32_t>(cldnn::memory::ptr, InferenceEngine::Blob::Ptr, bool);
+template void InferRequest::copyResultToOutputBlob<float, int16_t>(cldnn::memory::ptr, InferenceEngine::Blob::Ptr, bool);
+template void InferRequest::copyResultToOutputBlob<int8_t, int8_t>(cldnn::memory::ptr, InferenceEngine::Blob::Ptr, bool);
+template void InferRequest::copyResultToOutputBlob<float, uint16_t>(cldnn::memory::ptr, InferenceEngine::Blob::Ptr, bool);
+template void InferRequest::copyResultToOutputBlob<int32_t, uint32_t>(cldnn::memory::ptr, InferenceEngine::Blob::Ptr, bool);
+template void InferRequest::copyResultToOutputBlob<int32_t, uint64_t>(cldnn::memory::ptr, InferenceEngine::Blob::Ptr, bool);
+template void InferRequest::copyResultToOutputBlob<uint8_t, uint8_t>(cldnn::memory::ptr, InferenceEngine::Blob::Ptr, bool);
+
 // ----------------------------------------------------------------------------------------- //
 // ---------------------------- IE API impl ------------------------------------------------ //
 // ----------------------------------------------------------------------------------------- //
@@ -815,6 +827,40 @@ std::map<std::string, InferenceEngineProfileInfo> InferRequest::GetPerformanceCo
     }
 }
 
+void InferRequest::allocate_dev_mem_if_needed(InferenceEngine::BlobMap& device_mems, InferenceEngine::Blob::Ptr& user_blob,
+                                              const cldnn::primitive_id& blob_name, const cldnn::layout& layout) {
+    const auto input_ptr = static_cast<const void*>(user_blob->cbuffer());
+    const auto alloc_type = m_graph->GetEngine()->detect_allocation_type(input_ptr);
+    const auto is_usm_host = alloc_type == cldnn::allocation_type::usm_host;
+    const auto has_device_blob = device_mems.find(blob_name) != device_mems.end();
+    bool can_skip_allocation = false;
+
+    if (has_device_blob) {
+        auto impl = getBlobImpl(device_mems[blob_name]->as<gpu::ClBlob>());
+
+        OPENVINO_ASSERT(impl, str_device_output_unsupported_blob);
+        OPENVINO_ASSERT(impl->is_allocated(), str_input_not_allocated);
+
+        auto impl_mem = impl->getMemory();
+        auto src_ptr = user_blob->cbuffer().as<uint8_t*>();
+        // If device mem already exists, we can reuse blob if buffer has usm_host type and points to the same memory,
+        // so we don't need to allocate new memory
+        can_skip_allocation |= same_host_mem(impl_mem, src_ptr);
+        // Or if blob has any type except usm_host - in that case explicit copy will be performed anyway
+        can_skip_allocation |= impl_mem->get_allocation_type() != cldnn::allocation_type::usm_host;
+    }
+
+    if (!can_skip_allocation) {
+        if (is_usm_host) {
+            // For USM case we create host blob using custom USM host allocator
+            // and then create shared device blob on top of this buffer
+            device_mems[blob_name] = create_shared_device_blob(user_blob->getTensorDesc(), layout, user_blob->buffer().as<void*>());
+        } else {
+            device_mems[blob_name] = create_device_blob(user_blob->getTensorDesc());
+        }
+    }
+}
+
 void InferRequest::prepare_input(const cldnn::primitive_id& inputName, Blob::Ptr& inputBlob,
                                       std::vector<cldnn::event::ptr>& dependencies) {
     OV_ITT_SCOPED_TASK(itt::domains::intel_gpu_plugin, "InferRequest::prepare_input");
@@ -844,35 +890,7 @@ void InferRequest::prepare_input(const cldnn::primitive_id& inputName, Blob::Ptr
             _deviceInputs[inputName] = reinterpret_device_blob(_deviceInputs[inputName], inputBlob->getTensorDesc());
         }
     } else if (input_layout.is_static() && !is_dev_input && can_use_usm) {
-        const auto input_ptr = static_cast<const void*>(_inputs[inputName]->cbuffer());
-        const auto is_usm_host = m_graph->GetEngine()->detect_allocation_type(input_ptr) == cldnn::allocation_type::usm_host;
-        const auto has_device_blob = _deviceInputs.find(inputName) != _deviceInputs.end();
-        bool can_skip_allocation = false;
-
-        if (has_device_blob) {
-            auto impl = getBlobImpl(_deviceInputs[inputName]->as<gpu::ClBlob>());
-
-            OPENVINO_ASSERT(impl, str_device_output_unsupported_blob);
-            OPENVINO_ASSERT(impl->is_allocated(), str_input_not_allocated);
-
-            auto impl_mem = impl->getMemory();
-            auto src_ptr = inputBlob->cbuffer().as<uint8_t*>();
-            // If device input already exists, we can reuse input blob if buffer has usm_host type and points to the same memory,
-            // so we don't need to allocate new memory
-            can_skip_allocation |= same_host_mem(impl_mem, src_ptr);
-            // Or if blob has any type except usm_host - in that case explicit copy will be performed anyway
-            can_skip_allocation |= impl_mem->get_allocation_type() != cldnn::allocation_type::usm_host;
-        }
-
-        if (!can_skip_allocation) {
-            if (is_usm_host) {
-                // For USM case we create host blob using custom USM host allocator
-                // and then create shared device blob on top of this buffer
-                _deviceInputs[inputName] = create_shared_device_blob(inputBlob->getTensorDesc(), input_layout, inputBlob->buffer().as<void*>());
-            } else {
-                _deviceInputs[inputName] = create_device_blob(inputBlob->getTensorDesc());
-            }
-        }
+        allocate_dev_mem_if_needed(_deviceInputs, inputBlob, inputName, input_layout);
     }
     OPENVINO_ASSERT(_deviceInputs.find(inputName) != _deviceInputs.end(), "[GPU] Couldn't find device blob allocated for ", inputName, " input");
     auto reqBlob = _deviceInputs.at(inputName)->as<gpu::ClBlob>();
@@ -951,36 +969,9 @@ void InferRequest::prepare_output(const cldnn::primitive_id& outputName, Blob::P
     const bool can_use_usm = m_graph->GetEngine()->use_unified_shared_memory();
 
     if (is_static && can_use_usm) {
-        const auto outputID = m_graph->MapOutputName(outputName);
-        const auto output_layout = m_graph->GetNetwork()->get_node_output_layout(outputID);
-        const auto output_ptr = static_cast<void*>(_outputs[outputName]->buffer());
-        const auto allocation_type = m_graph->GetEngine()->detect_allocation_type(output_ptr);
-        const auto is_usm_host = allocation_type == cldnn::allocation_type::usm_host;
-        const auto has_device_blob = _deviceOutputs.find(outputName) != _deviceOutputs.end();
-        bool can_skip_allocation = false;
-
-        if (has_device_blob) {
-            auto impl = getBlobImpl(_deviceOutputs[outputName]->as<gpu::ClBlob>());
-
-            OPENVINO_ASSERT(impl, str_device_input_unsupported_blob);
-            OPENVINO_ASSERT(impl->is_allocated(), str_output_not_allocated);
-
-            auto impl_mem = impl->getMemory();
-            auto dst_ptr = outputBlob->cbuffer().as<uint8_t*>();
-            // If device output already exists, we can reuse output blob if buffer has usm_host type and points to the same memory,
-            // so we don't need to allocate new memory
-            can_skip_allocation |= same_host_mem(impl_mem, dst_ptr);
-            // Or if blob has any type except usm_host - in that case explicit copy will be performed anyway
-            can_skip_allocation |= impl_mem->get_allocation_type() != cldnn::allocation_type::usm_host;
-        }
-
-        if (!can_skip_allocation) {
-            if (is_usm_host) {
-                _deviceOutputs[outputName] = create_shared_device_blob(outputBlob->getTensorDesc(), output_layout, _outputs[outputName]->buffer().as<void*>());
-            } else {
-                _deviceOutputs[outputName] = create_device_blob(outputBlob->getTensorDesc());
-            }
-        }
+        const auto output_id = outputsMap.at(outputName);
+        const auto output_layout = m_graph->GetNetwork()->get_node_output_layout(output_id);
+        allocate_dev_mem_if_needed(_deviceOutputs, outputBlob, outputName, output_layout);
     }
 
     OPENVINO_ASSERT(!is_static || _deviceOutputs.find(outputName) != _deviceOutputs.end(),

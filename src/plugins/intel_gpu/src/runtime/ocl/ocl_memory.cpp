@@ -244,19 +244,19 @@ shared_mem_params gpu_image2d::get_internal_params() const {
 }
 
 event::ptr gpu_image2d::copy_from(stream& /* stream */, const memory& /* other */) {
-    throw std::runtime_error("[clDNN] copy_from is not implemented for gpu_image2d");
+    throw std::runtime_error("[GPU] copy_from is not implemented for gpu_image2d");
 }
 
 event::ptr gpu_image2d::copy_from(stream& /* stream */, const void* /* host_ptr */) {
-    throw std::runtime_error("[clDNN] copy_from is not implemented for gpu_image2d");
+    throw std::runtime_error("[GPU] copy_from is not implemented for gpu_image2d");
 }
 
 event::ptr gpu_image2d::copy_to(stream& /* stream */, memory& /* other */) {
-    throw std::runtime_error("[clDNN] copy_to is not implemented for gpu_image2d");
+    throw std::runtime_error("[GPU] copy_to is not implemented for gpu_image2d");
 }
 
 event::ptr gpu_image2d::copy_to(stream& /* stream */, void* /* host_ptr */) {
-    throw std::runtime_error("[clDNN] copy_to is not implemented for gpu_image2d");
+    throw std::runtime_error("[GPU] copy_to is not implemented for gpu_image2d");
 }
 
 gpu_media_buffer::gpu_media_buffer(ocl_engine* engine,
