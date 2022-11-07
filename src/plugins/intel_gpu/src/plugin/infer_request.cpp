@@ -967,8 +967,10 @@ void InferRequest::prepare_output(const cldnn::primitive_id& outputName, Blob::P
     const auto node = findOutputByNodeName(outputName);
     const bool is_static = node && node->get_output_partial_shape(0).is_static();
     const bool can_use_usm = m_graph->GetEngine()->use_unified_shared_memory();
+    auto remote_ptr = outputBlob->as<gpu::ClBlob>();
+    const bool is_dev_input = remote_ptr != nullptr;
 
-    if (is_static && can_use_usm) {
+    if (is_static && can_use_usm && !is_dev_input) {
         const auto output_id = outputsMap.at(outputName);
         const auto output_layout = m_graph->GetNetwork()->get_node_output_layout(output_id);
         allocate_dev_mem_if_needed(_deviceOutputs, outputBlob, outputName, output_layout);
@@ -982,8 +984,7 @@ void InferRequest::prepare_output(const cldnn::primitive_id& outputName, Blob::P
     Blob::Ptr reqBlob = _deviceOutputs.at(outputName);
     cldnn::primitive_id internalName = outputsMap[outputName];
     auto _nw_ptr = m_graph->GetNetwork();
-    auto remote_ptr = outputBlob->as<gpu::ClBlob>();
-    auto output_blob_ptr = (reqBlob != outputBlob && remote_ptr != nullptr)
+    auto output_blob_ptr = (reqBlob != outputBlob && is_dev_input)
         ? remote_ptr
         : reqBlob->as<gpu::ClBlob>();
     auto impl = getBlobImpl(output_blob_ptr);
