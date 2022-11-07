@@ -21,6 +21,7 @@
 #include <vector>
 #include <list>
 #include <utility>
+#include "fully_connected_inst.h"
 
 #include <oneapi/dnnl/dnnl.hpp>
 
@@ -228,6 +229,12 @@ protected:
         }
 
         configure_post_ops_arguments(instance, args);
+        // if (!(instance.get_node().template is_type<fully_connected>())) {
+        //     std::cout << "Configure for " << instance.get_node().id() << std::endl;
+        //     configure_post_ops_arguments(instance, args);
+        // } else {
+        //     std::cout << "Skip for " << instance.get_node().id() << std::endl;
+        // }
 
         return args;
     }

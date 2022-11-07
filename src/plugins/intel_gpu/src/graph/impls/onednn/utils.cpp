@@ -584,7 +584,7 @@ cldnn::format find_format(dnnl::memory::desc desc, bool is_grouped) {
         }
 
         std::stringstream msg;
-        msg << "Unsupported " << (is_grouped ? "grouped" : "") << "onednn dnnl::memory::desc find_format. "
+        msg << "Unsupported " << (is_grouped ? "grouped " : "") << "onednn dnnl::memory::desc find_format. "
             << "ndims: " << desc.data.ndims
             << ", inner_nblks: " << blk.inner_nblks
             << ", inner_blks: ";

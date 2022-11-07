@@ -1540,8 +1540,8 @@ impl_types layout_optimizer::get_preferred_impl_type(program_node& node, format 
                 impl_candidate = impl_types::ocl;
 
             // WA : Use cldnn FC due to perf drop of small batch size until onednn FC improve perf
-            if (node.get_output_layout().is_static() && node.get_output_layout().batch() < 32)
-                impl_candidate = impl_types::ocl;
+            // if (node.get_output_layout().is_static() && node.get_output_layout().batch() < 32)
+            //     impl_candidate = impl_types::ocl;
         } else {
             for (auto& fo : node.get_fused_primitives()) {
                 if (fo.is_type<eltwise>()) {
