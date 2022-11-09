@@ -68,7 +68,9 @@ protected:
         return args;
     }
 
-    static kernel_selector::WeightsReorderParams get_weights_reorder(const kernel_impl_params& impl_params, const dnnl::primitive_desc& pd) {
+    static kernel_selector::WeightsReorderParams get_weights_reorder(const kernel_impl_params& impl_params,
+                                                                     const std::shared_ptr<convolution> conv_desc,
+                                                                     const dnnl::primitive_desc& pd) {
         // auto input_layout = impl_params.get_input_layout(0);
         // auto weights_layout = impl_params.get_input_layout(1);
         // auto cldnn_prim = impl_params.typed_desc<fully_connected>();
@@ -115,7 +117,7 @@ protected:
         auto& reorderKS = kernel_selector::ReorderWeightsKernelSelctor::Instance();
         kernel_selector::reorder_weights_params r_params;
 
-        auto cldnn_prim = impl_params.typed_desc<convolution>();
+        auto cldnn_prim = conv_desc;
         auto weights_layout = impl_params.get_input_layout(1);
         auto grouped_weights = format::is_grouped(weights_layout.format) || cldnn_prim->grouped_weights_shape;
         // std::cout << "grouped_weights " << weights_layout.to_short_string() << " " << cldnn_prim->grouped_weights_shape << " "
@@ -200,26 +202,32 @@ protected:
     }
 
     static std::shared_ptr<dnnl::convolution_forward::desc> get_convolution_descriptor2(const kernel_impl_params& impl_params,
+                                            std::shared_ptr<convolution> conv_desc,
                                             dnnl::memory::format_tag tag_in_out = dnnl::memory::format_tag::undef) {
-        auto prim = impl_params.typed_desc<convolution>();
+        auto fc_prim = impl_params.typed_desc<fully_connected>();
 
-        auto input_layout = impl_params.get_input_layout(0);
+        auto in_layout = impl_params.get_input_layout(0);
         auto weights_layout = impl_params.get_input_layout(1);
         auto output_layout = impl_params.output_layout;
 
-        // std::cout << "Params of " << prim->id << ": " << input_layout.to_short_string() << " " << weights_layout.to_short_string() << " " <<
-        // output_layout.to_short_string() << std::endl;
+        dnnl::memory::dims stride(conv_desc->stride.begin(), conv_desc->stride.end());
+        dnnl::memory::dims dilation(conv_desc->dilation.begin(), conv_desc->dilation.end());
+        dnnl::memory::dims pad_l(conv_desc->pad.begin(), conv_desc->pad.end());
+        dnnl::memory::dims pad_r(conv_desc->pad.begin(), conv_desc->pad.end());
 
 
-        dnnl::memory::dims stride(prim->stride.begin(), prim->stride.end());
-        dnnl::memory::dims dilation(prim->dilation.begin(), prim->dilation.end());
-        dnnl::memory::dims pad_l(prim->pad.begin(), prim->pad.end());
-        dnnl::memory::dims pad_r(prim->pad.begin(), prim->pad.end());
+        if (fc_prim->input_size == 3) {
+            combine_bf_with_first_spatial_dim(in_layout);
+            combine_bf_with_first_spatial_dim(output_layout);
+        }
 
-        auto input_md = onednn::layout_to_memory_desc(input_layout, tag_in_out);
+        auto input_md = onednn::layout_to_memory_desc(in_layout, tag_in_out);
         auto weights_md = onednn::layout_to_memory_desc(weights_layout, dnnl::memory::format_tag::any);
         auto output_md = onednn::layout_to_memory_desc(output_layout, tag_in_out);
-        auto grouped_weights = format::is_grouped(weights_layout.format) || prim->grouped_weights_shape;
+        auto grouped_weights = format::is_grouped(weights_layout.format) || conv_desc->grouped_weights_shape;
+
+        if (grouped_weights)
+            std::cout << "Grouped\n";
 
         // adjust_conv_dilation_pad(dilation, stride, pad_l, pad_r, input_md, output_md, weights_md, grouped_weights);
         for (size_t i = 0; i < dilation.size(); i++) {
@@ -232,7 +240,7 @@ protected:
             pad_r[i] = (os - 1) * stride[i] - is + kernel_range - pad_l[i];
         }
 
-        if (!prim->bias.empty()) {
+        if (!conv_desc->bias.empty()) {
             // std::cout << "Bias not empty " << impl_params.get_input_layout(2).to_short_string() << "\n";
             auto bias_md = onednn::layout_to_memory_desc(impl_params.get_input_layout(2), dnnl::memory::format_tag::any, true);
             return std::make_shared<dnnl::convolution_forward::desc>(
@@ -267,7 +275,6 @@ public:
         // auto attr = arg.get_onednn_primitive_attributes();
         // dnnl::primitive_desc prim_desc{&desc->data, attr.get(), engine.get_onednn_engine(), nullptr};
 
-        auto conv_impl_params = impl_params;
         auto fc_desc = impl_params.typed_desc<fully_connected>();
         primitive_id input = fc_desc->input[0];
         std::vector<primitive_id> weights = {fc_desc->weights};
@@ -290,14 +297,20 @@ public:
             arg.get_output_layout().data_type,
             false
         );
-        conv_impl_params.desc = convolution_desc;
 
-        auto desc = get_convolution_descriptor2(conv_impl_params);
+        // std::cout << "Input size: " << fc_desc->input_size << " Shapes: "
+        //           << arg.input().get_output_layout().to_short_string() << " "
+        //           << arg.weights().get_output_layout().to_short_string() << " "
+        //           << (arg.bias_term() ? arg.bias().get_output_layout().to_short_string() : "") << " "
+        //           << arg.get_output_layout().to_short_string()
+        //           << std::endl;
+
+        auto desc = get_convolution_descriptor2(impl_params, convolution_desc);
 
         auto attrs = arg.get_onednn_primitive_attributes();
         dnnl::primitive_desc prim_desc{&desc->data, attrs.get(), engine.get_onednn_engine(), nullptr};
 
-        return new fully_connected_onednn(engine, desc, attrs, prim_desc, get_weights_reorder(conv_impl_params, prim_desc));
+        return new fully_connected_onednn(engine, desc, attrs, prim_desc, get_weights_reorder(impl_params, convolution_desc, prim_desc));
 
         // return new fully_connected_onednn(engine, desc, attr, prim_desc, get_weights_reorder(impl_params, prim_desc));
     }
