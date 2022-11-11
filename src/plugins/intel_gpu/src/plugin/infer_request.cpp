@@ -1209,7 +1209,18 @@ void InferRequest::prepare_input(const cldnn::primitive_id& inputName, Blob::Ptr
                     auto src_lock = inputBlob->cbuffer();
                     auto src_ptr = src_lock.as<uint8_t*>();
                     if (!same_host_mem(inputMem, src_ptr)) {
-                        auto ev = inputMem->copy_from(stream, src_ptr);
+                        auto src_blob = inputBlob;
+                        // WA for USM HOST -> USM DEVICE copy between contexts
+                        if (m_graph->GetEngine()->use_unified_shared_memory()) {
+                            auto alloc_type = m_graph->GetNetwork()->get_engine().detect_allocation_type(src_ptr);
+                            if (alloc_type == cldnn::allocation_type::unknown) {
+                                auto allocator = std::make_shared<USMHostAllocator>(m_graph->GetContext().get());
+                                auto intermediate_blob = create_host_blob(inputBlob->getTensorDesc(), allocator);
+                                std::memcpy(intermediate_blob->buffer(), src_ptr, inputBlob->byteSize());
+                                src_blob = intermediate_blob;
+                            }
+                        }
+                        auto ev = inputMem->copy_from(stream, src_blob->cbuffer());
                         dependencies.push_back(ev);
                     }
                 }
