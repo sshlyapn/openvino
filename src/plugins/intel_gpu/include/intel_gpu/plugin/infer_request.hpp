@@ -88,11 +88,15 @@ private:
     void prepare_input(const cldnn::primitive_id &inputName, InferenceEngine::Blob::Ptr &inputBlob,
                        std::vector<cldnn::event::ptr>& dependencies);
     void prepare_output(const cldnn::primitive_id& outputName, InferenceEngine::Blob::Ptr& outputBlob);
+    void allocate_dev_mem_if_needed(InferenceEngine::BlobMap& device_mems, InferenceEngine::Blob::Ptr& user_blob,
+                                    const cldnn::primitive_id& blob_name, const cldnn::layout& layout);
 
     InferenceEngine::Blob::Ptr create_host_blob(const InferenceEngine::TensorDesc& desc,
                                                 std::shared_ptr<InferenceEngine::IAllocator> alloc = nullptr);
     InferenceEngine::Blob::Ptr create_device_blob(const InferenceEngine::TensorDesc& desc, const cldnn::layout& layout);
 
+    template<typename sr_dt, typename dst_dt>
+    void copyResultToOutputBlob(cldnn::memory::ptr src, InferenceEngine::Blob::Ptr dst, bool need_convert = false);
     void copy_output_data(cldnn::memory::ptr outputMemory, InferenceEngine::Blob::Ptr bptr, buf_info* bi = nullptr);
     void copy_input_data(std::shared_ptr<cldnn::network> network, const cldnn::primitive_id &inputName,
                          const cldnn::layout& inputLayout, const InferenceEngine::Blob &inputBlob,
