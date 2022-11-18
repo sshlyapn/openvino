@@ -367,7 +367,7 @@ void PreStepsList::add_convert_color_impl(const ColorFormat& dst_format) {
                 context.color_format() = dst_format;
                 return std::make_tuple(std::vector<Output<Node>>{convert}, true);
             } else if (context.color_format() == ColorFormat::NV12_TWO_PLANES) {
-                OPENVINO_ASSERT(nodes.size() == 2, "Internal error: two-plane NV12 image must have exactly two inputs");
+                OPENVINO_ASSERT(nodes.size() == 2 || dst_format == ColorFormat::GRAY, "Internal error: two-plane NV12 image must have exactly two inputs");
                 std::shared_ptr<Node> convert;
                 switch (dst_format) {
                 case ColorFormat::RGB:
@@ -376,6 +376,18 @@ void PreStepsList::add_convert_color_impl(const ColorFormat& dst_format) {
                 case ColorFormat::BGR:
                     convert = std::make_shared<op::v8::NV12toBGR>(nodes[0], nodes[1]);
                     break;
+                case ColorFormat::GRAY: {
+                    std::vector<int64_t> reduce_axis = {0, 1, 2, 3};
+                    auto reduce_const = op::v0::Constant::create<int64_t>(element::i64, Shape{nodes[1].get_partial_shape().size()}, reduce_axis);
+                    auto reduce_max = std::make_shared<op::v1::ReduceMax>(nodes[1], reduce_const, true);
+
+                    std::vector<char> select_vals = {1};
+                    auto select_const = op::v0::Constant::create<char>(element::boolean, nodes[0].get_partial_shape().get_shape(), select_vals);
+                    convert = std::make_shared<op::v1::Select>(select_const, nodes[0], reduce_max);
+
+                    // return std::make_tuple(std::vector<Output<Node>>{nodes[0]}, true);
+                    break;
+                }
                 default:
                     OPENVINO_ASSERT(false,
                                     "Unsupported conversion from NV12 to '",
@@ -456,7 +468,7 @@ void PreStepsList::add_convert_color_impl(const ColorFormat& dst_format) {
                 weights_shape[1] = 3; // Set kernel layout to [1, 3, 1, ...]
                 auto weights_node = std::make_shared<ov::op::v0::Constant>(elem_type, weights_shape, weights_data);
                 node = std::make_shared<ov::op::v1::Convolution>(node, weights_node, ov::Strides(weights_shape.size()-2, 1), ov::CoordinateDiff(weights_shape.size()-2, 0), ov::CoordinateDiff(weights_shape.size()-2, 0), ov::Strides(weights_shape.size()-2, 1));
-                
+
                 if (is_transposed) {
                     // Return NC... to N...C
                     auto permutation = layout::utils::find_permutation(ov::Layout{"NC..."}, shape, context.layout());
