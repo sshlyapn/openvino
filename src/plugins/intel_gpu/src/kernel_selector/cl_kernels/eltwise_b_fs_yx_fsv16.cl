@@ -6,7 +6,37 @@
 #include "include/batch_headers/sub_group_block_write.cl"
 #include "include/batch_headers/fetch_data.cl"
 
-#define FEATURE_SLICE_SIZE 16
+#define SIMD_SIZE 16
+
+#define ARRAY_TO_VEC_2(vec, arr, offset)                \
+    (vec).s0 = (arr)[(offset)];                         \
+    (vec).s1 = (arr)[(offset) + 1]
+#define ARRAY_TO_VEC_4(vec, arr, offset)                \
+    ARRAY_TO_VEC_2((vec).s01, arr, offset);             \
+    ARRAY_TO_VEC_2((vec).s23, arr, (offset) + 2)
+#define ARRAY_TO_VEC_8(vec, arr, offset)                \
+    ARRAY_TO_VEC_4((vec).s0123, arr, offset);           \
+    ARRAY_TO_VEC_4((vec).s4567, arr, (offset) + 4)
+#define ARRAY_TO_VEC_16(vec, arr, offset)               \
+    ARRAY_TO_VEC_8((vec).s01234567, arr, offset);       \
+    ARRAY_TO_VEC_8((vec).s89abcdef, arr, (offset) + 8)
+
+#define ARRAY_TO_VEC(vec, arr, offset) CAT(ARRAY_TO_VEC_, BLOCK_SIZE)(vec, arr, offset)
+
+#define VEC_TO_ARRAY_2(arr, vec, offset)                \
+    (arr)[(offset) + 0] = (vec).s0;                     \
+    (arr)[(offset) + 1] = (vec).s1
+#define VEC_TO_ARRAY_4(arr, vec, offset)                \
+    VEC_TO_ARRAY_2(arr, (vec).s01, offset);             \
+    VEC_TO_ARRAY_2(arr, (vec).s23, (offset) + 2)
+#define VEC_TO_ARRAY_8(arr, vec, offset)                \
+    VEC_TO_ARRAY_4(arr, (vec).s0123, offset);           \
+    VEC_TO_ARRAY_4(arr, (vec).s4567, (offset) + 4)
+#define VEC_TO_ARRAY_16(arr, vec, offset)               \
+    VEC_TO_ARRAY_8(arr, (vec).s01234567, offset);       \
+    VEC_TO_ARRAY_8(arr, (vec).s89abcdef, (offset) + 8)
+
+#define VEC_TO_ARRAY(arr, vec, offset) CAT(VEC_TO_ARRAY_, BLOCK_SIZE)(arr, vec, offset)
 
 #define OUTPUT_TYPE_BLOCK               MAKE_VECTOR_TYPE(OUTPUT_TYPE, BLOCK_SIZE)
 #define TO_TYPE(type, val)              CAT(convert_, type)(val)
@@ -25,7 +55,7 @@
     #define GET_INDEX(prefix, num, idx_order) CAT(CAT(prefix, num), _GET_INDEX)(idx_order)
 #endif
 
-REQD_SUB_GROUP_SIZE(FEATURE_SLICE_SIZE)
+REQD_SUB_GROUP_SIZE(SIMD_SIZE)
 KERNEL(eltwise_b_fs_yx_fsv16)(INPUTS_DECLS
                               __global OUTPUT_TYPE* output
 #if HAS_FUSED_OPS_DECLS
@@ -36,7 +66,7 @@ KERNEL(eltwise_b_fs_yx_fsv16)(INPUTS_DECLS
     const uint f_block = (uint)get_group_id(0);
     const uint zyx = (uint)get_global_id(1);
     const uint b = (uint)get_global_id(2);
-    const uint x = (zyx % BLOCKS_COUNT) * BLOCK_SIZE;
+    const uint x = (zyx % BLOCKS_COUNT) * BLOCK_SIZE_X;
 #if OUTPUT_DIMS == 5
     const uint zy = zyx / BLOCKS_COUNT;
     const uint z = zy / OUTPUT_SIZE_Y;
@@ -76,8 +106,24 @@ KERNEL(eltwise_b_fs_yx_fsv16)(INPUTS_DECLS
     DO_ELTWISE
 
 #if HAS_FUSED_OPS
+#if FEATURE_SLICE_SIZE == 32
+    ACCUMULATOR_TYPE res_arr[BLOCK_SIZE];
+    OUTPUT_TYPE out_arr[BLOCK_SIZE];
+    VEC_TO_ARRAY(res_arr, res, 0);
+    MAKE_VECTOR_TYPE(ACCUMULATOR_TYPE, 2) tmp_res;
+    for (int block_x = 0; block_x < BLOCK_SIZE_X; block_x++) {
+        tmp_res.s0 = res_arr[block_x * 2 + 0];
+        tmp_res.s1 = res_arr[block_x * 2 + 1];
+        FUSED_OPS;
+        out_arr[block_x * 2 + 0] = TO_TYPE(OUTPUT_TYPE, (FUSED_OPS_RESULT).s0);
+        out_arr[block_x * 2 + 1] = TO_TYPE(OUTPUT_TYPE, (FUSED_OPS_RESULT).s1);
+    }
+    OUTPUT_TYPE_BLOCK out;
+    ARRAY_TO_VEC(out, out_arr, 0);
+#else
     FUSED_OPS;
     OUTPUT_TYPE_BLOCK out = TO_TYPE(MAKE_VECTOR_TYPE(OUTPUT_TYPE, BLOCK_SIZE), FUSED_OPS_RESULT);
+#endif
 #else
 #if BLOCK_SIZE != 1
     OUTPUT_TYPE_BLOCK out = ACTIVATION_TYPED(TO_TYPE(MAKE_VECTOR_TYPE(OUTPUT_TYPE, BLOCK_SIZE), res), ACTIVATION_PARAMS_TYPED);
@@ -90,9 +136,13 @@ KERNEL(eltwise_b_fs_yx_fsv16)(INPUTS_DECLS
     if ((f_block + 1) * FEATURE_SLICE_SIZE > OUTPUT_FEATURE_NUM) {
         const uint sglid = get_sub_group_local_id();
         if (sglid < OUTPUT_FEATURE_NUM % FEATURE_SLICE_SIZE) {
-            for (uint block_x = 0; block_x < BLOCK_SIZE; block_x++) {
-#if BLOCK_SIZE != 1
+            for (uint block_x = 0; block_x < BLOCK_SIZE_X; block_x++) {
+#if BLOCK_SIZE_X != 1 && FEATURE_SLICE_SIZE == 16
                 output[output_offset + block_x * output_x_pitch + sglid] = out[block_x];
+#elif BLOCK_SIZE_X != 1 && FEATURE_SLICE_SIZE == 32
+                output[output_offset + block_x * output_x_pitch + sglid] = out[block_x * 2];
+                if (f_block * FEATURE_SLICE_SIZE + sglid + SIMD_SIZE < OUTPUT_FEATURE_NUM)
+                    output[output_offset + block_x * output_x_pitch + sglid + SIMD_SIZE] = out[block_x * 2 + 1];
 #else
                 output[output_offset + block_x * output_x_pitch + sglid] = out;
 #endif
@@ -106,7 +156,19 @@ KERNEL(eltwise_b_fs_yx_fsv16)(INPUTS_DECLS
 
 }
 
-#undef FEATURE_SLICE_SIZE
+#undef VEC_TO_ARRAY_2
+#undef VEC_TO_ARRAY_4
+#undef VEC_TO_ARRAY_8
+#undef VEC_TO_ARRAY_16
+#undef VEC_TO_ARRAY
+
+#undef ARRAY_TO_VEC_2
+#undef ARRAY_TO_VEC_4
+#undef ARRAY_TO_VEC_8
+#undef ARRAY_TO_VEC_16
+#undef ARRAY_TO_VEC
+
+#undef SIMD_SIZE
 #undef OUTPUT_TYPE_BLOCK
 #undef TO_TYPE
 #undef READ_FUNC

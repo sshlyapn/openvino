@@ -8,7 +8,7 @@
 #include <algorithm>
 
 namespace kernel_selector {
-
+namespace {
 static inline bool IsBroadcastingPossibleInput(const DataTensor& input, const DataTensor& output) {
     if ((input.LogicalSize() == 1) ||
         (input.LogicalSize() == output.Feature().v && input.Feature().v == output.Feature().v)) {
@@ -17,49 +17,29 @@ static inline bool IsBroadcastingPossibleInput(const DataTensor& input, const Da
     return false;
 }
 
-ParamsKey EltwiseKernel_b_fs_yx_fsv16::GetSupportedKey() const {
-    ParamsKey k;
-    k.EnableInputDataType(Datatype::F16);
-    k.EnableInputDataType(Datatype::F32);
-    k.EnableInputDataType(Datatype::INT8);
-    k.EnableInputDataType(Datatype::UINT8);
-    k.EnableOutputDataType(Datatype::F16);
-    k.EnableOutputDataType(Datatype::F32);
-    k.EnableOutputDataType(Datatype::INT8);
-    k.EnableOutputDataType(Datatype::UINT8);
-    k.EnableInputLayout(DataLayout::b_fs_yx_fsv16);
-    k.EnableInputLayout(DataLayout::b_fs_zyx_fsv16);
-    k.EnableOutputLayout(DataLayout::b_fs_yx_fsv16);
-    k.EnableOutputLayout(DataLayout::b_fs_zyx_fsv16);
-    k.EnableDifferentTypes();
-    k.EnableBatching();
-    k.EnableTensorPitches();
-    k.EnableTensorOffset();
-    k.EnableEltwiseBroadcast();
-    return k;
-}
-
-DeviceFeaturesKey EltwiseKernel_b_fs_yx_fsv16::get_required_device_features_key(const Params& params, const optional_params& options) const {
-    return get_common_subgroups_device_features_key(params, options);
-}
-
 static inline size_t GetBlockSize(const eltwise_params& params) {
     // Set blocksize 1 when broadcasting X dim
+    size_t default_block_size = params.outputs[0].GetLayout() == DataLayout::b_fs_yx_fsv32 ? 2 : 1;
     for (size_t i = 0; i < params.inputs.size(); i++) {
         if ((params.inputs[i].X().v == 1) && !IsBroadcastingPossibleInput(params.inputs[i], params.outputs[0])) {
-            return 1;
+            return default_block_size;
         }
     }
 
     size_t optimal_bs_values[] = {8, 4, 2, 1};
 
     for (auto bs : optimal_bs_values) {
-        if ((params.outputs[0].X().v) % bs == 0) {
+        size_t block_size = bs / default_block_size;
+        if ((params.outputs[0].X().v) % block_size == 0) {
             return bs;
         }
     }
 
     return 1;
+}
+
+static inline size_t GetFsvSize(const eltwise_params& params) {
+    return params.outputs[0].GetLayout() == DataLayout::b_fs_yx_fsv32 ? 32 : 16;
 }
 
 static inline bool OpHasFeatureBroadcast(const eltwise_params& params, const size_t op_num) {
@@ -78,6 +58,35 @@ static inline bool OpHasFeatureBroadcast(const eltwise_params& params, const siz
 
     return false;
 }
+} // namespace
+
+ParamsKey EltwiseKernel_b_fs_yx_fsv16::GetSupportedKey() const {
+    ParamsKey k;
+    k.EnableInputDataType(Datatype::F16);
+    k.EnableInputDataType(Datatype::F32);
+    k.EnableInputDataType(Datatype::INT8);
+    k.EnableInputDataType(Datatype::UINT8);
+    k.EnableOutputDataType(Datatype::F16);
+    k.EnableOutputDataType(Datatype::F32);
+    k.EnableOutputDataType(Datatype::INT8);
+    k.EnableOutputDataType(Datatype::UINT8);
+    k.EnableInputLayout(DataLayout::b_fs_yx_fsv16);
+    k.EnableInputLayout(DataLayout::b_fs_yx_fsv32);
+    k.EnableInputLayout(DataLayout::b_fs_zyx_fsv16);
+    k.EnableOutputLayout(DataLayout::b_fs_yx_fsv16);
+    k.EnableOutputLayout(DataLayout::b_fs_yx_fsv32);
+    k.EnableOutputLayout(DataLayout::b_fs_zyx_fsv16);
+    k.EnableDifferentTypes();
+    k.EnableBatching();
+    k.EnableTensorPitches();
+    k.EnableTensorOffset();
+    k.EnableEltwiseBroadcast();
+    return k;
+}
+
+DeviceFeaturesKey EltwiseKernel_b_fs_yx_fsv16::get_required_device_features_key(const Params& params, const optional_params& options) const {
+    return get_common_subgroups_device_features_key(params, options);
+}
 
 JitConstants EltwiseKernel_b_fs_yx_fsv16::MakeLoadJitConstants(const eltwise_params& params, bool /*useVload8*/) const {
     JitConstants jit = {};
@@ -95,16 +104,27 @@ JitConstants EltwiseKernel_b_fs_yx_fsv16::MakeLoadJitConstants(const eltwise_par
                     break;
                 case EltwiseInputMode::INPUT_BUFFER:
                 {
+                    auto fsv_size = GetFsvSize(params);
                     if (params.inputs[input.index].LogicalSize() == params.outputs[0].Feature().v &&
                         params.inputs[input.index].LogicalSize() == params.inputs[input.index].Feature().v) {
-                        std::string block_read_str = "BLOCK_READN(INPUT" + toCodeString(input.index) + "_TYPE, " +
-                                                     "1, " +
-                                                     "input" + toCodeString(input.index) +
+                        size_t fsv_blocks = fsv_size == 32 ? 2 : 1;
+
+                        std::string block_read_str = "BLOCK_READN(INPUT" + toCodeString(input.index) + "_TYPE, " + toCodeString(fsv_blocks) +
+                                                     ", input" + toCodeString(input.index) +
                                                      ", INPUT" + toCodeString(input.index);
                         if (DataTensor::ChannelsCount(params.inputs[input_idx].GetLayout()) == 4) {
-                            jit.AddConstant(MakeJitConstant(name, block_read_str + "_GET_INDEX(b, f_block*16, y, x))"));
+                            block_read_str = block_read_str + "_GET_INDEX(b, f_block*" + toCodeString(fsv_size) + ", y, x))";
+                            if (fsv_size == 32) {
+                                // Broadcast values to desired vector size
+                                size_t block_size = GetBlockSize(params) / fsv_blocks;
+                                if (block_size == 4)
+                                    block_read_str = "((" + block_read_str + ").xyxyxyxy)";
+                                else if (block_size == 2)
+                                    block_read_str = "((" + block_read_str + ").xyxy)";
+                            }
+                            jit.AddConstant(MakeJitConstant(name, block_read_str));
                         } else {
-                            jit.AddConstant(MakeJitConstant(name, block_read_str + "_GET_INDEX(b, f_block*16, z, y, x))"));
+                            jit.AddConstant(MakeJitConstant(name, block_read_str + "_GET_INDEX(b, f_block*" + toCodeString(fsv_size) + ", z, y, x))"));
                         }
                     } else if (params.inputs[input.index].LogicalSize() == 1) {
                         jit.AddConstant(MakeJitConstant(name,
@@ -112,12 +132,14 @@ JitConstants EltwiseKernel_b_fs_yx_fsv16::MakeLoadJitConstants(const eltwise_par
                                                         "[0]"));
                     } else {
                         const std::string idx_order = "INPUT" + toCodeString(input.index) + "_IDX_ORDER";
+                        const bool feature_broadcasting = (params.inputs[input_idx].Feature().v == 1 && params.outputs[0].Feature().v != 1);
+                        const bool fsv32_layout = fsv_size == 32;
+
                         if (DataTensor::ChannelsCount(params.inputs[input_idx].GetLayout()) == 4) {
-                            jit.AddConstant(MakeJitConstant(idx_order, "b, f_block*16, y, x"));
+                            jit.AddConstant(MakeJitConstant(idx_order, "b, f_block*" + toCodeString(fsv_size) + ", y, x"));
                         } else {
-                            jit.AddConstant(MakeJitConstant(idx_order, "b, f_block*16, z, y, x"));
+                            jit.AddConstant(MakeJitConstant(idx_order, "b, f_block*" + toCodeString(fsv_size) + ", z, y, x"));
                         }
-                        bool feature_broadcasting = (params.inputs[input_idx].Feature().v == 1 && params.outputs[0].Feature().v != 1);
 
                         const std::string block_read_str = "TO_TYPE(MAKE_VECTOR_TYPE(ACCUMULATOR_TYPE, BLOCK_SIZE), BLOCK_READN(INPUT" +
                                                                 toCodeString(input.index) + "_TYPE, BLOCK_SIZE, " +
@@ -126,19 +148,23 @@ JitConstants EltwiseKernel_b_fs_yx_fsv16::MakeLoadJitConstants(const eltwise_par
                         if (feature_broadcasting) {
                             const std::string broadcast_name = "DO_FEATURE_BROADCAST" + toCodeString(op_num);
                             std::string sub_group_broadcast;
+                            std::string tmp_var = "tmp_b" + toCodeString(op_num);
                             if (GetBlockSize(params) == 1) {
-                                sub_group_broadcast = "\\\n\ttmp_b" + toCodeString(op_num) +
-                                                    " = sub_group_broadcast(tmp_b" + toCodeString(op_num) + ", 0);";
+                                sub_group_broadcast = "\\\n\t" + tmp_var +
+                                                    " = sub_group_broadcast(" + tmp_var + ", 0);";
+                            } else if (fsv32_layout) {
+                                sub_group_broadcast = "\\\n\tunroll_for (uint i = 0; i < BLOCK_SIZE; ++i) " + tmp_var +
+                                                      "[i] = sub_group_broadcast(" + tmp_var + "[i / 2 * 2], 0);";
                             } else {
-                                sub_group_broadcast = "\\\n\tunroll_for (uint i = 0; i < BLOCK_SIZE; ++i) tmp_b" + toCodeString(op_num) +
-                                                    "[i] = sub_group_broadcast(tmp_b" + toCodeString(op_num) + "[i], 0);";
+                                sub_group_broadcast = "\\\n\tunroll_for (uint i = 0; i < BLOCK_SIZE; ++i) " + tmp_var +
+                                                    "[i] = sub_group_broadcast(" + tmp_var + "[i], 0);";
                             }
 
-                            std::string broadcast_value = "\\\n\tMAKE_VECTOR_TYPE(ACCUMULATOR_TYPE, BLOCK_SIZE) tmp_b" + toCodeString(op_num) +
+                            std::string broadcast_value = "\\\n\tMAKE_VECTOR_TYPE(ACCUMULATOR_TYPE, BLOCK_SIZE) " + tmp_var +
                                                         " = " + block_read_str + ";" + sub_group_broadcast;
 
                             jit.AddConstant(MakeJitConstant(broadcast_name, broadcast_value));
-                            jit.AddConstant(MakeJitConstant(name, "tmp_b" + toCodeString(op_num)));
+                            jit.AddConstant(MakeJitConstant(name, tmp_var));
                         } else {
                             jit.AddConstant(MakeJitConstant(name, block_read_str));
                         }
@@ -169,14 +195,20 @@ JitConstants EltwiseKernel_b_fs_yx_fsv16::GetJitConstants(const eltwise_params& 
     JitConstants jit = MakeBaseParamsJitConstants(params);
     bool useVload8 = false;
 
-    auto blockSize = GetBlockSize(params);
+    size_t fsv_size = GetFsvSize(params);
+    size_t fsv_blocks = fsv_size == 32 ? 2 : 1;
+    size_t block_size = GetBlockSize(params);
+    size_t block_size_x = block_size / fsv_blocks;
+
     jit.Merge(MakeTypeJitConstants(GetAccumulatorType(params), "ACCUMULATOR"));
-    jit.AddConstant(MakeJitConstant("BLOCK_SIZE", blockSize));
-    jit.AddConstant(MakeJitConstant("BLOCKS_COUNT", CeilDiv(params.outputs[0].X().v, blockSize)));
+    jit.AddConstant(MakeJitConstant("BLOCK_SIZE", block_size));
+    jit.AddConstant(MakeJitConstant("BLOCK_SIZE_X", block_size_x));
+    jit.AddConstant(MakeJitConstant("BLOCKS_COUNT", CeilDiv(params.outputs[0].X().v, block_size_x)));
+    jit.AddConstant(MakeJitConstant("FEATURE_SLICE_SIZE", fsv_size));
 
     jit.Merge(MakeInputDeclsJitConstants(params, useVload8));
     jit.Merge(MakeLoadJitConstants(params, useVload8));
-    jit.Merge(GetOperationsJitConstants(params, useVload8, blockSize));
+    jit.Merge(GetOperationsJitConstants(params, useVload8, block_size));
 
     std::string do_eltwise;
     auto& operations = params.operations;
@@ -201,24 +233,32 @@ JitConstants EltwiseKernel_b_fs_yx_fsv16::GetJitConstants(const eltwise_params& 
 
     jit.Merge(MakeActivationJitConstants(params.activations, params.outputs[0].GetDType(), "_TYPED"));
 
-    if (params.outputs[0].Feature().v % 16 != 0)
-        jit.AddConstant(MakeJitConstant("LEFTOVERS", params.outputs[0].Feature().v % 16));
+    if (params.outputs[0].Feature().v % fsv_size != 0)
+        jit.AddConstant(MakeJitConstant("LEFTOVERS", params.outputs[0].Feature().v % fsv_size));
 
     if (!params.fused_ops.empty()) {
         kernel_selector::Datatype input_dt = GetAccumulatorType(params);
+        if (fsv_blocks == 2) {
+            std::vector<std::string> idx_order = {"b", "f_block*FEATURE_SLICE_SIZE", "y", "x + block_x"};
+            FusedOpsConfiguration conf = {"", idx_order, "tmp_res", input_dt, fsv_blocks};
+            conf.load_type = FusedOpsConfiguration::LoadType::LT_ALIGNED_READ;
+            conf.vec_axis = Tensor::DataChannelName::FEATURE;
 
-        std::vector<std::string> idx_order;
-        if (DataTensor::ChannelsCount(params.outputs[0].GetLayout()) == 4) {
-            idx_order = {"b", "f_block*16", "y", "x"};
-        } else if (DataTensor::ChannelsCount(params.outputs[0].GetLayout()) == 5) {
-            idx_order = {"b", "f_block*16", "z", "y", "x"};
+            jit.Merge(MakeFusedOpsJitConstants(params, {conf}));
+        } else {
+            std::vector<std::string> idx_order;
+            if (DataTensor::ChannelsCount(params.outputs[0].GetLayout()) == 4) {
+                idx_order = {"b", "f_block*FEATURE_SLICE_SIZE", "y", "x"};
+            } else if (DataTensor::ChannelsCount(params.outputs[0].GetLayout()) == 5) {
+                idx_order = {"b", "f_block*FEATURE_SLICE_SIZE", "z", "y", "x"};
+            }
+
+            FusedOpsConfiguration conf = {"", idx_order, "res", input_dt, block_size_x};
+            conf.load_type = FusedOpsConfiguration::LoadType::LT_ALIGNED_READ;
+            conf.vec_axis = Tensor::DataChannelName::X;
+
+            jit.Merge(MakeFusedOpsJitConstants(params, {conf}));
         }
-
-        FusedOpsConfiguration conf = {"", idx_order, "res", input_dt, blockSize};
-        conf.load_type = FusedOpsConfiguration::LoadType::LT_ALIGNED_READ;
-        conf.vec_axis = Tensor::DataChannelName::X;
-
-        jit.Merge(MakeFusedOpsJitConstants(params, {conf}));
     }
 
     if (params.broadcast) {
@@ -253,6 +293,7 @@ bool EltwiseKernel_b_fs_yx_fsv16::Validate(const Params& p, const optional_param
 
     for (size_t i = 0; i < params.inputs.size(); i++) {
         if ((params.inputs[i].GetLayout() != DataLayout::b_fs_yx_fsv16) &&
+            (params.inputs[i].GetLayout() != DataLayout::b_fs_yx_fsv32) &&
             (params.inputs[i].GetLayout() != DataLayout::b_fs_zyx_fsv16) &&
             !IsBroadcastingPossibleInput(params.inputs[i], params.outputs[0])) {
             return false;
@@ -262,7 +303,7 @@ bool EltwiseKernel_b_fs_yx_fsv16::Validate(const Params& p, const optional_param
     auto input0 = params.inputs[0];
 
     // Check that padding before features doesn't miss-align the blocks
-    auto feature_block_size = 16;
+    auto feature_block_size = GetFsvSize(params);
     if (input0.Feature().pad.before % feature_block_size != 0 || params.outputs[0].Feature().pad.before % feature_block_size != 0) {
         return false;
     }
@@ -300,8 +341,11 @@ bool EltwiseKernel_b_fs_yx_fsv16::Validate(const Params& p, const optional_param
 EltwiseKernelBase::DispatchData EltwiseKernel_b_fs_yx_fsv16::SetDefault(const eltwise_params& params) const {
     DispatchData dispatchData;
 
-    dispatchData.gws[0] = Align(params.outputs[0].Feature().v, 16);
-    dispatchData.gws[1] = CeilDiv(params.outputs[0].X().v, GetBlockSize(params)) * params.outputs[0].Y().v * params.outputs[0].Z().v;
+    size_t fsv_blocks = GetFsvSize(params) == 32 ? 2 : 1;
+    size_t block_size_x = GetBlockSize(params) / fsv_blocks;
+
+    dispatchData.gws[0] = CeilDiv(params.outputs[0].Feature().v, GetFsvSize(params)) * 16;
+    dispatchData.gws[1] = CeilDiv(params.outputs[0].X().v, block_size_x) * params.outputs[0].Y().v * params.outputs[0].Z().v;
     dispatchData.gws[2] = params.outputs[0].Batch().v;
 
     dispatchData.lws[0] = 16;

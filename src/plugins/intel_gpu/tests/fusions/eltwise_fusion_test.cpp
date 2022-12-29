@@ -102,6 +102,8 @@ public:
 #define CASE_ELTWISE_FP32_6         { 2, 32, 4, 8 }, data_types::f32, data_types::f32, format::b_fs_yx_fsv4,  data_types::f32,  format::b_fs_yx_fsv4,    eltwise_mode::sum
 #define CASE_ELTWISE_FP16_5         { 2, 32, 4, 8 }, data_types::f16, data_types::f16, format::b_fs_yx_fsv4,  data_types::f16,  format::b_fs_yx_fsv4,    eltwise_mode::sum
 #define CASE_ELTWISE_FP16_6         { 1, 32, 4, 8 }, data_types::f16, data_types::f16, format::byxf,          data_types::f16,  format::byxf,            eltwise_mode::sum
+#define CASE_ELTWISE_FP16_7         { 3, 32, 4, 4 }, data_types::f16, data_types::f16, format::b_fs_yx_fsv32, data_types::f16,  format::b_fs_yx_fsv32,   eltwise_mode::sum
+#define CASE_ELTWISE_FP16_8         { 3, 46, 8, 8 }, data_types::f16, data_types::f16, format::b_fs_yx_fsv32, data_types::f16,  format::b_fs_yx_fsv32,   eltwise_mode::sum
 #define CASE_ELTWISE_I8_4           { 2, 16, 4, 4 }, data_types::i8,  data_types::i8,  format::b_fs_yx_fsv4,  data_types::f32,  format::b_fs_yx_fsv4,    eltwise_mode::sum
 #define CASE_ELTWISE_U8_4           { 2, 16, 4, 4 }, data_types::u8,  data_types::u8,  format::b_fs_yx_fsv4,  data_types::f32,  format::b_fs_yx_fsv4,    eltwise_mode::sum
 
@@ -296,7 +298,11 @@ TEST_P(eltwise_fp32_fsv32, add) {
     if (engine.get_device_info().supports_immad)
         p.expected_fused_primitives++;
 
-    implementation_desc eltw_impl = { format::fs_b_yx_fsv32, "eltwise_fs_b_yx_fsv32" };
+    implementation_desc eltw_impl;
+    if (p.input_format == format::b_fs_yx_fsv32)
+        eltw_impl = { format::b_fs_yx_fsv32, "eltwise_b_fs_yx_fsv16" };
+    else if (p.input_format == format::fs_b_yx_fsv32)
+        eltw_impl = { format::fs_b_yx_fsv32, "eltwise_fs_b_yx_fsv32" };
     bo_fused.set_option(build_option::force_implementations({ { "eltwise", eltw_impl } }));
 
     tolerance = 1e-5f;
@@ -318,7 +324,11 @@ TEST_P(eltwise_fp32_fsv32, add_per_element) {
     if (engine.get_device_info().supports_immad)
         p.expected_fused_primitives++;
 
-    implementation_desc eltw_impl = { format::fs_b_yx_fsv32, "eltwise_fs_b_yx_fsv32" };
+    implementation_desc eltw_impl;
+    if (p.input_format == format::b_fs_yx_fsv32)
+        eltw_impl = { format::b_fs_yx_fsv32, "eltwise_b_fs_yx_fsv16" };
+    else if (p.input_format == format::fs_b_yx_fsv32)
+        eltw_impl = { format::fs_b_yx_fsv32, "eltwise_fs_b_yx_fsv32" };
     bo_fused.set_option(build_option::force_implementations({ { "eltwise", eltw_impl } }));
 
     tolerance = 1e-5f;
@@ -329,6 +339,8 @@ INSTANTIATE_TEST_SUITE_P(fusings_gpu, eltwise_fp32_fsv32, ::testing::ValuesIn(st
     // There's no optimized eltwise kernel yet for fsv32 layout that supports fused_ops
     // So only activation is fused via legacy mechanism
     eltwise_test_params{ CASE_ELTWISE_FP16_4, 4, 5 },
+    eltwise_test_params{ CASE_ELTWISE_FP16_7, 3, 5 },
+    eltwise_test_params{ CASE_ELTWISE_FP16_8, 3, 5 },
 }));
 
 class eltwise_fp32_fsv4 : public EltwiseFusingTest {};
