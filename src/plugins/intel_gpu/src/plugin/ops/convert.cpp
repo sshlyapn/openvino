@@ -23,9 +23,7 @@ static void CreateConvertLikeOp(Program& p, const std::shared_ptr<ngraph::op::v1
     auto reorderPrim = cldnn::reorder(layerName,
                                       inputs[0],
                                       cldnn::format::any,
-                                      outDataType,
-                                      std::vector<float>(),
-                                      cldnn::reorder_mean_mode::subtract);
+                                      outDataType);
     p.add_primitive(*op, reorderPrim);
 }
 
@@ -39,9 +37,7 @@ static void CreateConvertOp(Program& p, const std::shared_ptr<ngraph::op::v0::Co
     auto reorderPrim = cldnn::reorder(layerName,
                                       inputs[0],
                                       cldnn::format::any,
-                                      outDataType,
-                                      std::vector<float>(),
-                                      cldnn::reorder_mean_mode::subtract);
+                                      outDataType);
 
     p.add_primitive(*op, reorderPrim);
 }
