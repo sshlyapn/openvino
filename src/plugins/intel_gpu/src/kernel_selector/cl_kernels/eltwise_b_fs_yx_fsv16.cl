@@ -107,19 +107,16 @@ KERNEL(eltwise_b_fs_yx_fsv16)(INPUTS_DECLS
 
 #if HAS_FUSED_OPS
 #if FEATURE_SLICE_SIZE == 32
-    ACCUMULATOR_TYPE res_arr[BLOCK_SIZE];
     OUTPUT_TYPE out_arr[BLOCK_SIZE];
-    VEC_TO_ARRAY(res_arr, res, 0);
+    OUTPUT_TYPE_BLOCK out;
     MAKE_VECTOR_TYPE(ACCUMULATOR_TYPE, 2) tmp_res;
     for (int block_x = 0; block_x < BLOCK_SIZE_X; block_x++) {
-        tmp_res.s0 = res_arr[block_x * 2 + 0];
-        tmp_res.s1 = res_arr[block_x * 2 + 1];
+        tmp_res.s0 = res[block_x * 2 + 0];
+        tmp_res.s1 = res[block_x * 2 + 1];
         FUSED_OPS;
-        out_arr[block_x * 2 + 0] = TO_TYPE(OUTPUT_TYPE, (FUSED_OPS_RESULT).s0);
-        out_arr[block_x * 2 + 1] = TO_TYPE(OUTPUT_TYPE, (FUSED_OPS_RESULT).s1);
+        out[block_x * 2 + 0] = TO_TYPE(OUTPUT_TYPE, (FUSED_OPS_RESULT).s0);
+        out[block_x * 2 + 1] = TO_TYPE(OUTPUT_TYPE, (FUSED_OPS_RESULT).s1);
     }
-    OUTPUT_TYPE_BLOCK out;
-    ARRAY_TO_VEC(out, out_arr, 0);
 #else
     FUSED_OPS;
     OUTPUT_TYPE_BLOCK out = TO_TYPE(MAKE_VECTOR_TYPE(OUTPUT_TYPE, BLOCK_SIZE), FUSED_OPS_RESULT);
