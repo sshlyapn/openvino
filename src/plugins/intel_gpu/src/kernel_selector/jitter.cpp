@@ -985,7 +985,7 @@ JitConstants MakeDynamicParamsJitConstants(const std::vector<std::pair<std::stri
 
     JitConstants jitConstants = {};
     const std::string input_name = "dynamic_params";
-    const std::string dynamic_input_dt = "__global char*";
+    const std::string dynamic_input_dt = "__global const char*";
     const std::string dynamic_params_input_macro = "DYNAMIC_PARAMS_INPUT_DECL";
     const std::string dynamic_params_input_decl = dynamic_input_dt + " " + input_name;
     size_t offset = 0;
@@ -994,7 +994,7 @@ JitConstants MakeDynamicParamsJitConstants(const std::vector<std::pair<std::stri
         const std::string desired_dt = param.second == ScalarDescriptor::Types::INT32 ? "int" :
                                        param.second == ScalarDescriptor::Types::FLOAT32 ? "float" :
                                        param.second == ScalarDescriptor::Types::UINT8 ? "uchar" : "uint";
-        const std::string value = "(((__global " + desired_dt + "*)(" + addr + "))[0])";
+        const std::string value = "(((__global const " + desired_dt + "*)(" + addr + "))[0])";
         jitConstants.AddConstant(MakeJitConstant(param.first, value));
         offset += ScalarDescriptor::get_type_size(param.second);
     }
