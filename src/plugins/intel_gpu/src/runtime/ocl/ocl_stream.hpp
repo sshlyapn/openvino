@@ -75,6 +75,7 @@ public:
     event::ptr group_events(std::vector<event::ptr> const& deps) override;
     void wait_for_events(const std::vector<event::ptr>& events) override;
     void enqueue_barrier() override;
+    event::ptr enqueue_barrier_new() override;
     event::ptr create_user_event(bool set) override;
     event::ptr create_base_event() override;
 

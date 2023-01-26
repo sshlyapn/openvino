@@ -550,7 +550,7 @@ protected:
 
         if (_enable_profiling) {
             stream.finish();
-            event = stream.create_user_event(false);
+            event = stream.enqueue_barrier_new();
         }
 
         if (!instance.can_be_optimized()) {
@@ -558,8 +558,7 @@ protected:
         }
 
         if (_enable_profiling) {
-            stream.finish();
-            event->set();
+            stream.wait_for_events({event});
         }
 
         return event;

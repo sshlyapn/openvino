@@ -76,6 +76,26 @@ static const std::vector<profiling_period_ocl_start_stop> profiling_periods{
     { instrumentation::profiling_stage::executing, CL_PROFILING_COMMAND_START, CL_PROFILING_COMMAND_END },
 };
 
+void ocl_event::print_event_info() {
+    cl_ulong queued;
+    cl_ulong submit;
+    cl_ulong start;
+    cl_ulong end;
+
+    _event.getProfilingInfo(CL_PROFILING_COMMAND_QUEUED, &queued);
+    _event.getProfilingInfo(CL_PROFILING_COMMAND_SUBMIT, &submit);
+    _event.getProfilingInfo(CL_PROFILING_COMMAND_START, &start);
+    _event.getProfilingInfo(CL_PROFILING_COMMAND_END, &end);
+
+    queued = queued / 1000;
+    submit = submit / 1000;
+    start = start / 1000;
+    end = end / 1000;
+
+    std::cout << "Event times:\nQueued: " << queued << "us Submit: " << submit << "us Start: " << start << "us End: " << end << "us" << std::endl;
+    std::cout << "Queued: " << submit - queued << " Submit: " << start - submit << " Start: " << end - start << std::endl;
+}
+
 bool ocl_event::get_profiling_info_impl(std::list<instrumentation::profiling_interval>& info) {
     if (!is_event_profiled(_event))
         return true;
@@ -86,6 +106,10 @@ bool ocl_event::get_profiling_info_impl(std::list<instrumentation::profiling_int
 
         _event.getProfilingInfo(period.start, &start);
         _event.getProfilingInfo(period.stop, &end);
+
+        // if (period.stage == instrumentation::profiling_stage::executing) {
+        //     std::cout << "Profiling info: " << end << "-" << start << "=" << end - start << "ns" << std::endl;
+        // }
 
         info.push_back(get_profiling_interval(period.stage, start, end));
     }
@@ -189,6 +213,46 @@ bool ocl_events::get_profiling_info_impl(std::list<instrumentation::profiling_in
 
         info.push_back(get_profiling_interval(period.stage, 0, sum));
     }
+
+    return true;
+}
+
+void ocl_profiling_event::wait_impl() {
+    if (_event.get() != nullptr) {
+        _event.wait();
+    }
+}
+
+void ocl_profiling_event::set_impl() {
+    wait_impl();
+}
+
+bool ocl_profiling_event::is_set_impl() {
+    if (_event.get() != nullptr) {
+        return _event.getInfo<CL_EVENT_COMMAND_EXECUTION_STATUS>() == CL_COMPLETE;
+    }
+    return true;
+}
+
+// static const std::vector<profiling_period_ocl_start_stop> profiling_periods{
+//     { instrumentation::profiling_stage::submission, CL_PROFILING_COMMAND_QUEUED, CL_PROFILING_COMMAND_SUBMIT },
+//     { instrumentation::profiling_stage::starting, CL_PROFILING_COMMAND_SUBMIT, CL_PROFILING_COMMAND_START },
+//     { instrumentation::profiling_stage::executing, CL_PROFILING_COMMAND_START, CL_PROFILING_COMMAND_END },
+// };
+
+bool ocl_profiling_event::get_profiling_info_impl(std::list<instrumentation::profiling_interval>& info) {
+    if (!is_event_profiled(_event))
+        return true;
+
+    cl_ulong start;
+    cl_ulong end;
+
+    _event.getProfilingInfo(CL_PROFILING_COMMAND_QUEUED, &start);
+    _event.getProfilingInfo(CL_PROFILING_COMMAND_END, &end);
+
+    // std::cout << "Profiling event info: " << end << "-" << start << "=" << end - start << "ns" << std::endl;
+
+    info.push_back(get_profiling_interval(instrumentation::profiling_stage::executing, start, end));
 
     return true;
 }

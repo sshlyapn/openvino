@@ -22,6 +22,8 @@ public:
 
     cl::Event& get() override { return _event; }
 
+    void print_event_info() override;
+
 private:
     bool _callback_set = false;
     void set_ocl_callback();
@@ -90,6 +92,24 @@ private:
 
     cl::Event _last_ocl_event;
     std::vector<event::ptr> _events;
+};
+
+struct ocl_profiling_event : public ocl_base_event {
+public:
+    ocl_profiling_event(cl::Event const& ev, uint64_t queue_stamp = 0)
+        : ocl_base_event(queue_stamp)
+        , _event(ev) {}
+
+    cl::Event& get() override { return _event; }
+
+private:
+    void wait_impl() override;
+    void set_impl() override;
+    bool is_set_impl() override;
+    bool get_profiling_info_impl(std::list<instrumentation::profiling_interval>& info) override;
+
+protected:
+    cl::Event _event;
 };
 
 }  // namespace ocl

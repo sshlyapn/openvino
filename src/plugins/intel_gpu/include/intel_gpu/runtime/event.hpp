@@ -34,6 +34,7 @@ public:
 
     // returns true if handler has been successfully added
     bool add_event_handler(event_handler handler, void* data);
+    virtual void print_event_info() {};
 
     std::vector<instrumentation::profiling_interval> get_profiling_info();
 

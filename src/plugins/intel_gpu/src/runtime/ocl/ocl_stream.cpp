@@ -182,6 +182,7 @@ void set_arguments_impl(ocl_kernel_type& kernel,
 }
 
 sync_methods get_expected_sync_method(const ExecutionConfig& config) {
+    return sync_methods::events;
     auto profiling = config.get_property(ov::enable_profiling);
     auto queue_type = config.get_property(ov::intel_gpu::queue_type);
     return profiling ? sync_methods::events : queue_type == QueueTypes::out_of_order ? sync_methods::barriers
@@ -198,6 +199,7 @@ ocl_stream::ocl_stream(const ocl_engine &engine, const ExecutionConfig& config)
     auto device = engine.get_cl_device();
     ocl::command_queues_builder queue_builder;
     queue_builder.set_profiling(config.get_property(ov::enable_profiling));
+    queue_builder.set_profiling(true);
     queue_builder.set_out_of_order(queue_type == QueueTypes::out_of_order);
 
     if (sync_method == sync_methods::none && queue_type == QueueTypes::out_of_order) {
@@ -298,6 +300,13 @@ event::ptr ocl_stream::enqueue_kernel(kernel& kernel,
     }
 
     return std::make_shared<ocl_event>(ret_ev, ++_queue_counter);
+}
+
+event::ptr ocl_stream::enqueue_barrier_new() {
+    // std::cout << "Enquee marker with wait all previous tasks\n";
+    cl::Event ret_ev;
+    _command_queue.enqueueMarkerWithWaitList({}, &ret_ev);
+    return std::make_shared<ocl_profiling_event>(ret_ev, ++_queue_counter);
 }
 
 void ocl_stream::enqueue_barrier() {

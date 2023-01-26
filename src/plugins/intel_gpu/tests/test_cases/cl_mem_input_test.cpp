@@ -356,3 +356,41 @@ TEST(cl_mem_check, check_read_access_type) {
     bool are_equal = std::equal(src_buffer.begin(), src_buffer.begin() + values_count, dst_buffer.begin());
     ASSERT_TRUE(are_equal);
 }
+
+TEST(events_profiling, marker) {
+    auto& engine = get_test_engine();
+
+    const size_t batch_num = 8;
+    const size_t input_f = 384;
+    const size_t input_x = 512;
+    const size_t input_y = 512;
+
+    auto input = engine.allocate_memory({ data_types::f32, format::bfyx, { batch_num, input_f, input_x, input_y } });
+
+    auto input_vec = generate_random_1d<float>(batch_num * input_f * input_y * input_x, 0, 1, 8);
+
+    set_values(input, input_vec);
+
+    topology topology(
+        input_layout("input", input->get_layout()),
+        activation("relu", input_info("input"), activation_func::relu_negative_slope, { 0.5f, 0.f }, padding{ { 0, 0, 0, 0 }, 0 }));
+    network network(engine, topology);
+    network.set_input_data("input", input);
+    auto outputs = network.execute();
+    ASSERT_EQ(outputs.begin()->first, "relu");
+
+    auto output_memory = outputs.at("relu").get_memory();
+    auto output_layout = output_memory->get_layout();
+    cldnn::mem_lock<float> output_ptr(output_memory, get_test_stream());
+
+    int y_size = output_layout.spatial(1);
+    int x_size = output_layout.spatial(0);
+    int f_size = output_layout.feature();
+    int b_size = output_layout.batch();
+    ASSERT_EQ(output_layout.format, format::bfyx);
+    ASSERT_EQ(y_size, input_y);
+    ASSERT_EQ(x_size, input_x);
+    ASSERT_EQ(f_size, input_f);
+    ASSERT_EQ(b_size, batch_num);
+}
+
