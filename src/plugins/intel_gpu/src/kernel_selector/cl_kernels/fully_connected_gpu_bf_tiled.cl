@@ -96,11 +96,6 @@ KERNEL(fc)(
     uint gid = (uint)get_group_id(0);
     uint sglid = (uint)get_sub_group_local_id();
 
-#ifdef HAS_DYNAMIC_PARAMS
-    const uint DISPATCH_FSV = DISPATCH_FSV1;
-    const uint DISPATCH_BSV = DISPATCH_BSV1;
-#endif
-
     // Dispatch as bs_fs_bsv_fsv, where bsv = DISPATCH_BSV and fsv = DISPATCH_FSV.
     // This allows more fine grained control over dispatch order than using work-groups and
     // avoids requirement of threads being available for whole work-group.
@@ -255,12 +250,18 @@ KERNEL(fc)(
     uint output_offset = out_f * TILE_OUT_F_PITCH + out_b * TILE_OUT_B_PITCH + OUTPUT_OFFSET;
 
     if (USE_BLOCK_WRITE && (TILE_OUT_F_NUM % (TILE_OFM * SIMD) == 0 || out_f + (TILE_OFM * SIMD) <= TILE_OUT_F_NUM)) {
+#if IS_DYNAMIC
         #define WRITE_OUTPUT(bi) do {                                       \
                 if (bi + out_b < BATCH_SIZE)                                \
                     OUTPUT_BLOCK_WRITE(output, output_offset, result[bi]);  \
                 output_offset += TILE_OUT_B_PITCH;                          \
             } while (false)
-
+#else
+        #define WRITE_OUTPUT(bi) do {                                       \
+                OUTPUT_BLOCK_WRITE(output, output_offset, result[bi]);      \
+                output_offset += TILE_OUT_B_PITCH;                          \
+            } while (false)
+#endif
         CONST_LOOP(TILE_B, WRITE_OUTPUT);
         #undef WRITE_OUTPUT
     } else {
@@ -290,7 +291,9 @@ KERNEL(fc)(
         for (uint bi = 0; bi < TILE_B; ++bi) {
             for (uint fi = 0; fi < TILE_OFM; ++fi) {
                 const bool should_write =
+#if IS_DYNAMIC
                     bi + out_b < BATCH_SIZE &&
+#endif
                     (TILE_OUT_F_NUM % (TILE_OFM * SIMD) == 0 ||
                     out_f + fi * SIMD + sglid < TILE_OUT_F_NUM);
                 if (should_write) {
