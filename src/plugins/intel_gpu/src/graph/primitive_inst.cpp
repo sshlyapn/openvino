@@ -320,6 +320,22 @@ void primitive_inst::update_impl() {
         GPU_DEBUG_TRACE_DETAIL << id() << ": update dynamic impl " << prev_impl_str << " to new shape: " << s.str() << std::endl;
     };
 
+    auto update_dynamic_params = [this, update_shape_info](const kernel_impl_params& params) {
+        update_shape_info(params);
+
+        const auto& kernels_dynamic_params = _impl->get_dynamic_params();
+        if (kernels_dynamic_params.size()) {
+            for (const auto& dynamic_params : kernels_dynamic_params) {
+                size_t offset = 0;
+                mem_lock<char> lock(_dyn_params_memory[0], _network.get_stream());
+                for (const auto& param : dynamic_params) {
+                    std::memcpy(lock.data() + offset, &param.v, scalar_desc::get_type_size(param.t));
+                    offset += scalar_desc::get_type_size(param.t);
+                }
+            }
+        }
+    };
+
     if (!_node->is_type<data>() && !(_node->is_type<mutable_data>() && _node->get_dependencies().empty())) {
         // Update param if fake_alignment is available
         auto updated_params = _node->type()->get_fake_aligned_params(*_impl_params);
@@ -361,7 +377,7 @@ void primitive_inst::update_impl() {
 
                 _impl = _dynamic_impl->clone();
                 _impl->update_dispatch_data(updated_params);
-                update_shape_info(updated_params);
+                update_dynamic_params(updated_params);
             } else {
                 _impl = _node->type()->choose_impl(*_node, updated_params);
                 auto& kernels_cache = get_network().get_kernels_cache();
@@ -588,6 +604,26 @@ primitive_inst::primitive_inst(network& network, program_node const& node, bool 
             const size_t tensor_dims_count = 6;
             const int64_t shape_elements = buffers_count * tensor_dims_count;
             _shape_info_memory = _network.get_engine().allocate_memory(layout{{shape_elements}, data_types::i32, format::bfyx});
+
+            const auto& kernels_dynamic_params = _impl->get_dynamic_params();
+            if (!kernels_dynamic_params.empty()){
+                std::vector<memory::ptr> dyn_params_memory;
+                auto& engine = _network.get_engine();
+
+                for (const auto& dynamic_params : kernels_dynamic_params) {
+                    size_t buf_size = 0;
+                    for (const auto& param : dynamic_params) {
+                        buf_size += scalar_desc::get_type_size(param.t);
+                    }
+
+                    GPU_DEBUG_LOG << "[" << _node->id() << ": dynamic buf]" << std::endl;
+                    auto alloc_type = engine.get_lockable_preferred_memory_allocation_type();
+                    cldnn::layout layout{ cldnn::data_types::u8, format::bfyx,
+                                          cldnn::tensor{1, 1, 1, static_cast<tensor::value_type>(buf_size)} };
+                    dyn_params_memory.push_back(engine.allocate_memory(layout, alloc_type));
+                }
+                _dyn_params_memory = dyn_params_memory;
+            }
         }
     }
 

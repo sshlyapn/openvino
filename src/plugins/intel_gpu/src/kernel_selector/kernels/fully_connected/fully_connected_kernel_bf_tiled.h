@@ -55,6 +55,7 @@ public:
 
 protected:
     DispatchData SetDefault(const fully_connected_params& params, int autoTuneIndex = -1) const override;
+    void UpdateDynamicParams(const Params& params, KernelData& kd) const override;
     std::vector<FusedOpType> GetSupportedFusedOps() const override {
         return { FusedOpType::ACTIVATION,
                  FusedOpType::ELTWISE,

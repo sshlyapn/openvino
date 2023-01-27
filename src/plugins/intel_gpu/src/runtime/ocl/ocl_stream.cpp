@@ -94,6 +94,12 @@ void set_arguments_impl(ocl_kernel_type& kernel,
                     status = set_kernel_arg(kernel, i, data.intermediates[args[i].index]);
                 }
                 break;
+            case args_t::DYNAMIC_PARAMS:
+                std::cout << "Set dynamic params\n";
+                if (args[i].index < data.dynamic_params.size() && data.dynamic_params[args[i].index]) {
+                    status = set_kernel_arg(kernel, i, data.dynamic_params[args[i].index]);
+                }
+                break;
             case args_t::OUTPUT:
                 if (args[i].index < data.outputs.size() && data.outputs[args[i].index]) {
                     status = set_kernel_arg(kernel, i, data.outputs[args[i].index]);
