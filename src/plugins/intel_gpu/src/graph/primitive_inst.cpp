@@ -364,7 +364,10 @@ void primitive_inst::update_impl() {
                             return;
                     }
 
-                    auto impl = _node->type()->choose_impl(*_node, updated_params);
+                    auto static_params = updated_params;
+                    static_params.is_dynamic = false;
+
+                    auto impl = _node->type()->choose_impl(*_node, static_params);
                     auto kernel_ids = kc.add_kernels_source(impl->get_kernels_source());
                     impl->set_kernel_ids(kernel_ids);
                     kc.compile();
