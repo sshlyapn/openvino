@@ -60,8 +60,7 @@ struct kernel_impl_params {
                        const std::vector<layout>& _in_layouts,
                        const std::vector<layout>& _out_layouts,
                        const std::vector<cldnn::fused_primitive_desc>& _fused_descs)
-                       : has_runtime_layouts(true)
-                       , prog(&_prog)
+                       : prog(&_prog)
                        , desc(_desc)
                        , unique_id(_uid)
                        , input_layouts(_in_layouts)

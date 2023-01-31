@@ -19,6 +19,7 @@
 
 #include "reorder/reorder_weights_kernel_selector.h"
 #include "reorder/reorder_kernel_base.h"
+#include "impls/ocl/kernel_selector_helper.h"
 
 #include <vector>
 #include <list>
@@ -45,7 +46,7 @@ struct typed_primitive_onednn_impl : public typed_primitive_impl<PType> {
             std::shared_ptr<dnnl::primitive_attr> attrs,
             const PrimDescType& pd,
             kernel_selector::WeightsReorderParams weights_reorder = {})
-        : typed_primitive_impl<PType>(weights_reorder, pd.impl_info_str()),
+        : typed_primitive_impl<PType>(std::make_shared<WeightsReorderParamsOCL>(weights_reorder), pd.impl_info_str()),
         _engine(&engine),
         _attrs(attrs),
         _pd(pd) {
