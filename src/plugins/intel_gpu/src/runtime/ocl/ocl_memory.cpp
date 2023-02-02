@@ -362,6 +362,11 @@ gpu_usm::gpu_usm(ocl_engine* engine, const layout& layout, allocation_type type)
     }
 }
 
+gpu_usm::~gpu_usm() {
+    if (_host_allocated)
+        _host_buffer.freeMem();
+}
+
 void* gpu_usm::lock(const stream& stream, mem_lock_type type) {
     std::lock_guard<std::mutex> locker(_mutex);
     if (0 == _lock_count) {
@@ -372,7 +377,8 @@ void* gpu_usm::lock(const stream& stream, mem_lock_type type) {
                 throw std::runtime_error("Unable to lock allocation_type::usm_device with write lock_type.");
             }
             GPU_DEBUG_LOG << "Copy usm_device buffer to host buffer." << std::endl;
-            _host_buffer.allocateHost(_bytes_count);
+            if (!_host_allocated)
+                _host_buffer.allocateHost(_bytes_count);
             cl_stream.get_usm_helper().enqueue_memcpy(cl_stream.get_cl_queue(), _host_buffer.get(), _buffer.get(), _bytes_count, CL_TRUE);
             _mapped_ptr = _host_buffer.get();
         } else {
@@ -387,9 +393,9 @@ void gpu_usm::unlock(const stream& /* stream */) {
     std::lock_guard<std::mutex> locker(_mutex);
     _lock_count--;
     if (0 == _lock_count) {
-        if (get_allocation_type() == allocation_type::usm_device) {
-            _host_buffer.freeMem();
-        }
+        // if (get_allocation_type() == allocation_type::usm_device) {
+        //     _host_buffer.freeMem();
+        // }
         _mapped_ptr = nullptr;
     }
 }

@@ -101,6 +101,8 @@ public:
         params.winograd = impl_param.input_layouts[0].format.is_winograd() || output_layout.format.is_winograd();
         params.truncate = impl_param.typed_desc<reorder>()->truncate;
 
+        // std::cout << "Reorder " << impl_param.input_layouts[0].to_short_string() << " -> " << impl_param.output_layouts[0].to_short_string() << " (" << is_shape_agnostic << ")\n";
+
         return {params, optional_params};
     }
 
