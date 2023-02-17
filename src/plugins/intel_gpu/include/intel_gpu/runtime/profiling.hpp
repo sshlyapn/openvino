@@ -161,17 +161,23 @@ public:
 
     ~profiled_stage() {
         GPU_DEBUG_IF(profiling_enabled) {
+            using us = std::chrono::microseconds;
+
             _finish = std::chrono::high_resolution_clock::now();
-            auto total_duration = std::chrono::duration_cast<std::chrono::microseconds>(_finish - _start).count();
+            auto custom_duration = std::chrono::duration_cast<us>(custom_time).count();
+            auto total_duration = custom_duration == 0 ? std::chrono::duration_cast<us>(_finish - _start).count()
+                                                       : custom_duration;
             _obj.add_profiling_data(_stage, cache_hit, total_duration);
         }
     }
     void set_cache_hit(bool val = true) { cache_hit = val; }
+    void set_custom_time(std::chrono::nanoseconds time) { custom_time = time; }
 
 private:
     bool profiling_enabled = false;
     std::chrono::high_resolution_clock::time_point _start = {};
     std::chrono::high_resolution_clock::time_point _finish = {};
+    std::chrono::nanoseconds custom_time = {};
     ProfiledObjectType& _obj;
     instrumentation::pipeline_stage _stage;
     bool cache_hit = false;

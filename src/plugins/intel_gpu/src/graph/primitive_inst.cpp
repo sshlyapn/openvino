@@ -469,6 +469,13 @@ event::ptr primitive_inst::execute(const std::vector<event::ptr>& events) {
 
         GPU_DEBUG_IF(!debug_config->dump_profiling_data.empty()) {
             get_network().get_stream().wait_for_events({ev});
+
+            auto profiling_info = ev->get_profiling_info();
+            for (const auto &interval : profiling_info) {
+                if (interval.stage == cldnn::instrumentation::profiling_stage::executing) {
+                    stage_prof.set_custom_time(interval.value->value());
+                }
+            }
         }
 
         return ev;
