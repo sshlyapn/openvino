@@ -233,6 +233,7 @@ public:
 
     /// Return in_mem_kernels_cache
     KernelsCache& get_in_mem_kernels_cache() const { return *_in_mem_kernels_cache; }
+    std::mutex& get_in_mem_kernels_cache_mutex() const { return _in_mem_kernels_cache_mutex; }
     std::mutex& get_impl_cache_mutex() const { return _in_mem_cache_mutex; }
 
     const ExecutionConfig& get_config() const { return _config; }
@@ -264,6 +265,7 @@ private:
     output_chains_map _output_chains;
 
     mutable std::mutex _in_mem_cache_mutex;
+    mutable std::mutex _in_mem_kernels_cache_mutex;
 
     void build_exec_order();
     void allocate_primitive_instance(program_node const& node);

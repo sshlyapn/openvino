@@ -11,6 +11,9 @@
 #include <cstring>
 #include <fstream>
 #include <sstream>
+#include <utility>
+#include <memory>
+#include <map>
 
 #include "openvino/util/common_util.hpp"
 
@@ -583,5 +586,19 @@ void ov::util::save_binary(const std::string& path, std::vector<uint8_t> binary)
         out_file.write(reinterpret_cast<const char*>(&binary[0]), binary.size());
     } else {
         throw std::runtime_error("Could not save binary to " + path);
+    }
+}
+
+std::vector<uint8_t> ov::util::load_binary_map(const size_t& path, std::map<size_t, std::vector<uint8_t>>& cache) {
+    if (cache.find(path) != cache.end()) {
+        return cache.find(path)->second;
+    }
+
+    return {};
+}
+
+void ov::util::save_binary_map(const size_t& path, std::vector<uint8_t> binary, std::map<size_t, std::vector<uint8_t>>& cache) {
+    if (cache.find(path) == cache.end()) {
+        cache.insert({path, binary});
     }
 }

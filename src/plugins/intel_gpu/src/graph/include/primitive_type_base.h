@@ -43,10 +43,28 @@ struct primitive_type_base : primitive_type {
 
     std::unique_ptr<primitive_impl> choose_impl(const cldnn::program_node& node, const kernel_impl_params& runtime_params) const override {
         OPENVINO_ASSERT(node.type() == this, "[GPU] primitive_type_base::choose_impl: primitive type mismatch");
-        auto factory = implementation_map<PType>::get(runtime_params, node.get_preferred_impl_type(), get_shape_type(runtime_params));
-        auto impl = factory(node, runtime_params);
-        impl->set_dynamic(get_shape_type(runtime_params) == shape_types::dynamic_shape);
-        return impl;
+        // std::function<std::unique_ptr<primitive_impl>(const typed_program_node<primitive_kind>&, const kernel_impl_params&)> factory = nullptr;
+        bool use_cldnn = true;
+        if (use_cldnn) {
+            try {
+                // std::cout << "Try select impl for " << node.id() << std::endl;
+                auto factory = implementation_map<PType>::get(runtime_params, node.get_preferred_impl_type(), get_shape_type(runtime_params));
+                auto impl = factory(node, runtime_params);
+                impl->set_dynamic(get_shape_type(runtime_params) == shape_types::dynamic_shape);
+                return impl;
+            } catch (...) {
+                // std::cout << "Catch select impl for " << node.id() << std::endl;
+                auto factory = implementation_map<PType>::get(runtime_params, impl_types::ocl, get_shape_type(runtime_params));
+                auto impl = factory(node, runtime_params);
+                impl->set_dynamic(get_shape_type(runtime_params) == shape_types::dynamic_shape);
+                return impl;
+            }
+        } else {
+            auto factory = implementation_map<PType>::get(runtime_params, node.get_preferred_impl_type(), get_shape_type(runtime_params));
+            auto impl = factory(node, runtime_params);
+            impl->set_dynamic(get_shape_type(runtime_params) == shape_types::dynamic_shape);
+            return impl;
+        }
     }
 
     bool does_an_implementation_exist(const cldnn::program_node& node) const override {

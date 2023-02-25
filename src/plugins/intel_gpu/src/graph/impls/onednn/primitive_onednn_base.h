@@ -31,6 +31,7 @@ namespace cldnn {
 namespace onednn {
 
 static std::mutex cacheAccessMutex;
+static std::map<size_t, std::vector<uint8_t>> runtime_cache;
 
 template <class PType, class PrimDescType = dnnl::primitive_desc, class PrimType = dnnl::primitive>
 struct typed_primitive_onednn_impl : public typed_primitive_impl<PType> {
@@ -328,16 +329,21 @@ private:
             cache_outpath = "";
         }
 
-        if (cache_outpath.empty()) {
+        if (cache_outpath.empty() && false) {
             _prim = PrimType(_pd);
         } else {
             std::vector<uint8_t> key = _pd.get_cache_blob_id();
             assert(!key.empty());
 
+            std::string key_str(key.begin(), key.end());
+            size_t hash = std::hash<std::string>()(key_str);
+
             std::vector<uint8_t> cache;
             {
                 std::lock_guard<std::mutex> lock(cacheAccessMutex);
-                cache = ov::util::load_binary(generate_cache_path_from_key(config, key));
+                cache = ov::util::load_binary_map(hash, runtime_cache);
+                if (cache.size() != 0)
+                    std::cout << "Extract from onednn cache = " << cache.size() << std::endl;
             }
 
             if (cache.empty()) {
@@ -346,7 +352,9 @@ private:
 
                 {
                     std::lock_guard<std::mutex> lock(cacheAccessMutex);
-                    ov::util::save_binary(generate_cache_path_from_key(config, key), cache);
+                    ov::util::save_binary_map(hash, cache, runtime_cache);
+                    // if (runtime_cache.size() <= 2)
+                    //     std::cout << "Extract from onednn cache (experimental) = " << ov::util::load_binary_map(hash, runtime_cache).size() << std::endl;
                 }
             } else {
                 _prim = PrimType(_pd, cache);

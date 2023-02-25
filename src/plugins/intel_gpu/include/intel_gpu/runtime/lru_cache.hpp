@@ -45,6 +45,19 @@ public:
     }
 
     /**
+     * @brief Get the least recently used element with key and value pair in the cache
+     *
+     * @return Value
+     */
+    std::pair<Key, Value> get_element() const {
+        if (_lru_data_list.size()) {
+            return _lru_data_list.front();
+        } else {
+            return std::make_pair(Key(), Value());
+        }
+    }
+
+    /**
      * @brief Add new value with associated key into the LRU cache
      *
      * @param key if same key is existed in the cache, the value of key is updated new entry.

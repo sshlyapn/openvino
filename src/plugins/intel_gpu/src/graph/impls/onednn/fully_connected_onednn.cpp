@@ -194,12 +194,33 @@ public:
     static std::unique_ptr<primitive_impl> create(const fully_connected_node& arg, const kernel_impl_params& impl_params) {
         auto& engine = impl_params.prog->get_engine();
         auto& config = impl_params.prog->get_config();
+
+        auto time0 = std::chrono::high_resolution_clock::now();
+
+
         auto attr = arg.get_onednn_primitive_attributes();
         auto prim = impl_params.typed_desc<fully_connected>();
+        auto time1 = std::chrono::high_resolution_clock::now();
         auto prim_desc = get_fully_connected_primitive_descriptor(impl_params, impl_params.prog->get_engine(),
                                                                   prim->input_size, !prim->bias.empty(), *attr);
+        auto time2 = std::chrono::high_resolution_clock::now();
+        auto wei = get_weights_reorder(impl_params, *prim_desc);
+        auto time3 = std::chrono::high_resolution_clock::now();
+        auto fc = cldnn::make_unique<fully_connected_onednn>(engine, config, attr, *prim_desc, wei);
+        auto time4 = std::chrono::high_resolution_clock::now();
 
-        return cldnn::make_unique<fully_connected_onednn>(engine, config, attr, *prim_desc, get_weights_reorder(impl_params, *prim_desc));
+        auto time_ = time1 - time0;
+        auto time__ = time2 - time1;
+        auto time___ = time3 - time2;
+        auto time____ = time4 - time3;
+
+        std::stringstream ss;
+        ss << "Creating of " << arg.id() << ": " << std::chrono::duration_cast<std::chrono::microseconds>(time_).count() << " "
+           << std::chrono::duration_cast<std::chrono::microseconds>(time__).count() << " "
+           << std::chrono::duration_cast<std::chrono::microseconds>(time___).count() << " "
+           << std::chrono::duration_cast<std::chrono::microseconds>(time____).count() << " " << std::endl;
+        GPU_DEBUG_TRACE_DETAIL << ss.str() << std::endl;
+        return fc;
     }
 };
 

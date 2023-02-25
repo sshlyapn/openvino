@@ -8,6 +8,7 @@
 #include <functional>
 #include <string>
 #include <vector>
+#include <map>
 
 #include "openvino/util/util.hpp"
 
@@ -277,12 +278,14 @@ FilePath get_plugin_path(const std::string& plugin, const std::string& xml_path,
  * @return binary vector
  */
 std::vector<uint8_t> load_binary(const std::string& path);
+std::vector<uint8_t> load_binary_map(const size_t& path, std::map<size_t, std::vector<uint8_t>>& cache);
 
 /**
  * @brief save binary data to file
  * @param path - binary file path to store
  */
 void save_binary(const std::string& path, std::vector<uint8_t> binary);
+void save_binary_map(const size_t& path, std::vector<uint8_t> binary, std::map<size_t, std::vector<uint8_t>>& cache);
 
 }  // namespace util
 }  // namespace ov
