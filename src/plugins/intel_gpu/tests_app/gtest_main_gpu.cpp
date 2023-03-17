@@ -62,6 +62,22 @@
 #include <intel_gpu/runtime/device_query.hpp>
 #include <memory>
 
+static double get_exectime_fc(const std::shared_ptr<event>& event)
+{
+    using namespace std::chrono;
+    double avg_time = 0.0;
+    auto intervals = event->get_profiling_info();
+    for (const auto& q : intervals)
+    {
+        if (q.stage != instrumentation::profiling_stage::executing) {
+            continue;
+        }
+        avg_time = duration_cast<duration<double, microseconds::period>>(q.value->value()).count();
+        break;
+    }
+    return avg_time;
+}
+
 // static size_t img_size = 800;
 static std::string kernel_code =
     "__attribute__((intel_reqd_sub_group_size(16)))"
@@ -240,26 +256,99 @@ void mem_perf_test_to_host_and_back_to_device(size_t buffer_size_b, int mode, in
     exit(0);
 }
 
+static std::string kernel_code2 =
+    "__attribute__((intel_reqd_sub_group_size(SUB_GROUP_SIZE)))"
+    "__attribute__((reqd_work_group_size(SUB_GROUP_SIZE, 1, 1)))"
+    "void kernel memory_read_test(const __global uint* test_data, __global uint* dst) {"
+    "    uint gid = get_global_id(0);"
+    "    uint group_id = gid / SUB_GROUP_SIZE;"
+    "    uint sum = 0;"
+    "    for (int i = 0; i < ELEMENTS_PER_THREAD / SUB_GROUP_SIZE; i++) {"
+    "        sum += test_data[group_id * ELEMENTS_PER_THREAD + i * SUB_GROUP_SIZE + gid];"
+    "    }"
+    "    dst[gid % get_local_size(0)] = sum;"
+    "}";
+
+void data_port_parallelization(size_t buffer_size_b, int hw_thread_num);
+
+void data_port_parallelization(size_t buffer_size_b, int hw_thread_num) {
+    std::cout << "Run with size " << buffer_size_b / 1024.0 << "\n";
+    auto ocl_instance = std::make_shared<OpenCL>();
+    auto& ctx = ocl_instance->_context;
+    auto& device = ocl_instance->_device;
+
+    if (!ocl_instance->_supports_usm)
+        exit(0);
+
+    const float gpu_frequency = device.getInfo<CL_DEVICE_MAX_CLOCK_FREQUENCY>() / 1000.0;
+
+    const size_t gws = 16 * hw_thread_num;
+    const size_t dt_size = sizeof(uint32_t);
+    const size_t lws = 16;
+    const size_t simd = 16;
+    const size_t test_data_size = buffer_size_b;
+    const size_t output_data_size = dt_size * simd;
+    const size_t total_elements = test_data_size / dt_size;
+    const size_t elements_per_thread = total_elements / hw_thread_num;
+    const std::string kernel_name = "memory_read_test";
+    std::string build_options = "-DELEMENTS_PER_THREAD=" + std::to_string(elements_per_thread) + " "
+                              + "-DSUB_GROUP_SIZE=" + std::to_string(simd) + " ";
+
+    std::cout << "gpu_frequency=" << gpu_frequency << "GHz" << std::endl;
+    std::cout << "gws=" << gws << " lws=" << lws << " simd=" << simd << " kernels=[" << kernel_name << "]" << std::endl;
+    std::cout << "test_data_size=" << test_data_size / 1024.0 << "KB output_data_size=" << output_data_size << "B "
+              << "buffer_size_per_thread=" << elements_per_thread * dt_size / 1024.0f << "KB threads=" << hw_thread_num << std::endl;
+
+    cl::Program program(ctx, kernel_code2);
+    program.build({device}, build_options.c_str());
+    std::stringstream dump_file;
+
+    cl::Kernel memory_kernel_cl(program, kernel_name.c_str());
+    cl::KernelIntel memory_kernel(memory_kernel_cl, *ocl_instance->_usm_helper);
+
+    std::vector<int> test_data_buffer;
+    for (size_t i = 0; i < test_data_size / sizeof(int); i++) {
+        test_data_buffer.push_back(i % 16);
+    }
+
+    cl::UsmMemory test_data_buffer_device(*ocl_instance->_usm_helper);
+    test_data_buffer_device.allocateDevice(test_data_size);
+
+    cl::UsmMemory output_buffer_device(*ocl_instance->_usm_helper);
+    output_buffer_device.allocateDevice(output_data_size);
+
+
+    cl_command_queue_properties queue_properties = CL_QUEUE_PROFILING_ENABLE;
+        // ((_profiling ? CL_QUEUE_PROFILING_ENABLE : 0) | (_out_of_order ? CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE : 0));
+
+    cl::CommandQueue queue(ctx, device, queue_properties);
+
+    ocl_instance->_usm_helper->enqueue_memcpy(queue, test_data_buffer_device.get(), test_data_buffer.data(), test_data_size, true);
+
+    memory_kernel.setArgUsm(0, output_buffer_device);
+    memory_kernel.setArgUsm(1, test_data_buffer_device);
+
+    // Flush all caches
+    queue.finish();
+
+    cl::Event ev1;
+    queue.enqueueNDRangeKernel(memory_kernel, cl::NDRange(), cl::NDRange(gws), cl::NDRange(lws), {}, &ev1);
+    cl::WaitForEvents({ev1});
+
+    cl_ulong start;
+    cl_ulong end;
+
+    ev1.getProfilingInfo(CL_PROFILING_COMMAND_START, &start);
+    ev1.getProfilingInfo(CL_PROFILING_COMMAND_END, &end);
+    auto diff = (end - start) / 1000.0f;
+
+    std::cout << "Kernel time = " << diff << "us" << std::endl;
+}
+
 using namespace tests;
 
 void run_dynamic(size_t seq_len);
 void run_static(size_t seq_len);
-
-static double get_exectime_fc(const std::shared_ptr<event>& event)
-{
-    using namespace std::chrono;
-    double avg_time = 0.0;
-    auto intervals = event->get_profiling_info();
-    for (const auto& q : intervals)
-    {
-        if (q.stage != instrumentation::profiling_stage::executing) {
-            continue;
-        }
-        avg_time = duration_cast<duration<double, microseconds::period>>(q.value->value()).count();
-        break;
-    }
-    return avg_time;
-}
 
 
 void run_dynamic(size_t seq_len) {
@@ -499,6 +588,30 @@ auto& engine = get_test_engine();
 }
 
 int main(int argc, char** argv) {
+    std::cout << "Port data\n";
+    if (argc == 4) {
+        std::string unit = argv[2];
+        std::transform(unit.begin(), unit.end(), unit.begin(),
+            [](unsigned char c){ return std::toupper(c); });
+
+        size_t buffer_size_b = atoi(argv[1]);
+        if (unit == "B")
+            buffer_size_b *= 1;
+        else if (unit == "KB")
+            buffer_size_b *= 1024;
+        else if (unit == "MB")
+            buffer_size_b *= 1024 * 1024;
+        else
+            std::cout << "Unsupported unit\n";
+
+        size_t threads_num = atoi(argv[3]);
+
+        data_port_parallelization(buffer_size_b, threads_num);
+    }
+
+    exit(0);
+
+
     if (argc == 1) {
         mem_perf_test_to_host_and_back_to_device();
     } else if (argc == 2) {
