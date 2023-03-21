@@ -21,6 +21,9 @@
 
 #include "primitive_inst.h"
 #include "input_layout_inst.h"
+#include "fully_connected_inst.h"
+#include "convolution_inst.h"
+#include "deconvolution_inst.h"
 #include "mutable_data_inst.h"
 #include "condition_inst.h"
 #include "loop_inst.h"
@@ -300,6 +303,18 @@ static uint32_t get_unique_net_id() {
     return ++id_gen;
 }
 
+static size_t get_weights_size(const program_node& node) {
+    size_t weights_size = 0;
+    if (node.is_type<fully_connected>()) {
+        weights_size = node.as<fully_connected>().weights().get_output_layout().bytes_count();
+    } else if (node.is_type<convolution>()) {
+        weights_size = node.as<convolution>().weights().get_output_layout().bytes_count();
+    } else if (node.is_type<deconvolution>()) {
+        weights_size = node.as<deconvolution>().weights().get_output_layout().bytes_count();
+    }
+    return weights_size;
+}
+
 /*
 Network will always have net_id = 0 when it will be cldnn internal micronetwork (created i.e by propagate_constants
 opt pass).
@@ -321,6 +336,30 @@ network::network(program::ptr program, const ExecutionConfig& config, stream::pt
     GPU_DEBUG_GET_INSTANCE(debug_config);
     GPU_DEBUG_IF(debug_config->after_proc.size() != 0) {
         wait_for_the_turn();
+    }
+
+    size_t total_weights_size = 0;
+    auto& po = _program->get_processing_order();
+    for (auto node : po) {
+        total_weights_size += get_weights_size(_program->get_node(node->id()));
+    }
+
+    if (total_weights_size) {
+        std::cout << "total_weights_size= " << total_weights_size << std::endl;
+
+        total_weights_size *= config.get_property(ov::streams::num);
+        const size_t required_cached_weights_capacity = 3;
+        const size_t max_device_mem_size = _engine.get_device_info().max_global_mem_size;
+        const size_t max_cached_weights_capacity = max_device_mem_size / total_weights_size;
+
+        if (max_cached_weights_capacity >= required_cached_weights_capacity)
+            _weights_cache_capacity = required_cached_weights_capacity;
+        else if (max_cached_weights_capacity >= 1)
+            _weights_cache_capacity = max_cached_weights_capacity;
+        else
+            _weights_cache_capacity = 1;
+
+        std::cout << "Set weights capacity = " << _weights_cache_capacity << "(" << total_weights_size / 1024.0 << "KB/" << max_device_mem_size / 1024.0 << "KB)\n";
     }
 
     allocate_primitives();

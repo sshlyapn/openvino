@@ -146,6 +146,12 @@ std::vector<layout> fully_connected_inst::calc_output_layouts(fully_connected_no
         output_type = impl_param.get_fused_output_layout().data_type;
     }
 
+    std::cout << "Input " << input_layout.to_short_string() << " wei " << weights_layout.to_short_string() << std::endl;
+    auto weights_shape = weights_layout.get<ShapeType>().get_shape();
+    weights_shape.erase(std::remove(weights_shape.begin(), weights_shape.end(), 1), weights_shape.end());
+    weights_layout.set_partial_shape(weights_shape);
+    std::cout << "Input " << input_layout.to_short_string() << " wei " << weights_layout.to_short_string() << std::endl;
+
     ov::op::v0::MatMul op;
     op.set_transpose_b(true);
     std::vector<ShapeType> output_shapes = {ShapeType()};

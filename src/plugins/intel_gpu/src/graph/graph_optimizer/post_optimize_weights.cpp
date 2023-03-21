@@ -33,7 +33,10 @@ void post_optimize_weights::optimize_weights(T& node, program& p) {
     if (!impl)
         return;
 
-    if (impl->is_dynamic())
+    bool is_fc = node.type() == fully_connected::type_id();
+    is_fc = false;
+
+    if (impl->is_dynamic() && !is_fc)
         return;
 
     auto output_layout = node.get_output_layout();
@@ -50,7 +53,13 @@ void post_optimize_weights::optimize_weights(T& node, program& p) {
             p.add_intermediate(reorder.first, node, i, !reorder.second);
             // set generic_layer's node output layout and implementation
             auto& g_node = node.get_dependency(i);
-            g_node.get_output_layout(false);
+            auto o_layout = g_node.get_output_layout(false);
+
+            if (is_fc) {
+                o_layout.set_partial_shape(weights_layout.get_partial_shape());
+                g_node.set_output_layout(o_layout);
+                std::cout << "Weight optimize " << node.id() << ": " << o_layout.to_short_string() << std::endl;
+            }
 
             // Don't run impl selection to avoid double compilation of reorder kernels
             // in main program and internal program for constant propagation

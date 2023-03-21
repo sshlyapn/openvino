@@ -236,6 +236,7 @@ public:
     std::mutex& get_impl_cache_mutex() const { return _in_mem_cache_mutex; }
 
     const ExecutionConfig& get_config() const { return _config; }
+    size_t _weights_cache_capacity = 1;
 
 private:
     using output_chains_map = std::map<primitive_id, std::vector<std::shared_ptr<primitive_inst>>>;
