@@ -19,12 +19,15 @@
 
 #include "reorder/reorder_weights_kernel_selector.h"
 #include "reorder/reorder_kernel_base.h"
+#include "runtime/ocl/ocl_event.hpp"
+#include "runtime/ocl/ocl_stream.hpp"
 
 #include <vector>
 #include <list>
 #include <utility>
 
 #include <oneapi/dnnl/dnnl.hpp>
+#include <oneapi/dnnl/dnnl_ocl.hpp>
 
 namespace cldnn {
 namespace onednn {
@@ -470,7 +473,7 @@ protected:
         _args[net_id] = get_arguments(instance);
     }
 
-    event::ptr execute_impl(const std::vector<event::ptr>& /* events */,
+    event::ptr execute_impl(const std::vector<event::ptr>& events,
                             typed_primitive_inst<PType>& instance) override {
         auto& network = instance.get_network();
         auto& stream = network.get_stream();
@@ -483,7 +486,30 @@ protected:
         }
 
         if (!instance.can_be_optimized()) {
-            _prim.execute(stream.get_onednn_stream(), _args[net_id]);
+            if (stream.get_queue_type() == QueueTypes::in_order) {
+                _prim.execute(stream.get_onednn_stream(), _args[net_id]);
+            } else {
+                auto& ocl_stream = downcast<ocl::ocl_stream>(stream);
+                if (ocl_stream.get_sync_method() == ocl::sync_methods::events) {
+                    std::vector<cl_event> dep_events;
+                    for (const auto& ev : events) {
+                    if (auto ocl_base_ev = std::dynamic_pointer_cast<cldnn::ocl::ocl_base_event>(ev)) {
+                            if (ocl_base_ev->get().get() != nullptr)
+                                dep_events.push_back(ocl_base_ev->get().get());
+                        }
+                    }
+                    printf("Execute\n");
+                    cl_event ev = dnnl::ocl_interop::execute(_prim, stream.get_onednn_stream(), _args[net_id], dep_events);
+                    OPENVINO_ASSERT(ev != nullptr, "Nullptr ev");
+                    return ocl_stream.create_ocl_event(cl::Event(ev));
+                } else if (ocl_stream.get_sync_method() == ocl::sync_methods::barriers) {
+                    ocl_stream.sync_events(events, false);
+                    dnnl::ocl_interop::execute(_prim, stream.get_onednn_stream(), _args[net_id], {});
+                    return ocl_stream.create_ocl_event(cl::Event());
+                } else {
+                    OPENVINO_ASSERT(false, "Unexpected sync method");
+                }
+            }
         }
 
         if (_enable_profiling) {

@@ -184,8 +184,44 @@ void set_arguments_impl(ocl_kernel_type& kernel,
 sync_methods get_expected_sync_method(const ExecutionConfig& config) {
     auto profiling = config.get_property(ov::enable_profiling);
     auto queue_type = config.get_property(ov::intel_gpu::queue_type);
-    return profiling ? sync_methods::events : queue_type == QueueTypes::out_of_order ? sync_methods::barriers
-                                                                                     : sync_methods::none;
+
+    std::string sync_method_var = "SYNC";
+    sync_methods method;
+    bool found = false;
+    if (const auto env_var = std::getenv(sync_method_var.c_str())) {
+        auto val = env_var;
+        if (std::string("EV").find(val) != std::string::npos) {
+            method = sync_methods::events;
+            found = true;
+        }
+        else if (std::string("BAR").find(val) != std::string::npos) {
+            method = sync_methods::barriers;
+            found = true;
+        } else if (std::string("NONE").find(val) != std::string::npos) {
+            method = sync_methods::none;
+            found = true;
+        }
+    }
+
+    auto str_type = [&](sync_methods s) {
+        if (s == sync_methods::events)
+            return "events";
+        else if (s == sync_methods::barriers)
+            return "barriers";
+        else
+            return "none";
+    };
+
+    if (found) {
+        std::cout << "Use overrided method: " << str_type(method) << std::endl;
+        return method;
+    }
+
+    method = profiling ? sync_methods::events : queue_type == QueueTypes::out_of_order ? sync_methods::barriers
+                                                                                       : sync_methods::none;
+
+    std::cout << "Use default method " << str_type(method) << std::endl;
+    return method;
 }
 
 }  // namespace
@@ -226,9 +262,10 @@ ocl_stream::ocl_stream(const ocl_engine &engine, const ExecutionConfig& config, 
 
 #ifdef ENABLE_ONEDNN_FOR_GPU
 dnnl::stream& ocl_stream::get_onednn_stream() {
-    OPENVINO_ASSERT(queue_type == QueueTypes::in_order, "[GPU] Can't create onednn stream handle as onednn doesn't support out-of-order queue");
+    // OPENVINO_ASSERT(queue_type == QueueTypes::in_order, "[GPU] Can't create onednn stream handle as onednn doesn't support out-of-order queue");
     OPENVINO_ASSERT(_engine.get_device_info().vendor_id == INTEL_VENDOR_ID, "[GPU] Can't create onednn stream handle as for non-Intel devices");
     if (!_onednn_stream) {
+        std::cout << "Create OneDNN " << queue_type << " stream";
         _onednn_stream = std::make_shared<dnnl::stream>(dnnl::ocl_interop::make_stream(_engine.get_onednn_engine(), _command_queue.get()));
     }
 
@@ -298,6 +335,10 @@ event::ptr ocl_stream::enqueue_kernel(kernel& kernel,
     }
 
     return std::make_shared<ocl_event>(ret_ev, ++_queue_counter);
+}
+
+event::ptr ocl_stream::create_ocl_event(cl::Event event) {
+    return std::make_shared<ocl_event>(event, ++_queue_counter);
 }
 
 void ocl_stream::enqueue_barrier() {

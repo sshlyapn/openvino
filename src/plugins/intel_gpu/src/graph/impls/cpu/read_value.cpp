@@ -6,6 +6,7 @@
 #include "implementation_map.hpp"
 #include "register.hpp"
 #include "intel_gpu/runtime/error_handler.hpp"
+#include "runtime/ocl/ocl_event.hpp"
 
 namespace cldnn {
 namespace cpu {
@@ -43,6 +44,10 @@ struct read_value_impl : public typed_primitive_impl<read_value> {
     }
 
     event::ptr execute_impl(const std::vector<event::ptr>& events, read_value_inst& instance) override {
+        // std::vector<cl_event> dep_events;
+        // for (const auto& ev : events) {
+        //     dep_events.push_back((&downcast<ocl::ocl_event>(ev.get())->get()).get());
+        // }
         for (auto e : events) {
             e->wait();
         }

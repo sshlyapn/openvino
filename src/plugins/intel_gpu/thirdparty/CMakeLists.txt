@@ -58,6 +58,7 @@ if(ENABLE_ONEDNN_FOR_GPU)
             INSTALL_DIR "${ONEDNN_INSTALL_DIR}"
             PREFIX "${ONEDNN_PREFIX_DIR}"
             EXCLUDE_FROM_ALL ON
+            BUILD_ALWAYS ON
             CMAKE_CACHE_ARGS
                 # The arguments below requires list to be passed as argument
                 # which doesn't work properly when passed to CMAKE_ARGS.

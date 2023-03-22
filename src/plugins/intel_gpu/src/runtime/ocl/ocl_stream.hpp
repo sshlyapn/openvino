@@ -77,6 +77,8 @@ public:
     void enqueue_barrier() override;
     event::ptr create_user_event(bool set) override;
     event::ptr create_base_event() override;
+    event::ptr create_ocl_event(cl::Event event);
+    sync_methods get_sync_method() { return sync_method; };
 
     const cl::UsmHelper& get_usm_helper() const { return _engine.get_usm_helper(); }
 
@@ -86,8 +88,8 @@ public:
     dnnl::stream& get_onednn_stream() override;
 #endif
 
-private:
     void sync_events(std::vector<event::ptr> const& deps, bool is_output = false);
+private:
 
     const ocl_engine& _engine;
     ocl_queue_type _command_queue;

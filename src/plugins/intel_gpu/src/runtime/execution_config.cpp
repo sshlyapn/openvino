@@ -195,7 +195,28 @@ void ExecutionConfig::apply_user_properties(const cldnn::device_info& info) {
     }
 
     if (info.supports_immad) {
+        std::cout << "Force queue for immad\n";
         set_property(ov::intel_gpu::queue_type(QueueTypes::in_order));
+    }
+
+    std::cout << "HERE\n";
+    std::string queue_method_var = "QUEUE";
+    QueueTypes method;
+    bool found = false;
+    if (const auto env_var = std::getenv(queue_method_var.c_str())) {
+        auto val = env_var;
+        if (std::string("OOO").find(val) != std::string::npos) {
+            method = QueueTypes::out_of_order;
+            found = true;
+        } else if (std::string("IO").find(val) != std::string::npos) {
+            method = QueueTypes::in_order;
+            found = true;
+        }
+    }
+
+    if (found) {
+        std::cout << "Use overrided queue type: " << method << std::endl;
+        set_property(ov::intel_gpu::queue_type(method));
     }
 
     user_properties.clear();
