@@ -21,6 +21,9 @@
 
 #include "primitive_inst.h"
 #include "input_layout_inst.h"
+#include "fully_connected_inst.h"
+#include "convolution_inst.h"
+#include "deconvolution_inst.h"
 #include "mutable_data_inst.h"
 #include "condition_inst.h"
 #include "loop_inst.h"
@@ -323,6 +326,7 @@ network::network(program::ptr program, const ExecutionConfig& config, stream::pt
         wait_for_the_turn();
     }
 
+    calculate_weights_cache_capacity();
     allocate_primitives();
     configure_primitives_second_output();
     check_names();
@@ -685,6 +689,39 @@ void network::add_default_output_chains() {
     GPU_DEBUG_DEFINE_MEM_LOGGER("add_default_output_chains");
     for (auto& output : _outputs) {
         add_output_chain(output);
+    }
+}
+
+void network::calculate_weights_cache_capacity() {
+    auto get_weights_size = [](const program_node& node) {
+        size_t weights_size = 0;
+        if (node.is_type<fully_connected>()) {
+            weights_size = node.as<fully_connected>().weights().get_output_layout().bytes_count();
+        } else if (node.is_type<convolution>()) {
+            weights_size = node.as<convolution>().weights().get_output_layout().bytes_count();
+        } else if (node.is_type<deconvolution>()) {
+            weights_size = node.as<deconvolution>().weights().get_output_layout().bytes_count();
+        }
+
+        return weights_size;
+    };
+
+    size_t total_weights_size = 0;
+    for (auto node : _program->get_processing_order())
+        total_weights_size += get_weights_size(*node);
+
+    total_weights_size *= _config.get_property(ov::streams::num);
+
+    if (total_weights_size != 0) {
+        const size_t required_weights_cache_capacity = 3;
+        const size_t max_device_mem_size = _engine.get_device_info().max_global_mem_size;
+        const size_t max_weights_cache_capacity = max_device_mem_size / total_weights_size;
+
+        if (max_weights_cache_capacity >= required_weights_cache_capacity) {
+            _weights_cache_capacity = required_weights_cache_capacity;
+        } else if (max_weights_cache_capacity >= 1) {
+            _weights_cache_capacity = max_weights_cache_capacity;
+        }
     }
 }
 
