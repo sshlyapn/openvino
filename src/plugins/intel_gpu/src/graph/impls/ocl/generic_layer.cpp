@@ -45,6 +45,16 @@ struct generic_layer_impl : typed_primitive_impl<generic_layer> {
         _kernel_id = cache.set_kernel_source(_cl_kernel_data.code.kernelString, false);
     }
 
+    generic_layer_impl(const kernel_impl_params& params)
+        : _cl_kernel_data()
+        , _kernel(nullptr)
+        , _kernel_id() {
+        auto reorder_params = params.typed_desc<generic_layer>()->params;
+        auto casted_params = std::dynamic_pointer_cast<WeightsReorderParamsOCL>(reorder_params);
+        OPENVINO_ASSERT(casted_params, "[GPU] Invalid weights reorder parameters type for ", params.desc->id, " node");
+        _cl_kernel_data = *casted_params->cl_kernel;
+    }
+
     void save(BinaryOutputBuffer& ob) const override {
         ob <<_cl_kernel_data;
         ob << _kernel_id;
@@ -100,8 +110,8 @@ struct generic_layer_impl : typed_primitive_impl<generic_layer> {
         return stream.enqueue_kernel(*_kernel, _cl_kernel_data.params, args, events, true);
     }
 
-    static std::unique_ptr<primitive_impl> create(kernels_cache& cache, const kernel_impl_params& params) {
-        return make_unique<generic_layer_impl>(cache, params);
+    static std::unique_ptr<primitive_impl> create(const kernel_impl_params& params) {
+        return make_unique<generic_layer_impl>(params);
     }
 };
 

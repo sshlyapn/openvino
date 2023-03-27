@@ -46,6 +46,16 @@ struct generic_layer : public primitive_base<generic_layer> {
         return seed;
     }
 
+    bool operator==(const primitive& rhs) const override {
+        if (!compare_common_params(rhs))
+            return false;
+
+        auto rhs_casted = downcast<const generic_layer>(rhs);
+
+        return params->get_input_layout() == rhs_casted.params->get_input_layout() &&
+               params->get_output_layout() == rhs_casted.params->get_output_layout();
+    }
+
 protected:
     std::vector<std::reference_wrapper<const primitive_id>> get_dependencies() const override { return {}; }
 };

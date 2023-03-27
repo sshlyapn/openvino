@@ -42,7 +42,8 @@ class typed_primitive_inst;
 struct primitive_impl {
     primitive_impl() = default;
     explicit primitive_impl(std::shared_ptr<WeightsReorderParams> params, std::string kernel_name = "", bool is_dynamic = false)
-        : _weights_reorder_params(params), _kernel_name(kernel_name), _is_dynamic(is_dynamic) {}
+        : _weights_reorder_params(params), _kernel_name(kernel_name), _is_dynamic(is_dynamic) {
+    }
     explicit primitive_impl(std::string kernel_name, bool is_dynamic = false) :
         primitive_impl(nullptr, kernel_name, is_dynamic) {}
     virtual ~primitive_impl() = default;
@@ -85,6 +86,19 @@ struct primitive_impl {
     bool need_weights_reorder() const { return _weights_reorder_params != nullptr; }
     std::shared_ptr<WeightsReorderParams> get_weights_reorder_params() const { return _weights_reorder_params; }
     void reset_weights_reorder_params() { _weights_reorder_params = nullptr; }
+
+    std::shared_ptr<kernel_impl_params> get_weights_reorder_kernel_params() const {
+        if (_weights_reorder_params == nullptr)
+            return nullptr;
+
+        auto reorder_kernel_params = std::make_shared<kernel_impl_params>();
+        auto prim = std::make_shared<generic_layer>("", "", _weights_reorder_params);
+        reorder_kernel_params->desc = prim;
+        reorder_kernel_params->unique_id = _weights_reorder_params->hash();
+        reorder_kernel_params->input_layouts.push_back(_weights_reorder_params->get_input_layout());
+        reorder_kernel_params->output_layouts.push_back(_weights_reorder_params->get_output_layout());
+        return reorder_kernel_params;
+    }
 
 protected:
     std::shared_ptr<WeightsReorderParams> _weights_reorder_params = nullptr;
