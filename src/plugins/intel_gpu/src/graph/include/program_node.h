@@ -20,6 +20,7 @@
 #include <list>
 #include <algorithm>
 #include <thread>
+#include <condition_variable>
 
 namespace cldnn {
 
@@ -35,6 +36,98 @@ struct typed_program_node;
 
 class json_composite;
 class xml_composite;
+
+template <typename T>
+class Task {
+public:
+    using ptr = std::shared_ptr<Task>;
+
+    template <typename Key, typename ResT, typename KeyHasher>
+    friend class SyncTaskProcessor;
+private:
+    std::function<T()> _task;
+    bool _is_finished = false;
+    std::condition_variable _cv;
+    std::mutex _mutex;
+    T _result;
+};
+
+template <typename Key, typename ResT, typename KeyHasher = std::hash<Key>>
+class SyncTaskProcessor {
+public:
+    ResT execute_task(const Key& key, std::function<ResT()>&& func);
+private:
+    bool has_task(const Key& key);
+    void remove_task(const Key& key);
+    typename Task<ResT>::ptr add_task(const Key& key, std::function<ResT()>&& func);
+    typename Task<ResT>::ptr get_task(const Key& key);
+
+    std::unordered_map<Key, typename Task<ResT>::ptr> _tasks;
+    std::mutex _mutex;
+};
+
+template <typename Key, typename ResT, typename KeyHasher>
+ResT SyncTaskProcessor<Key, ResT, KeyHasher>::execute_task(const Key& key, std::function<ResT()>&& func) {
+    typename Task<ResT>::ptr task = nullptr;
+    bool compute_thread = false;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (has_task(key)) {
+            task = get_task(key);
+        } else {
+            task = add_task(key, std::forward<std::function<ResT()>>(func));
+            compute_thread = true;
+        }
+    }
+
+    if (task == nullptr) {
+        // TODO: assert if nullptr
+        std::cout << "Unexpected nullptr for task\n";
+        exit(0);
+    }
+
+    if (compute_thread) {
+        std::unique_lock<std::mutex> task_lock(task->_mutex);
+        task->_result = task->_task();
+        task->_is_finished = true;
+        task_lock.unlock();
+        task->_cv.notify_all();
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            remove_task(key);
+        }
+    } else {
+        std::unique_lock<std::mutex> task_lock(task->_mutex);
+        task->_cv.wait(task_lock, [&](){ return task->_is_finished; });
+    }
+    return task->_result;
+}
+
+template <typename Key, typename ResT, typename KeyHasher>
+bool SyncTaskProcessor<Key, ResT, KeyHasher>::has_task(const Key& key) {
+    return _tasks.find(key) != _tasks.end();
+}
+
+template <typename Key, typename ResT, typename KeyHasher>
+typename Task<ResT>::ptr SyncTaskProcessor<Key, ResT, KeyHasher>::add_task(const Key& key, std::function<ResT()>&& func) {
+    auto task = std::make_shared<Task<ResT>>();
+    task->_task = func;
+    _tasks.emplace(key, task);
+    return task;
+}
+
+template <typename Key, typename ResT, typename KeyHasher>
+void SyncTaskProcessor<Key, ResT, KeyHasher>::remove_task(const Key& key) {
+    auto iter = _tasks.find(key);
+    _tasks.erase(iter);
+}
+
+template <typename Key, typename ResT, typename KeyHasher>
+typename Task<ResT>::ptr SyncTaskProcessor<Key, ResT, KeyHasher>::get_task(const Key& key) {
+    auto iter = _tasks.find(key);
+    // TODO: assert if not found
+    return iter->second;
+}
 
 /*
     Base class for all primitives which wraps API class and extends it to be used
@@ -390,6 +483,11 @@ public:
     void init_preferred_fmt(size_t dep_size, size_t user_size);
     void set_preferred_input_fmt(size_t idx, format::type type);
     void set_preferred_output_fmt(size_t idx, format::type type);
+
+    // using weights_dep = memory::ptr;
+    using weights_dep = std::pair<memory::ptr, event::ptr>;
+    mutable SyncTaskProcessor<format::type, weights_dep> weights_reorderer;
+    mutable SyncTaskProcessor<event::ptr, bool> weights_reorderer2;
 
 protected:
     size_t unique_id = 0;
