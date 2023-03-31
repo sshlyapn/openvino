@@ -290,6 +290,7 @@ protected:
 
     std::vector<memory::cptr> _intermediates_memory;
 
+    memory::ptr _weights_memory = nullptr;
     mutable LruCache<layout, memory::ptr, layout::Hasher> _reordered_weights_cache;
 
     // Buffer to store actual shapes of dynamic tensor which is automatically asigned as 1st argument to shape agnostic kernels

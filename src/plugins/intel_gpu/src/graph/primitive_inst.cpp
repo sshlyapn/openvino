@@ -438,6 +438,7 @@ event::ptr primitive_inst::execute(const std::vector<event::ptr>& events) {
     GPU_DEBUG_GET_INSTANCE(debug_config);
 
     std::vector<event::ptr> dependencies;
+    event::ptr weights_ev = nullptr;
     if (is_dynamic()) {
         OPENVINO_ASSERT(_node != nullptr, "[GPU] Invalid primitive_inst object for dynamic shapes case: program_node can't be null");
         update_shape();
@@ -478,12 +479,11 @@ event::ptr primitive_inst::execute(const std::vector<event::ptr>& events) {
         // Only try update weight and realloc when impl is updated.
         if (shape_changed() || !_impl || (!shape_changed() && _impl->is_dynamic())) {
             if (update_impl()) {
-                auto ev = update_weights();
-                if (ev)
-                    dependencies.push_back(ev);
+                weights_ev = update_weights();
                 auto ev_reset = realloc_if_needed();
                 if (ev_reset)
                     dependencies.push_back(ev_reset);
+                realloc_if_needed();
             }
         }
     }
@@ -522,6 +522,10 @@ event::ptr primitive_inst::execute(const std::vector<event::ptr>& events) {
     }
 
     {
+        if (weights_ev) {
+            get_network().get_stream().wait_for_events({weights_ev});
+        }
+
         GPU_DEBUG_PROFILED_STAGE(instrumentation::pipeline_stage::inference);
         auto ev = _impl->execute(dependencies, *this);
 
@@ -740,7 +744,13 @@ event::ptr primitive_inst::update_weights() {
     // Set original patrial shape, because it may be lost during kernel_selector::weights_tensor -> layout conversion
     expected_layout.set_partial_shape(original_weights_memory->get_layout().get_partial_shape());
 
-    if (reorder_kernel_params && !_reordered_weights_cache.has(expected_layout)) {
+    auto weights_mem = _reordered_weights_cache.get(expected_layout);
+
+    if (weights_mem) {
+        _weights_memory = weights_mem;
+        _impl_params->weights_layout = optional_layout(expected_layout);
+        return nullptr;
+    } else if (reorder_kernel_params) {
         GPU_DEBUG_PROFILED_STAGE_CACHE_HIT(false);
         auto original_layout = original_weights_memory->get_layout();
         auto& engine = _network.get_engine();
@@ -748,60 +758,64 @@ event::ptr primitive_inst::update_weights() {
 
         auto reorder_inst = std::make_shared<generic_layer_inst>(get_network());
 
-        auto& cache = get_network().get_program()->get_implementations_cache();
-        auto& kernels_cache = get_network().get_program()->get_kernels_cache();
-        if (auto cached_impl = cache.get(*reorder_kernel_params)) {
-            reorder_inst->set_impl(cached_impl->clone());
-        } else {
-            auto factory = WeightsReordersFactory::get(impl_types::ocl, shape_types::static_shape);
-            auto reorder_impl = factory(*reorder_kernel_params);
-            auto kernels = kernels_cache.compile(*reorder_kernel_params, reorder_impl->get_kernels_source());
-            OPENVINO_ASSERT(kernels.size() == 1, "The output of kernel compile has issue");
-            reorder_impl->set_kernels(kernels);
-            cache.add(*reorder_kernel_params, reorder_impl->clone());
+        auto result = _node->weights_reorderer.execute_task(expected_layout.format, [&]() {
+            auto& cache = get_network().get_program()->get_implementations_cache();
+            auto& kernels_cache = get_network().get_program()->get_kernels_cache();
+            if (auto cached_impl = cache.get(*reorder_kernel_params)) {
+                reorder_inst->set_impl(cached_impl->clone());
+            } else {
+                auto factory = WeightsReordersFactory::get(impl_types::ocl, shape_types::static_shape);
+                auto reorder_impl = factory(*reorder_kernel_params);
+                auto kernels = kernels_cache.compile(*reorder_kernel_params, reorder_impl->get_kernels_source());
+                OPENVINO_ASSERT(kernels.size() == 1, "The output of kernel compile has issue");
+                reorder_impl->set_kernels(kernels);
+                cache.add(*reorder_kernel_params, reorder_impl->clone());
 
-            reorder_inst->set_impl(std::move(reorder_impl));
-        }
+                reorder_inst->set_impl(std::move(reorder_impl));
+            }
 
-        bool can_reuse = false;
-        memory::ptr weights_memory = nullptr;
-        if (_reordered_weights_cache.is_full()) {
-            weights_memory = _reordered_weights_cache.get_lru_element().second;
-            can_reuse = weights_memory->size() <= expected_layout.bytes_count() && weights_memory != original_weights_memory;
-        }
+            bool can_reuse = false;
+            memory::ptr weights_memory = nullptr;
+            if (_reordered_weights_cache.is_full()) {
+                weights_memory = _reordered_weights_cache.get_lru_element().second;
+                can_reuse = weights_memory->size() <= expected_layout.bytes_count() && weights_memory != original_weights_memory;
+            }
 
-        if (can_reuse) {
-            GPU_DEBUG_TRACE_DETAIL << id() << ": reuse weights memory" << std::endl;
-            weights_memory = engine.reinterpret_buffer(*weights_memory, expected_layout);
-        } else {
-            GPU_DEBUG_TRACE_DETAIL << id() << ": allocate weights memory" << std::endl;
-            auto alloc_type = engine.get_preferred_memory_allocation_type();
-            weights_memory = engine.allocate_memory(expected_layout, alloc_type);
-        }
+            if (can_reuse) {
+                GPU_DEBUG_TRACE_DETAIL << id() << ": reuse weights memory" << std::endl;
+                weights_memory = engine.reinterpret_buffer(*weights_memory, expected_layout);
+            } else {
+                GPU_DEBUG_TRACE_DETAIL << id() << ": allocate weights memory" << std::endl;
+                auto alloc_type = engine.get_preferred_memory_allocation_type();
+                weights_memory = engine.allocate_memory(expected_layout, alloc_type);
+            }
 
-        _reordered_weights_cache.add(expected_layout, weights_memory);
+            kernel_arguments_data args;
+            args.inputs.push_back(original_weights_memory);
+            args.outputs.push_back(weights_memory);
+
+            auto reorder_impl = reorder_inst->get_impl();
+            reorder_impl->set_arguments(*reorder_inst, args);
+            auto ev = reorder_impl->execute({}, *reorder_inst);
+
+            GPU_DEBUG_GET_INSTANCE(debug_config);
+            GPU_DEBUG_IF(!debug_config->dump_profiling_data.empty()) {
+                stream.wait_for_events({ev});
+            }
+
+            return std::make_shared<std::pair<memory::ptr, event::ptr>>(std::make_pair(weights_memory, ev));
+        });
+
+        _reordered_weights_cache.add(expected_layout, result->first);
         _impl_params->weights_layout = optional_layout(expected_layout);
         GPU_DEBUG_TRACE_DETAIL << id() << ": update weights cache: " << expected_layout.to_short_string() << " cache_size="
                                << _reordered_weights_cache.size() << "/" << _reordered_weights_cache.capacity() << std::endl;
 
-        kernel_arguments_data args;
-        args.inputs.push_back(original_weights_memory);
-        args.outputs.push_back(weights_memory);
-
-        auto reorder_impl = reorder_inst->get_impl();
-        reorder_impl->set_arguments(*reorder_inst, args);
-        auto ev = reorder_impl->execute({}, *reorder_inst);
-
-        GPU_DEBUG_GET_INSTANCE(debug_config);
-        GPU_DEBUG_IF(!debug_config->dump_profiling_data.empty()) {
-            stream.wait_for_events({ev});
-        }
-
-        return ev;
+        return result->second;
     } else if (reorder_kernel_params == nullptr) {
         // If kernel says that it doesn't require weights reorder, but weights were reordered previously, then
         // incorrect memory buffer may be assigned, so push front original memory in LRU cache
-        _reordered_weights_cache.add(expected_layout, original_weights_memory);
+        _weights_memory = nullptr;
         _impl_params->weights_layout = optional_layout(expected_layout);
     }
     GPU_DEBUG_PROFILED_STAGE_CACHE_HIT(true);
