@@ -445,6 +445,7 @@ event::ptr primitive_inst::execute(const std::vector<event::ptr>& events) {
     GPU_DEBUG_GET_INSTANCE(debug_config);
 
     std::vector<event::ptr> dependencies;
+    event::ptr weights_ev = nullptr;
     if (is_dynamic()) {
         OPENVINO_ASSERT(_node != nullptr, "[GPU] Invalid primitive_inst object for dynamic shapes case: program_node can't be null");
         update_shape();
@@ -485,9 +486,9 @@ event::ptr primitive_inst::execute(const std::vector<event::ptr>& events) {
         // Only try update weight and realloc when impl is updated.
         if (shape_changed() || !_impl || (!shape_changed() && _impl->is_dynamic())) {
             if (update_impl()) {
-                auto ev = update_weights();
-                if (ev)
-                    dependencies.push_back(ev);
+                weights_ev = update_weights();
+                // if (weights_ev)
+                //     dependencies.push_back(weights_ev);
                 auto ev_reset = realloc_if_needed();
                 if (ev_reset)
                     dependencies.push_back(ev_reset);
@@ -529,6 +530,15 @@ event::ptr primitive_inst::execute(const std::vector<event::ptr>& events) {
     }
 
     {
+        if (weights_ev) {
+            get_network().get_stream().wait_for_events({weights_ev});
+            // _node->weights_reorderer2.execute_task(weights_ev, [&]() {
+            //     std::cout << "Wait for event\n";
+            //     get_network().get_stream().wait_for_events({weights_ev});
+            //     return true;
+            // });
+        }
+
         GPU_DEBUG_PROFILED_STAGE(instrumentation::pipeline_stage::inference);
         auto ev = _impl->execute(dependencies, *this);
 
