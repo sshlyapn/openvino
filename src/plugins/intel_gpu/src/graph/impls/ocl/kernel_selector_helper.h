@@ -440,4 +440,12 @@ private:
     std::shared_ptr<kernel_selector::clKernelData> cl_kernel;
 };
 
+inline std::shared_ptr<WeightsReorderParams> create_weights_reorder_params(const kernel_selector::WeightsReorderParams& params) {
+    if (params.engine == kernel_selector::generic_kernel_params::Engine::NONE) {
+        return nullptr;
+    }
+
+    return std::make_shared<WeightsReorderParamsOCL>(params);
+}
+
 }  // namespace cldnn

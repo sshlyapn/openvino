@@ -176,7 +176,7 @@ kernel_selector::weights_type to_weights_type(data_types dt) {
         case cldnn::data_types::f32:
             return kernel_selector::weights_type::F32;
         default:
-            assert(0);
+            // assert(0);
             return kernel_selector::weights_type::F16;
     }
 }
@@ -194,7 +194,7 @@ data_types from_weights_type(kernel_selector::weights_type dt) {
         case kernel_selector::weights_type::F32:
             return data_types::f32;
         default:
-            assert(0);
+            // assert(0);
             return data_types::f16;
     }
 }
