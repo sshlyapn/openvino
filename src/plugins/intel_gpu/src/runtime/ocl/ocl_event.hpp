@@ -40,6 +40,38 @@ protected:
     cl::Event _event;
 };
 
+struct onednn_event : public ocl_event {
+public:
+    onednn_event(cl::Event const& ev, std::vector<uint64_t> duration_nsec = {}, uint64_t queue_stamp = 0)
+        : ocl_event(ev, queue_stamp)
+        , duration_nsec(duration_nsec) {}
+
+    onednn_event(std::vector<uint64_t> duration_nsec)
+        : ocl_event(cl::Event())
+        , duration_nsec(duration_nsec) {}
+
+private:
+    bool get_profiling_info_impl(std::list<instrumentation::profiling_interval>& info) {
+        if (duration_nsec.empty())
+            return true;
+
+        uint64_t total_duration = 0;
+        for (const auto time : duration_nsec)
+            total_duration += time;
+
+        auto stage = instrumentation::profiling_stage::executing;
+        auto duration = std::chrono::nanoseconds(total_duration);
+        auto period = std::make_shared<instrumentation::profiling_period_basic>(duration);
+
+        info.push_back({ stage, period });
+
+        return true;
+    };
+
+protected:
+    std::vector<uint64_t> duration_nsec;
+};
+
 struct ocl_events : public ocl_base_event {
 public:
     ocl_events(std::vector<event::ptr> const& ev)

@@ -35,6 +35,11 @@ cl::PFN_clCreateFromD3D11Buffer cl::BufferDX::pfn_clCreateFromD3D11Buffer = NULL
 #include "openvino/util/file_util.hpp"
 #endif
 
+extern "C" dnnl_status_t dnnl_impl_gpu_set_profiling(int flag);
+extern "C" dnnl_status_t dnnl_impl_gpu_reset_profiling();
+extern "C" dnnl_status_t dnnl_impl_gpu_get_profile_info(
+        int *num_entries, uint64_t *nsecs, uint64_t *cycles);
+
 namespace cldnn {
 namespace ocl {
 
@@ -58,6 +63,10 @@ void ocl_engine::create_onednn_engine(const ExecutionConfig& config) {
     const std::lock_guard<std::mutex> lock(onednn_mutex);
     OPENVINO_ASSERT(_device->get_info().vendor_id == INTEL_VENDOR_ID, "[GPU] OneDNN engine can be used for Intel GPUs only");
     if (!_onednn_engine) {
+        if (config.get_property(ov::enable_profiling)) {
+            dnnl_impl_gpu_set_profiling(1);
+        }
+
         auto casted = std::dynamic_pointer_cast<ocl_device>(_device);
         OPENVINO_ASSERT(casted, "[GPU] Invalid device type stored in ocl_engine");
 

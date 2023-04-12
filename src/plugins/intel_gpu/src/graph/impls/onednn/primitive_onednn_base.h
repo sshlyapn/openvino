@@ -14,6 +14,7 @@
 #include "register.hpp"
 #include "utils.hpp"
 #include "openvino/util/file_util.hpp"
+#include "runtime/ocl/ocl_event.hpp"
 
 #include "quantize_inst.h"
 #include "reorder_inst.h"
@@ -26,6 +27,11 @@
 #include <utility>
 
 #include <oneapi/dnnl/dnnl.hpp>
+
+extern "C" dnnl_status_t dnnl_impl_gpu_set_profiling(int flag);
+extern "C" dnnl_status_t dnnl_impl_gpu_reset_profiling();
+extern "C" dnnl_status_t dnnl_impl_gpu_get_profile_info(
+        int *num_entries, uint64_t *nsecs, uint64_t *cycles);
 
 namespace cldnn {
 namespace onednn {
@@ -476,7 +482,7 @@ protected:
         _args[net_id] = get_arguments(instance);
     }
 
-    event::ptr execute_impl(const std::vector<event::ptr>& /* events */,
+    event::ptr execute_impl(const std::vector<event::ptr>& events,
                             typed_primitive_inst<PType>& instance) override {
         auto& network = instance.get_network();
         auto& stream = network.get_stream();
@@ -484,8 +490,7 @@ protected:
         event::ptr event;
 
         if (_enable_profiling) {
-            stream.finish();
-            event = stream.create_user_event(false);
+            dnnl_impl_gpu_reset_profiling();
         }
 
         if (!instance.can_be_optimized()) {
@@ -501,8 +506,25 @@ protected:
         }
 
         if (_enable_profiling) {
-            stream.finish();
-            event->set();
+            std::vector<uint64_t> nsecs;
+            std::vector<uint64_t> cycles;
+
+            stream.wait();
+
+            // Request number of entries (kernels).
+            int num_entries = 0;
+            auto status = dnnl_impl_gpu_get_profile_info(&num_entries, nullptr, nullptr);
+            OPENVINO_ASSERT(status == dnnl_status_t::dnnl_success, "[GPU] Can't obtain number of executed kernel for oneDNN's primitive profiling");
+
+            // Reqest profiling data for all entries (kernels).
+            nsecs.resize(num_entries);
+            cycles.resize(num_entries);
+            status = dnnl_impl_gpu_get_profile_info(&num_entries, nsecs.data(), cycles.data());
+            OPENVINO_ASSERT(status == dnnl_status_t::dnnl_success, "[GPU] Can't obtain timings and cycles number for oneDNN's primitive profiling");
+
+            dnnl_impl_gpu_reset_profiling();
+
+            event = std::make_shared<ocl::onednn_event>(nsecs);
         }
 
         return event;
