@@ -59,6 +59,8 @@ class ICompilationContext;
 
 struct network {
 public:
+
+    size_t execute_counter = 0;
     using ptr = std::shared_ptr<network>;
 
     struct VariableState {

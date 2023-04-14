@@ -221,8 +221,10 @@ void primitive_inst::update_shape() {
 
     if (has_runtime_deps) {
         if (!dependencies_events.empty() && queue_type == QueueTypes::out_of_order) {
+            std::cout << "Wait for events for shape infer: " << id() << std::endl;
             _network.get_stream().wait_for_events(dependencies_events);
         } else if (queue_type == QueueTypes::in_order) {
+            std::cout << "Wait for events for shape infer: " << id() << std::endl;
             _network.get_stream().finish();
         }
     }
@@ -367,9 +369,12 @@ bool primitive_inst::update_impl() {
         {
             cached_impl = cache.get(updated_params);
             if (cached_impl) {
+                // auto start = std::chrono::high_resolution_clock::now();
                 _impl = cached_impl->clone();
                 GPU_DEBUG_PROFILED_STAGE_CACHE_HIT(true);
                 GPU_DEBUG_TRACE_DETAIL << id() << ": get impl from cache " << _impl->get_kernel_name() << std::endl;
+                // auto end = std::chrono::high_resolution_clock::now();
+                // std::cout << "Update implementation (cache hit) of type " << _impl_params->desc->type_string() << ": " << id() << " " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << std::endl;;
             // impl is not replaced
             } else if (!shape_changed() && _impl != nullptr && _impl->is_dynamic()) {
                 return false;
@@ -517,9 +522,9 @@ event::ptr primitive_inst::execute(const std::vector<event::ptr>& events) {
         GPU_DEBUG_PROFILED_STAGE(instrumentation::pipeline_stage::inference);
         auto ev = _impl->execute(dependencies, *this);
 
-        GPU_DEBUG_IF(!debug_config->dump_profiling_data.empty()) {
-            get_network().get_stream().wait_for_events({ev});
-        }
+        // GPU_DEBUG_IF(!debug_config->dump_profiling_data.empty()) {
+        //     get_network().get_stream().wait_for_events({ev});
+        // }
 
         return ev;
     }
@@ -805,10 +810,10 @@ event::ptr primitive_inst::update_weights() {
             stream.set_arguments(*kernel, weights_params.clKernel->params, args);
             auto ev = stream.enqueue_kernel(*kernel, weights_params.clKernel->params, args, {}, true);
 
-            GPU_DEBUG_GET_INSTANCE(debug_config);
-            GPU_DEBUG_IF(!debug_config->dump_profiling_data.empty()) {
-                stream.wait_for_events({ev});
-            }
+            // GPU_DEBUG_GET_INSTANCE(debug_config);
+            // GPU_DEBUG_IF(!debug_config->dump_profiling_data.empty()) {
+            //     stream.wait_for_events({ev});
+            // }
 
             return ev;
         }
@@ -1083,6 +1088,11 @@ void primitive_inst::add_profiling_data(instrumentation::pipeline_stage stage, b
             stage,
             cache_hit
     };
+
+    if (get_network().execute_counter == 0) {
+        std::cout << "Skip for " << id() << std::endl;
+        return;
+    }
 
     auto hash = instrumentation::perf_counter_hash()(key);
     auto& d = _profiling_data[hash];

@@ -362,6 +362,8 @@ protected:
         return false;
     }
 
+    size_t perf_counter = 0;
+
     // This could be implemented via single map std::unordered_map<instrumentation::perf_counter_key, std::tuple<int64_t, size_t>>
     // but the overhead on using perf_counter_key as map key is too big, thus we use hash as map key
     // and store mapping onto original perf_clounter_key for further data analysis and dumps

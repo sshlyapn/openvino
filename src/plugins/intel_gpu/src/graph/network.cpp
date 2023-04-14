@@ -1192,6 +1192,8 @@ void network::execute_impl(const std::vector<event::ptr>& events) {
     // provide proper event to execution. Flushing pipeline should prevent this kind of issues.
     // In scenarios with a big number of very small networks it can provide performance drop.
     get_stream().flush();
+
+    execute_counter++;
 }
 
 std::vector<primitive_id> network::get_input_ids() const {
