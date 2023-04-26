@@ -40,7 +40,7 @@ struct gemm_test_params {
 class GemmFusingTest : public ::BaseFusingTest<gemm_test_params> {
 public:
 
-    void execute(gemm_test_params& p, bool is_caching_test = false) {
+    void execute(gemm_test_params& p, bool is_caching_test = false, size_t iters_num = 1) {
         auto input0_prim = get_mem(get_input_layout(p, 0));
         auto input1_prim = get_mem(get_input_layout(p, 1));
 
@@ -63,7 +63,8 @@ public:
             network_not_fused->set_input_data("input2", input2_prim);
         }
 
-        compare(*network_not_fused, *network_fused, p);
+        for (size_t iter = 0; iter < iters_num; iter++)
+            compare(*network_not_fused, *network_fused, p);
     }
 
     layout get_input_layout(gemm_test_params& p, int in_no) {
@@ -108,6 +109,7 @@ public:
 #define CASE_GEMM_2IN_FP32_2 { { 1, 1, 63, 63 }, { 1, 1, 63, 63 } }, { 1, 1, 63, 63 }, tensor{ 1 }, tensor{ 0 }, data_types::f32, data_types::f32, data_types::f32, format::bfyx, data_types::f32, format::bfyx
 #define CASE_GEMM_2IN_FP32_3 { { 1, 1, 128, 128 }, { 1, 1, 128, 128 } }, { 1, 1, 128, 128 }, tensor{ 1 }, tensor{ 0 }, data_types::f32, data_types::f32, data_types::f32, format::bfyx, data_types::f32, format::bfyx
 #define CASE_GEMM_2IN_FP32_4 { { 1, 2, 64, 128 }, { 1, 2, 256, 64 } }, { 1, 2, 256, 128 }, tensor{ 1 }, tensor{ 0 }, data_types::f32, data_types::f32, data_types::f32, format::bfyx, data_types::f32, format::bfyx
+#define CASE_GEMM_2IN_FP32_5 { { 2, 3, 2, 2 }, { 2, 3, 2, 2 } }, { 2, 3, 2, 2 }, tensor{ 1 }, tensor{ 0 }, data_types::f32, data_types::f32, data_types::f32, format::bfyx, data_types::f32, format::bfyx
 #define CASE_GEMM_2IN_FP16_1 { { 1, 1, 2, 2 }, { 1, 1, 2, 2 } }, { 1, 1, 2, 2 }, tensor{ 1 }, tensor{ 0 }, data_types::f16, data_types::f16, data_types::f16, format::bfyx, data_types::f16, format::bfyx
 #define CASE_GEMM_2IN_FP16_2 { { 1, 1, 31, 31 }, { 1, 1, 31, 31 } }, { 1, 1, 31, 31 }, tensor{ 1 }, tensor{ 0 }, data_types::f16, data_types::f16, data_types::f16, format::bfyx, data_types::f16, format::bfyx
 #define CASE_GEMM_2IN_FP16_3 { { 1, 1, 64, 64 }, { 1, 1, 64, 64 } }, { 1, 1, 64, 64 }, tensor{ 1 }, tensor{ 0 }, data_types::f16, data_types::f16, data_types::f16, format::bfyx, data_types::f16, format::bfyx
@@ -317,6 +319,41 @@ TEST_P(gemm_2in_add, eltwise_postop) {
     execute(p);
 }
 
+class onednn_gemm_add : public GemmFusingTest {};
+TEST_P(onednn_gemm_add, sum_postop_restictions) {
+    auto p = GetParam();
+
+    if (engine.get_device_info().supports_immad) {
+        ov::intel_gpu::ImplementationDesc gemmv_impl = { cldnn::format::type::any, "", impl_types::onednn };
+        cfg_fused.set_property(ov::intel_gpu::force_implementations(ov::intel_gpu::ImplForcingMap{ { "gemm_prim", gemmv_impl } }));
+    }
+
+    auto add_data_layout = get_output_layout(p);
+    auto add_data_size = add_data_layout.get_tensor();
+    if (p.broadcast_kind == dim_vec_kind::batch)
+        add_data_size.batch[0] = 1;
+    else
+        add_data_size.feature[0] = 1;
+    add_data_layout.set_tensor(add_data_size);
+
+    auto in_layout0 = get_input_layout(p, 0);
+    auto in_layout1 = get_input_layout(p, 1);
+
+    create_topologies(
+        input_layout("input0", in_layout0),
+        input_layout("input1", in_layout1),
+        data("add_data", get_mem(add_data_layout, 0.5f)),
+        gemm("gemm_prim", { input_info("input0"), input_info("input1") }, data_types::f32, false, false, 1.f, 0.f, in_layout0.get_rank(), in_layout1.get_rank()),
+        eltwise("add_prim", { input_info("gemm_prim"), input_info("add_data") }, p.eltwise_m, p.default_type),
+        reorder("reorder_bfyx", input_info("add_prim"), p.default_format, data_types::f32)
+    );
+
+    tolerance = default_tolerance(p.default_type);
+
+    // Run test twice to make sure eltwise's constant memory hasn't changed and we can still get correct results
+    execute(p, false, 2);
+}
+
 TEST_P(gemm_2in_add, eltwise_postop_cached) {
     auto p = GetParam();
 
@@ -362,6 +399,10 @@ INSTANTIATE_TEST_SUITE_P(fusings_gpu, gemm_2in_add, ::testing::ValuesIn(std::vec
     gemm_test_params{ CASE_GEMM_2IN_FP16_6D_1, 3, 4, "", dim_vec_kind::feature, eltwise_mode::sum },
     gemm_test_params{ CASE_GEMM_2IN_FP16_6D_1, 3, 4, "", dim_vec_kind::feature, eltwise_mode::prod },
     gemm_test_params{ CASE_GEMM_2IN_FP16_6D_1, 3, 4, "", dim_vec_kind::feature, eltwise_mode::sub },
+}));
+
+INSTANTIATE_TEST_SUITE_P(fusings_gpu, onednn_gemm_add, ::testing::ValuesIn(std::vector<gemm_test_params>{
+    gemm_test_params{ CASE_GEMM_2IN_FP32_5, 3, 4, "", dim_vec_kind::batch, eltwise_mode::sum },
 }));
 
 class gemm_2in_act_scale_quantize_i8 : public GemmFusingTest {};
