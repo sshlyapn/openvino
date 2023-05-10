@@ -238,6 +238,8 @@ public:
 
 protected:
     primitive_inst(network& network, program_node const& node, bool allocate_memory);
+    size_t exec_counter = 0;
+    memory::ptr precalculated_result = nullptr;
 
     network& _network;
     program_node const* _node;

@@ -26,6 +26,8 @@ size_t kernel_impl_params::hash() const {
         seed = hash_combine(seed, out.hash() * prime_number);
     }
 
+    seed = hash_combine(seed, debug_name);
+
     // hash for fused prims
     for (auto& fd : fused_desc) {
         seed = hash_combine(seed, fd.desc->hash());
@@ -63,6 +65,9 @@ bool kernel_impl_params::operator==(const kernel_impl_params& rhs) const {
         if (fused_desc[i] != rhs.fused_desc[i])
             return false;
     }
+
+    if (debug_name != rhs.debug_name)
+        return false;
 
     return true;
 }

@@ -69,6 +69,8 @@ struct program_node {
     virtual ~program_node() = default;
 
 public:
+    bool in_shape_of_subgraph = false;
+
     virtual const primitive_id& id() const { return desc->id; }
     virtual primitive_type_id type() const { return desc->type; }
     virtual std::shared_ptr<NodeFuseParams> get_fuse_params() const { return nullptr; }

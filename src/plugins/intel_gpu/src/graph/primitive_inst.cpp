@@ -25,6 +25,8 @@
 #include "intel_gpu/runtime/error_handler.hpp"
 #include "intel_gpu/runtime/debug_configuration.hpp"
 
+#include "runtime/ocl/ocl_memory.hpp"
+
 #include "json_object.h"
 #include <string>
 #include <stack>
@@ -191,6 +193,9 @@ void primitive_inst::update_shape() {
         if (memory_deps.count(i) > 0) {
             continue;
         }
+        // if (_node->get_dependencies().size() > i && _node->get_dependency(i).in_shape_of_subgraph) {
+        //     continue;
+        // }
         input_shape_changed = true;
     }
 
@@ -217,6 +222,9 @@ void primitive_inst::update_shape() {
             GPU_DEBUG_TRACE_DETAIL << id() << ": shape infer waits for " << i << " dependency\n";
         }
         auto dep_mem = _network.get_output_memory(dep_id);
+
+        // auto dep_mem = dep.in_shape_of_subgraph && get_network().get_primitive(dep_id)->exec_counter > 0 ?
+        //             get_network().get_primitive(dep_id)->precalculated_result : _network.get_output_memory(dep_id);
         memory_deps.insert({i, dep_mem});
         has_runtime_deps = true;
     }
@@ -488,8 +496,19 @@ event::ptr primitive_inst::execute(const std::vector<event::ptr>& events) {
     OPENVINO_ASSERT(_impl != nullptr, "[GPU] Implementation is nullptr for ", primitive_id,  " primitive");
 
     // Output buffer may be changed under the following conditions, so we need to set args to kernel on each iteration
-    if (is_dynamic() || has_mutable_input() || is_output()) {
-        set_arguments();
+
+    bool has_in_shape_subgraph_dep = false;
+    for (const auto& dep : _node->get_dependencies()) {
+        if (dep.first->in_shape_of_subgraph) {
+            has_in_shape_subgraph_dep = true;
+            break;
+        }
+    }
+
+    if (is_dynamic() || has_mutable_input() || is_output() || has_in_shape_subgraph_dep) {
+        // std::cout << "Set arguments call\n";
+        if (!_node->in_shape_of_subgraph || (_node->in_shape_of_subgraph && exec_counter == 0))
+            set_arguments();
     }
     on_execute();
 
@@ -502,6 +521,8 @@ event::ptr primitive_inst::execute(const std::vector<event::ptr>& events) {
         if (queue_type == QueueTypes::out_of_order) {
             dependencies.reserve(dependencies.size() + _exec_deps.size());
             for (auto& input : _exec_deps) {
+                // if (input->get_node().in_shape_of_subgraph)
+                //     continue;
                 auto id = input->id();
                 try {
                     // if the requested event does not exists it means that it has not been executed, so the processing_order is
@@ -517,7 +538,25 @@ event::ptr primitive_inst::execute(const std::vector<event::ptr>& events) {
 
     {
         GPU_DEBUG_PROFILED_STAGE(instrumentation::pipeline_stage::inference);
+        if (_node->in_shape_of_subgraph && exec_counter > 0) {
+            _outputs[0] = precalculated_result;
+            exec_counter++;
+
+            GPU_DEBUG_TRACE << id() << ": resue precalculated result instead of " << _impl->get_kernel_name() << std::endl;
+
+            return get_network().get_stream().create_user_event(true);
+        }
+
         auto ev = _impl->execute(dependencies, *this);
+
+        if (_node->in_shape_of_subgraph) {
+            get_network().get_stream().wait_for_events({ev});
+            OPENVINO_ASSERT(_outputs.size() == 1, "Outputs != 1");
+            precalculated_result = get_network().get_engine().allocate_memory(_outputs[0]->get_layout(), allocation_type::usm_host, true);
+
+            precalculated_result->copy_from(get_network().get_stream(), *_outputs[0], true);
+            exec_counter++;
+        }
 
         GPU_DEBUG_IF(!debug_config->dump_profiling_data.empty()) {
             get_network().get_stream().wait_for_events({ev});
