@@ -19,6 +19,7 @@
 #include "intel_gpu/graph/serialization/string_serializer.hpp"
 #include "intel_gpu/graph/serialization/layout_serializer.hpp"
 #include "intel_gpu/graph/serialization/vector_serializer.hpp"
+#include "intel_gpu/runtime/itt.hpp"
 #include "runtime/kernels_cache.hpp"
 
 // TODO: add generic interface for weights_reorder_params and get rid of this dependency
@@ -93,6 +94,10 @@ struct primitive_impl {
 
     virtual void set_kernels(cldnn::kernels_cache::compiled_kernels kernels) {}
     virtual std::vector<kernel::ptr> get_kernels() { return {}; }
+
+    virtual void log_name(primitive_inst& /* instance */) {
+        OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "execute::primitive");
+    };
 
 protected:
     std::string _kernel_name;
@@ -395,6 +400,11 @@ private:
                 "Trying to execute primitive implementation with mismatching primitive instance");
 
         return execute_impl(event, reinterpret_cast<typed_primitive_inst<PType>&>(instance));
+    }
+
+    void log_name(primitive_inst& instance) override {
+        const std::string primitive_name = instance.desc()->type_string();
+        OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "execute::" + primitive_name);
     }
 
     std::vector<layout> get_internal_buffer_layouts() const override {

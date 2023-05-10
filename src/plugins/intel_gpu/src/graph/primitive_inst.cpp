@@ -24,6 +24,7 @@
 #include "intel_gpu/runtime/memory.hpp"
 #include "intel_gpu/runtime/error_handler.hpp"
 #include "intel_gpu/runtime/debug_configuration.hpp"
+#include "intel_gpu/runtime/itt.hpp"
 
 #include "json_object.h"
 #include <string>
@@ -163,6 +164,7 @@ void primitive_inst::set_output_memory(memory::ptr mem_new, bool check, size_t i
 }
 
 void primitive_inst::update_shape() {
+    OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "primitive_inst::update_shape");
     GPU_DEBUG_PROFILED_STAGE(instrumentation::pipeline_stage::shape_inference);
 
     bool input_shape_changed = false;
@@ -222,6 +224,7 @@ void primitive_inst::update_shape() {
     }
 
     if (has_runtime_deps) {
+        OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "primitive_inst::update_shape::wait_for_deps");
         if (!dependencies_events.empty() && queue_type == QueueTypes::out_of_order) {
             _network.get_stream().wait_for_events(dependencies_events);
         } else if (queue_type == QueueTypes::in_order) {
@@ -241,14 +244,17 @@ void primitive_inst::update_shape() {
         _impl_params->output_layouts[idx] = layout;
     };
 
-    auto new_layouts = _node->type()->calc_output_layouts(*_node, *_impl_params);
-    if (new_layouts.empty()) {
-        auto new_layout = _node->type()->calc_output_layout(*_node, *_impl_params);
-        update_output_layout(new_layout, 0);
-    } else {
-        for (size_t i = 0; i != new_layouts.size(); ++i) {
-            auto new_layout = new_layouts[i];
-            update_output_layout(new_layout, i);
+    {
+        OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "primitive_inst::update_shape::calc_output_layout");
+        auto new_layouts = _node->type()->calc_output_layouts(*_node, *_impl_params);
+        if (new_layouts.empty()) {
+            auto new_layout = _node->type()->calc_output_layout(*_node, *_impl_params);
+            update_output_layout(new_layout, 0);
+        } else {
+            for (size_t i = 0; i != new_layouts.size(); ++i) {
+                auto new_layout = new_layouts[i];
+                update_output_layout(new_layout, i);
+            }
         }
     }
 
@@ -260,6 +266,7 @@ void primitive_inst::update_shape() {
 }
 
 event::ptr primitive_inst::realloc_if_needed() {
+    OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "primitive_inst::realloc_if_needed");
     GPU_DEBUG_GET_INSTANCE(debug_config);
     GPU_DEBUG_PROFILED_STAGE(instrumentation::pipeline_stage::memory_allocation);
 
@@ -317,6 +324,7 @@ event::ptr primitive_inst::realloc_if_needed() {
 }
 
 bool primitive_inst::update_impl() {
+    OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "primitive_inst::update_impl");
     GPU_DEBUG_PROFILED_STAGE(instrumentation::pipeline_stage::update_implementation);
     auto prev_impl_str =  _impl != nullptr ? _impl->get_kernel_name() : "nullptr";
 
@@ -427,9 +435,11 @@ bool primitive_inst::update_impl() {
 }
 
 event::ptr primitive_inst::execute(const std::vector<event::ptr>& events) {
+    OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "primitive_inst::execute");
     const auto primitive_id = id();
     OPENVINO_ASSERT(_has_valid_input, primitive_id, " has invalid/unset input");
     GPU_DEBUG_GET_INSTANCE(debug_config);
+    GPU_DEBUG_CODE(_impl->log_name(*this));
 
     std::vector<event::ptr> dependencies;
     if (is_dynamic()) {
@@ -441,6 +451,7 @@ event::ptr primitive_inst::execute(const std::vector<event::ptr>& events) {
         }
 
         if (!is_valid_fusion()) {
+            OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "primitive_inst::execute_unsupported_fusion");
             auto subgraph = get_unfused_subgraph();
 
             for (auto& d : _deps) {
@@ -537,6 +548,7 @@ event::ptr primitive_inst::execute(const std::vector<event::ptr>& events) {
 }
 
 void primitive_inst::set_arguments() {
+    OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "primitive_inst::set_arguments");
     GPU_DEBUG_PROFILED_STAGE(instrumentation::pipeline_stage::set_arguments);
     OPENVINO_ASSERT(_has_valid_input, id(), " has invalid/unset input");
     _impl->set_arguments(*this);
@@ -654,6 +666,7 @@ primitive_inst::primitive_inst(network& network, program_node const& node, bool 
 }
 
 memory::ptr primitive_inst::allocate_internal_buffer(size_t idx) {
+    OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "primitive_inst::allocate_internal_buffer");
     if (_impl == nullptr || _outputs.empty() || _outputs[0] == nullptr)
         return nullptr;
     const auto& ibuf_layouts = _impl->get_internal_buffer_layouts();
@@ -708,6 +721,7 @@ memory::ptr primitive_inst::allocate_internal_buffer(size_t idx) {
 }
 
 void primitive_inst::allocate_internal_buffers(void) {
+    OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "primitive_inst::allocate_internal_buffers");
     if (_impl == nullptr || _outputs.empty() || _outputs[0] == nullptr)
         return;
     const auto& ibuf_layouts = _impl->get_internal_buffer_layouts();
@@ -726,6 +740,7 @@ void primitive_inst::allocate_internal_buffers(void) {
 }
 
 event::ptr primitive_inst::update_weights() {
+    OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "primitive_inst::update_weights");
     GPU_DEBUG_PROFILED_STAGE(instrumentation::pipeline_stage::update_weights);
     if (!_impl)
         return nullptr;
@@ -849,6 +864,7 @@ static bool user_requesting_mem_reuse_false(const program_node& node) {
 
 memory::ptr primitive_inst::allocate_output(engine& _engine, memory_pool& pool, const program_node& _node, const kernel_impl_params& impl_params,
                                             uint32_t net_id, bool is_internal, size_t idx, bool reset) {
+    OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "primitive_inst::allocate_output");
     auto get_memory_from_pool = [&](engine& _engine, const layout& layout, const primitive_id id, std::set<primitive_id> dependencies,
             allocation_type type, bool reusable, bool reset = true) {
         OPENVINO_ASSERT(!layout.is_dynamic() || layout.has_upper_bound(), "[GPU] Can't allocate output for dynamic layout without upper bound");
@@ -974,6 +990,7 @@ std::string primitive_inst::generic_to_string(program_node const& node, const ch
 }
 
 cldnn::network::ptr primitive_inst::get_unfused_subgraph() {
+    OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "primitive_inst::get_unfused_subgraph");
     GPU_DEBUG_TRACE_DETAIL << id() << ": Use unfused subgraph due to unexpected fusions\n";
     if (!_unfused_subgraph) {
         topology t;
