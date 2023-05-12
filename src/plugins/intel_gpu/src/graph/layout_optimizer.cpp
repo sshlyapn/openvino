@@ -14,6 +14,7 @@
 #include "arg_max_min_inst.h"
 #include "shape_of_inst.h"
 #include "generic_layer.hpp"
+#include "strided_slice_inst.h"
 #include <sstream>
 
 #include "gemm_inst.h"
@@ -1606,6 +1607,8 @@ impl_types layout_optimizer::get_preferred_impl_type(program_node& node, format 
         if (node.as<prior_box>().get_primitive()->support_opset8) {
             preferred_impl = impl_types::ocl;
         }
+    } else if (node.is_type<strided_slice>()) {
+        preferred_impl = impl_types::cpu;
     }
 
     return preferred_impl;

@@ -147,6 +147,7 @@ public:
     bool can_be_optimized() const { return _can_be_optimized; }
     std::shared_ptr<const primitive> desc() const { return _node->get_primitive(); }
     program_node const& get_node() const { return *_node; }
+    program_node const* get_node_ptr() const { return _node; }
     network& get_network() const { return _network; }
     uint32_t get_network_id() const;
     virtual void set_output_memory(memory::ptr mem, bool check = true, size_t idx = 0);
@@ -403,7 +404,7 @@ private:
     }
 
     void log_name(primitive_inst& instance) override {
-        const std::string primitive_name = instance.desc()->type_string();
+        const std::string primitive_name = instance.get_node_ptr() ? instance.desc()->type_string() : "undefined";
         OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "execute::" + primitive_name);
     }
 

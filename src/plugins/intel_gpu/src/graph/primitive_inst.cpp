@@ -439,7 +439,7 @@ event::ptr primitive_inst::execute(const std::vector<event::ptr>& events) {
     const auto primitive_id = id();
     OPENVINO_ASSERT(_has_valid_input, primitive_id, " has invalid/unset input");
     GPU_DEBUG_GET_INSTANCE(debug_config);
-    GPU_DEBUG_CODE(_impl->log_name(*this));
+    GPU_DEBUG_CODE(if (_impl) _impl->log_name(*this));
 
     std::vector<event::ptr> dependencies;
     if (is_dynamic()) {

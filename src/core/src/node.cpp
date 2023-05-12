@@ -814,13 +814,16 @@ bool ov::Node::constant_fold(OutputVector& output_values, const OutputVector& in
         output_tensors.push_back(ov::util::wrap_tensor(output));
     }
 
+    std::cout << "Constant fold for: " << get_friendly_name();
     if (evaluate(output_tensors, input_tensors)) {
         for (size_t i = 0; i < output_tensors.size(); ++i) {
             output_values[i] = make_shared<ngraph::op::Constant>(output_tensors[i]);
             copy_runtime_info(nodes, output_values[i].get_node_shared_ptr());
         }
+        std::cout << " returned True\n";
         return true;
     }
+    std::cout << " returned False\n";
     OPENVINO_SUPPRESS_DEPRECATED_END
     return false;
 }

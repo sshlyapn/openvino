@@ -109,7 +109,11 @@ TEST(concat_gpu, dynamic_4d_f) {
                           padding{ { 0,0,0,0 }, 0 })
     );
 
-    ExecutionConfig config{ov::intel_gpu::allow_new_shape_infer(true)};
+    ExecutionConfig config;
+    config.set_property(ov::intel_gpu::optimize_data(true));
+    config.set_property(ov::intel_gpu::allow_new_shape_infer(true));
+    auto conv_forcing = ov::intel_gpu::ImplementationDesc{ format::bfyx, std::string(), cldnn::impl_types::cpu };
+    config.set_property(ov::intel_gpu::force_implementations(ov::intel_gpu::ImplForcingMap{ {primitive_id("concat"), conv_forcing} }));
 
     auto network = cldnn::network::build_network(engine, topology, config);
 
