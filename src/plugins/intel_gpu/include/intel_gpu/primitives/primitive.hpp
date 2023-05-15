@@ -227,6 +227,8 @@ struct primitive_info {
     data_types runtime_precision;
     bool is_cpu;
     int exec_id;
+
+    bool in_shape_of_subgraph = false;
 };
 
 #define CLDNN_DEFINE_TYPE_ID(PType)     \

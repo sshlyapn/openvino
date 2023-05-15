@@ -35,7 +35,14 @@ public:
     std::shared_ptr<NodeFuseParams> get_fuse_params() const override {
         return std::make_shared<EltwiseFuseParams>(typed_desc());
     }
-    std::vector<size_t> get_shape_infer_dependencies() const override { return {}; }
+    std::vector<size_t> get_shape_infer_dependencies() const override {
+        std::vector<size_t> shape_infer_dependencies;
+        for (size_t i = 0; i < inputs_count(); i++) {
+            if (!input(i).is_constant())
+                shape_infer_dependencies.push_back(i);
+        }
+        return shape_infer_dependencies;
+    }
 };
 
 using eltwise_node = typed_program_node<eltwise>;

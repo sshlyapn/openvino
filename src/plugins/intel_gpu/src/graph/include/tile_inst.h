@@ -19,7 +19,7 @@ public:
     using parent::parent;
 
     program_node& input() const { return get_dependency(0); }
-    std::vector<size_t> get_shape_infer_dependencies() const override { return {1}; }
+    std::vector<size_t> get_shape_infer_dependencies() const override { return {0, 1}; }
 };
 
 using tile_node = typed_program_node<tile>;
