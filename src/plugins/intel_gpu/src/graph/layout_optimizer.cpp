@@ -14,6 +14,9 @@
 #include "arg_max_min_inst.h"
 #include "shape_of_inst.h"
 #include "generic_layer.hpp"
+#include "strided_slice_inst.h"
+#include "crop_inst.h"
+#include "gather_inst.h"
 #include <sstream>
 
 #include "gemm_inst.h"
@@ -1392,10 +1395,17 @@ impl_types layout_optimizer::get_forced_impl_type_by_config(program_node& node) 
 }
 
 impl_types layout_optimizer::get_preferred_impl_type(program_node& node, format preferred_format) {
-    impl_types preferred_impl = impl_types::any;
+    impl_types preferred_impl = impl_types::ocl;
+
+    if (node.is_type<input_layout>())
+        preferred_impl = impl_types::any;
+
     auto forced_impl = get_forced_impl_type_by_config(node);
     if (forced_impl != impl_types::any)
         return forced_impl;
+
+    if (node.in_shape_of_subgraph && !node.is_type<reshape>())
+        return impl_types::cpu;
 
     if (!_forcing_map.empty() && _forcing_map.count(node.id()) != 0) {
         preferred_impl = _forcing_map.at(node.id()).second;

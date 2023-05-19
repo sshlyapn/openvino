@@ -137,6 +137,16 @@ private:
     void run(program& p) override;
 };
 
+class mark_shape_of_subgraphs : public base_pass {
+public:
+    mark_shape_of_subgraphs(bool update_impls = false) : base_pass("mark_shape_of_subgraphs"), update_impls(update_impls) {}
+
+private:
+    void run(program& p) override;
+
+    bool update_impls;
+};
+
 class prepare_buffer_fusing : public base_pass {
 public:
     prepare_buffer_fusing() : base_pass("prepare_buffer_fusing") {}

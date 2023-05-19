@@ -54,6 +54,8 @@ struct kernel_impl_params {
     std::map<size_t, memory::ptr> memory_deps = {};
     size_t primary_input_idx = 0;
 
+    std::string debug_name = "";
+
     kernel_impl_params() : prog(nullptr), strm(nullptr), desc(nullptr), unique_id(0) {}
 
     kernel_impl_params(program& _prog,

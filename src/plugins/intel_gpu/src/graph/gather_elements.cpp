@@ -66,7 +66,7 @@ std::string gather_elements_inst::to_string(gather_elements_node const& node) {
 
     json_composite gather_elements_info;
     gather_elements_info.add("input id", input.id());
-    gather_elements_info.add("output format", calc_output_layout(node, *node.get_kernel_impl_params()).format);
+    // gather_elements_info.add("output format", calc_output_layout(node, *node.get_kernel_impl_params()).format);
     gather_elements_info.add("axis", desc->axis);
 
     node_info->add("gather_elements info", gather_elements_info);

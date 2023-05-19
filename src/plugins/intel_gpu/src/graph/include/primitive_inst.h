@@ -19,6 +19,7 @@
 #include "intel_gpu/graph/serialization/string_serializer.hpp"
 #include "intel_gpu/graph/serialization/layout_serializer.hpp"
 #include "intel_gpu/graph/serialization/vector_serializer.hpp"
+#include "intel_gpu/runtime/itt.hpp"
 #include "runtime/kernels_cache.hpp"
 
 // TODO: add generic interface for weights_reorder_params and get rid of this dependency
@@ -94,6 +95,10 @@ struct primitive_impl {
     virtual void set_kernels(cldnn::kernels_cache::compiled_kernels kernels) {}
     virtual std::vector<kernel::ptr> get_kernels() { return {}; }
 
+    virtual void log_name(primitive_inst& /* instance */) {
+        OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "execute::primitive");
+    };
+
 protected:
     std::string _kernel_name;
     bool _is_dynamic = false;
@@ -142,6 +147,7 @@ public:
     bool can_be_optimized() const { return _can_be_optimized; }
     std::shared_ptr<const primitive> desc() const { return _node->get_primitive(); }
     program_node const& get_node() const { return *_node; }
+    program_node const* get_node_ptr() const { return _node; }
     network& get_network() const { return _network; }
     uint32_t get_network_id() const;
     virtual void set_output_memory(memory::ptr mem, bool check = true, size_t idx = 0);
@@ -238,6 +244,8 @@ public:
 
 protected:
     primitive_inst(network& network, program_node const& node, bool allocate_memory);
+    size_t exec_counter = 0;
+    memory::ptr precalculated_result = nullptr;
 
     network& _network;
     program_node const* _node;
@@ -252,6 +260,8 @@ protected:
     std::vector<std::pair<std::shared_ptr<primitive_inst>, int32_t>> _deps;
     std::vector<std::pair<cldnn::primitive_id, int32_t>> _dep_ids;
 
+    // The list of depandant shape_of primitives
+    std::vector<std::shared_ptr<primitive_inst>> dependant_shape_of_insts;
     // this is a set of dependencies in terms of execution
     // execution of all primitives from this set should be enough to guarantee that all memory deps (see _deps)
     // will be valid when executing this primitive. Most of the time this set will be equal to the _deps minus all
@@ -395,6 +405,11 @@ private:
                 "Trying to execute primitive implementation with mismatching primitive instance");
 
         return execute_impl(event, reinterpret_cast<typed_primitive_inst<PType>&>(instance));
+    }
+
+    void log_name(primitive_inst& instance) override {
+        const std::string primitive_name = instance.get_node_ptr() ? instance.desc()->type_string() : "undefined";
+        OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "execute::" + primitive_name);
     }
 
     std::vector<layout> get_internal_buffer_layouts() const override {

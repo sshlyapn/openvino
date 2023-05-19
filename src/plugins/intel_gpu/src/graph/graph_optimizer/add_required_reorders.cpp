@@ -111,6 +111,9 @@ void add_required_reorders::run(program& p) {
             }
         }
 
+        GPU_DEBUG_LOG << "checking user " << usr->id() << ": " << usr->get_preferred_impl_type() << ", "
+                      << usr->get_kernel_impl_params()->input_layouts[0].to_short_string() << " " << usr->get_kernel_impl_params()->output_layouts[0].to_short_string() << std::endl;
+
         if (usr->type()->does_an_implementation_exist(*usr)) {
             if (usr->get_preferred_impl_type() != impl_types::onednn) {
                 continue;
@@ -237,6 +240,10 @@ void add_required_reorders::run(program& p) {
             if (max_in_dims == 5) {
                 preferred_layout_formats.push_back(cldnn::format::bzyxf);
             } else if (max_in_dims == 4) {
+
+                GPU_DEBUG_LOG << " suggestion to use byxf " << usr->id() << ": " << usr->get_preferred_impl_type() << ", "
+                            << usr->get_kernel_impl_params()->input_layouts[0].to_short_string() << " " << usr->get_kernel_impl_params()->output_layouts[0].to_short_string() << std::endl;
+
                 preferred_layout_formats.push_back(cldnn::format::yxfb);
                 preferred_layout_formats.push_back(cldnn::format::byxf);
             }

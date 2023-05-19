@@ -233,6 +233,7 @@ protected:
                             typed_primitive_inst<PType>& instance) override {
         stream& stream = instance.get_network().get_stream();
         if (instance.can_be_optimized()) {
+            GPU_DEBUG_TRACE_DETAIL << instance.id() << ": execute_impl can_be_optimized " << std::endl;
             return aggregate_events(events, stream, false, instance.is_output());
         }
         std::vector<event::ptr> tmp_events(events);
