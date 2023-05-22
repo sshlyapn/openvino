@@ -17,8 +17,8 @@ struct range_impl : public typed_primitive_impl<range> {
     using parent = typed_primitive_impl<range>;
     using parent::parent;
 
-    ov::HostTensorVector input_host_tensors;
-    ov::HostTensorVector output_host_tensors;
+    ov::HostTensorVector input_host_tensors_cache;
+    ov::HostTensorVector output_host_tensors_cache;
 
     DECLARE_OBJECT_TYPE_SERIALIZATION
 
@@ -50,12 +50,15 @@ struct range_impl : public typed_primitive_impl<range> {
         }
         auto ev = stream.create_user_event(false);
 
-        ov::op::v4::Range op;
         // op.set_output_type(data_type_to_element_type(output_mem_ptr->get_layout().data_type));
 
-        bool need_tensor_creation = input_host_tensors.empty();
+        bool reallocate_tensors = input_host_tensors_cache.empty() || instance.get_network().reallocate_tensors;
 
-        if (need_tensor_creation) {
+        ov::HostTensorVector input_host_tensors;
+        ov::HostTensorVector output_host_tensors;
+
+        if (reallocate_tensors) {
+
             std::vector<memory::ptr> input_mem_ptrs;
             for (size_t i = 0; i < instance.dependencies().size(); i++)
                 input_mem_ptrs.push_back(instance.dep_memory_ptr(i));
@@ -69,11 +72,20 @@ struct range_impl : public typed_primitive_impl<range> {
                 input_host_tensors.push_back(make_host_tensor(input_mem_ptrs[i]->get_layout(), input_mem_ptrs[i]->lock(stream, mem_lock_type::read)));
 
             output_host_tensors.push_back(make_host_tensor(output_mem_ptr->get_layout(), output_lock.data()));
+
+            if (!instance.get_network().reallocate_tensors) {
+                input_host_tensors_cache = input_host_tensors;
+                output_host_tensors_cache = output_host_tensors;
+            }
+        } else {
+            input_host_tensors = input_host_tensors_cache;
+            output_host_tensors = output_host_tensors_cache;
         }
 
+        ov::op::v4::Range op;
         op.evaluate(output_host_tensors, input_host_tensors);
 
-        if (need_tensor_creation) {
+        if (reallocate_tensors) {
             for (size_t i = 0; i < instance.dependencies().size(); i++)
                 instance.dep_memory_ptr(i)->unlock(stream);
         }

@@ -1126,6 +1126,19 @@ void network::execute_impl(const std::vector<event::ptr>& events) {
                                         _in_out_shared_mem_types.end(),
                                         is_surface_lock_check_needed);
 
+    GPU_DEBUG_IF_ENV_VAR(disable_buffers_reallocation, "DISABLE_BUFFER_REALLOCATION");
+    if (disable_buffers_reallocation)
+        reallocate_tensors = false;
+
+    GPU_DEBUG_IF_ENV_VAR(enable_skip_cpu_impls, "SKIP_CPU_IMPLS");
+    if (enable_skip_cpu_impls)
+        skip_cpu_impls = true;
+
+    if (iteration_counter == 0) {
+        std::cout << "Reallocate tensors = " << reallocate_tensors << "\n";
+        std::cout << "Skip CPU impls = " << skip_cpu_impls << "\n";
+    }
+
     if (shared_mem_found) {
         for (auto& inst : _inputs) {
             if (inst->output_memory_ptr() &&
@@ -1257,6 +1270,8 @@ void network::execute_impl(const std::vector<event::ptr>& events) {
     for (auto& prim : _primitives) {
         prim.second->reset_output_change();
     }
+
+    iteration_counter++;
 
     // Using output of previous network as input to another one may cause hazard (in OOOQ mode) if user would not
     // provide proper event to execution. Flushing pipeline should prevent this kind of issues.

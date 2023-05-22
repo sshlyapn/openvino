@@ -17,8 +17,8 @@ struct reorder_impl : public typed_primitive_impl<reorder> {
     using parent = typed_primitive_impl<reorder>;
     using parent::parent;
 
-    ov::HostTensorVector input_host_tensors;
-    ov::HostTensorVector output_host_tensors;
+    ov::HostTensorVector input_host_tensors_cache;
+    ov::HostTensorVector output_host_tensors_cache;
 
     DECLARE_OBJECT_TYPE_SERIALIZATION
 
@@ -51,9 +51,12 @@ struct reorder_impl : public typed_primitive_impl<reorder> {
         if (instance.get_impl_params()->input_layouts[0].format != instance.get_impl_params()->input_layouts[0].format)
             OPENVINO_THROW("[GPU] Unsupported reorder case: need to support different formats\n");
 
-        bool need_tensor_creation = input_host_tensors.empty();
+        bool reallocate_tensors = input_host_tensors_cache.empty() || instance.get_network().reallocate_tensors;
 
-        if (need_tensor_creation) {
+        ov::HostTensorVector input_host_tensors;
+        ov::HostTensorVector output_host_tensors;
+
+        if (reallocate_tensors) {
             auto input_mem_ptr = instance.input_memory_ptr();
             auto output_mem_ptr = instance.output_memory_ptr();
 
@@ -62,10 +65,17 @@ struct reorder_impl : public typed_primitive_impl<reorder> {
 
             input_host_tensors.push_back(make_host_tensor(output_mem_ptr->get_layout(), input_lock.data()));
             output_host_tensors.push_back(make_host_tensor(output_mem_ptr->get_layout(), output_lock.data()));
+
+            if (!instance.get_network().reallocate_tensors) {
+                input_host_tensors_cache = input_host_tensors;
+                output_host_tensors_cache = output_host_tensors;
+            }
+        } else {
+            input_host_tensors = input_host_tensors_cache;
+            output_host_tensors = output_host_tensors_cache;
         }
 
         ov::op::v0::Convert op;
-
         op.evaluate(output_host_tensors, input_host_tensors);
 
         ev->set();

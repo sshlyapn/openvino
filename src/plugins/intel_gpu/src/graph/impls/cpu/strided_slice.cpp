@@ -27,8 +27,8 @@ struct strided_slice_impl : public typed_primitive_impl<strided_slice> {
     std::vector<int64_t> shrink_axis_mask;
     std::vector<int64_t> ellipsis_mask;
 
-    ov::HostTensorVector input_host_tensors;
-    ov::HostTensorVector output_host_tensors;
+    ov::HostTensorVector input_host_tensors_cache;
+    ov::HostTensorVector output_host_tensors_cache;
 
     DECLARE_OBJECT_TYPE_SERIALIZATION
 
@@ -93,10 +93,6 @@ struct strided_slice_impl : public typed_primitive_impl<strided_slice> {
         auto ev = stream.create_user_event(false);
 
         auto& constant_mem = instance.get_impl_params()->memory_deps;
-        // std::cout << "Constan mem size=" << constant_mem.size() << std::endl;
-        // for (size_t i = 0; i < instance.dependencies().size(); ++i) {
-        //     std::cout << "- " << instance.dependencies()[i].first->id() << std::endl;
-        // }
 
         bool use_runtime_inputs = (begin_data.empty() && !constant_mem.count(1))
                                 || (end_data.empty() && !constant_mem.count(2))
@@ -106,38 +102,18 @@ struct strided_slice_impl : public typed_primitive_impl<strided_slice> {
             OPENVINO_THROW("[GPU] Unexpected configuration of Strided Slice");
         }
 
-        ov::op::v1::StridedSlice op;
-
-        op.set_begin_mask(begin_mask);
-        op.set_end_mask(end_mask);
-        op.set_new_axis_mask(new_axis_mask);
-        op.set_shrink_axis_mask(shrink_axis_mask);
-        op.set_ellipsis_mask_mask(ellipsis_mask);
-
-        // auto print_arr = [&](std::vector<int64_t> vec, std::string name) {
-        //     std::cout << name << ": ";
-        //     for (size_t i = 0; i < vec.size(); i++) {
-        //         std::cout << vec[i] << ", ";
-        //     }
-        //     std::cout << "\n";
-        // };
-
-        // print_arr(begin_data, "begin_data");
-        // print_arr(end_data, "end_data");
-        // print_arr(strides_data, "strides_data");
-        // print_arr(begin_mask, "begin_mask");
-        // print_arr(end_mask, "end_mask");
-        // print_arr(new_axis_mask, "new_axis_mask");
-        // print_arr(shrink_axis_mask, "shrink_axis_mask");
-        // print_arr(ellipsis_mask, "ellipsis_mask");
 
         std::shared_ptr<ngraph::runtime::HostTensor> begin_host_tensor;
         std::shared_ptr<ngraph::runtime::HostTensor> end_host_tensor;
         std::shared_ptr<ngraph::runtime::HostTensor> strides_host_tensor;
 
-        bool need_tensor_creation = input_host_tensors.empty();
 
-        if (need_tensor_creation) {
+        bool reallocate_tensors = input_host_tensors_cache.empty() || instance.get_network().reallocate_tensors;
+
+        ov::HostTensorVector input_host_tensors;
+        ov::HostTensorVector output_host_tensors;
+
+        if (reallocate_tensors) {
             ov::Shape begin_shape = begin_data.empty() ? instance.get_impl_params()->get_input_layout(1).get_shape() : ov::Shape{ begin_data.size() };
             ov::Shape end_shape = end_data.empty() ? instance.get_impl_params()->get_input_layout(2).get_shape() : ov::Shape{ end_data.size() };
             ov::Shape strides_shape = strides_data.empty() ? instance.get_impl_params()->get_input_layout(3).get_shape() : ov::Shape{ strides_data.size() };
@@ -174,11 +150,28 @@ struct strided_slice_impl : public typed_primitive_impl<strided_slice> {
             input_host_tensors.push_back(end_host_tensor);
             input_host_tensors.push_back(strides_host_tensor);
             output_host_tensors.push_back(make_host_tensor(output_mem_ptr->get_layout(), output_mem_ptr->lock(stream, mem_lock_type::write)));
+
+            if (!instance.get_network().reallocate_tensors) {
+                input_host_tensors_cache = input_host_tensors;
+                output_host_tensors_cache = output_host_tensors;
+            }
+        } else {
+            input_host_tensors = input_host_tensors_cache;
+            output_host_tensors = output_host_tensors_cache;
         }
+
+        ov::op::v1::StridedSlice op;
+
+        op.set_begin_mask(begin_mask);
+        op.set_end_mask(end_mask);
+        op.set_new_axis_mask(new_axis_mask);
+        op.set_shrink_axis_mask(shrink_axis_mask);
+        op.set_ellipsis_mask_mask(ellipsis_mask);
 
         op.evaluate(output_host_tensors, input_host_tensors);
 
-        if (need_tensor_creation) {
+
+        if (reallocate_tensors) {
             if (begin_data.empty()) {
                 auto begin_mem = instance.dep_memory_ptr(1);
                 begin_mem->unlock(stream);

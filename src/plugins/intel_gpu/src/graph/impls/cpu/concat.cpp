@@ -17,8 +17,8 @@ struct concatenation_impl : public typed_primitive_impl<concatenation> {
     using parent = typed_primitive_impl<concatenation>;
     using parent::parent;
 
-    ov::HostTensorVector input_host_tensors;
-    ov::HostTensorVector output_host_tensors;
+    ov::HostTensorVector input_host_tensors_cache;
+    ov::HostTensorVector output_host_tensors_cache;
 
     DECLARE_OBJECT_TYPE_SERIALIZATION
 
@@ -48,12 +48,14 @@ struct concatenation_impl : public typed_primitive_impl<concatenation> {
         }
         auto ev = stream.create_user_event(false);
 
-        bool need_tensor_creation = input_host_tensors.empty();
+        bool reallocate_tensors = input_host_tensors_cache.empty() || instance.get_network().reallocate_tensors;
+        ov::HostTensorVector input_host_tensors;
+        ov::HostTensorVector output_host_tensors;
 
         for (auto in_layout : instance.get_impl_params()->input_layouts)
             OPENVINO_ASSERT(in_layout.data_type == instance.get_impl_params()->get_output_layout().data_type, "[GPU] Unsupported mixed formats");
 
-        if (need_tensor_creation) {
+        if (reallocate_tensors) {
             std::vector<memory::ptr> input_mem_ptrs;
             for (size_t i = 0; i < instance.dependencies().size(); i++)
                 input_mem_ptrs.push_back(instance.dep_memory_ptr(i));
@@ -66,6 +68,14 @@ struct concatenation_impl : public typed_primitive_impl<concatenation> {
                 input_host_tensors.push_back(make_host_tensor(input_mem_ptrs[i]->get_layout(), input_mem_ptrs[i]->lock(stream, mem_lock_type::read)));
 
             output_host_tensors.push_back(make_host_tensor(output_mem_ptr->get_layout(), output_lock.data()));
+
+            if (!instance.get_network().reallocate_tensors) {
+                input_host_tensors_cache = input_host_tensors;
+                output_host_tensors_cache = output_host_tensors;
+            }
+        } else {
+            input_host_tensors = input_host_tensors_cache;
+            output_host_tensors = output_host_tensors_cache;
         }
 
         ov::op::v0::Concat op;
@@ -73,7 +83,7 @@ struct concatenation_impl : public typed_primitive_impl<concatenation> {
 
         op.evaluate(output_host_tensors, input_host_tensors);
 
-        if (need_tensor_creation) {
+        if (reallocate_tensors) {
             for (size_t i = 0; i < instance.dependencies().size(); i++)
                 instance.dep_memory_ptr(i)->unlock(stream);
         }

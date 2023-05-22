@@ -25,9 +25,8 @@ struct gather_impl : public typed_primitive_impl<gather> {
     // ov::HostTensorPtr ;
 
 
-    ov::TensorVector input_host_tensors;
-    ov::TensorVector output_host_tensors;
-    ov::Tensor axis_tensor;
+    ov::TensorVector input_host_tensors_cache;
+    ov::TensorVector output_host_tensors_cache;
 
     std::shared_ptr<ov::op::v8::Gather> op;
 
@@ -85,13 +84,13 @@ struct gather_impl : public typed_primitive_impl<gather> {
 
         // auto time2 = std::chrono::high_resolution_clock::now();
 
-        bool need_tensor_creation = input_host_tensors.empty();
+        bool reallocate_tensors = input_host_tensors_cache.empty() || instance.get_network().reallocate_tensors;
 
-
-
+        ov::TensorVector input_host_tensors;
+        ov::TensorVector output_host_tensors;
 
         // auto time0 = std::chrono::high_resolution_clock::now();
-        if (need_tensor_creation) {
+        if (reallocate_tensors) {
             OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "gather_cpu::tensors_creation");
             op = std::make_shared<ov::op::v8::Gather>();
             op->set_batch_dims(batch_dims);
@@ -109,49 +108,32 @@ struct gather_impl : public typed_primitive_impl<gather> {
                 input_ptrs.push_back(static_cast<int*>(input_mem_ptrs[i]->lock(stream, mem_lock_type::read)));
             int* output_ptr = output_lock.data();
 
-            OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "gather_cpu::tensors_creation");
-
             // ToDo: consider to re-implement lock in more exception-safetest way
             for (size_t i = 0; i < input_mem_ptrs.size(); i++)
                 input_host_tensors.push_back(make_tensor(input_mem_ptrs[i]->get_layout(), input_ptrs[i]));
 
-            axis_tensor = ov::Tensor(ov::element::i64, ov::Shape{1}, static_cast<void*>(&axis));
+            auto axis_tensor = ov::Tensor(ov::element::i64, ov::Shape{1}, static_cast<void*>(&axis));
 
             output_host_tensors.push_back(make_tensor(output_mem_ptr->get_layout(), output_ptr));
             input_host_tensors.push_back(axis_tensor);
+
+            if (!instance.get_network().reallocate_tensors) {
+                input_host_tensors_cache = input_host_tensors;
+                output_host_tensors_cache = output_host_tensors;
+            }
+        } else {
+            input_host_tensors = input_host_tensors_cache;
+            output_host_tensors = output_host_tensors_cache;
         }
-        // auto time1 = std::chrono::high_resolution_clock::now();
-
-        // auto time_res0 = std::chrono::duration_cast<std::chrono::microseconds>(time1 - time0).count();
-        // std::cout << "Time time_res0 = " << time_res0 << "\n";
-
-        // for (size_t i = 0; i < input_host_tensors.size(); i++) {
-        //     std::cout << "Tensor " << i << ": " << input_host_tensors[i]->get_element_type() << " " << input_host_tensors[i]->get_partial_shape() << " " << input_host_tensors[i]->get_data_ptr() << std::endl;
-        //     // for (size_t j = 0; j < (input_host_tensors[i]->get_element_count()); j += 2)
-        //     //     std::cout << j << "." << (int)(static_cast<char*>(input_host_tensors[i]->get_data_ptr())[j]) << " "
-        //     //                           << (int)(static_cast<char*>(input_host_tensors[i]->get_data_ptr())[j + 1]) << std::endl;
-        // }
-
-        // auto time4 = std::chrono::high_resolution_clock::now();
 
         op->evaluate(output_host_tensors, input_host_tensors);
 
-        // auto time5 = std::chrono::high_resolution_clock::now();
-        if (need_tensor_creation) {
+        if (reallocate_tensors) {
             for (size_t i = 0; i < instance.dependencies().size(); i++)
                 instance.dep_memory_ptr(i)->unlock(stream);
         }
 
         ev->set();
-
-        // auto time_res2 = std::chrono::duration_cast<std::chrono::microseconds>(time3 - time2).count();
-        // std::cout << "Time time_res2 = " << time_res2 << "\n";
-
-        // auto time_res4 = std::chrono::duration_cast<std::chrono::microseconds>(time4 - time3).count();
-        // std::cout << "Time time_res4 = " << time_res4 << "\n";
-
-        // auto time_res5 = std::chrono::duration_cast<std::chrono::microseconds>(time5 - time4).count();
-        // std::cout << "Time time_res5 = " << time_res5 << "\n";
 
         return ev;
     }

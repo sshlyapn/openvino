@@ -17,6 +17,8 @@ struct crop_impl : public typed_primitive_impl<crop> {
 
     // tensor input_offset;
 
+    bool calculated = false;
+
     DECLARE_OBJECT_TYPE_SERIALIZATION
 
     std::unique_ptr<primitive_impl> clone() const override {
@@ -70,7 +72,7 @@ struct crop_impl : public typed_primitive_impl<crop> {
         // for (size_t i = 0; i < params->output_layouts.size(); i++)
         //     std::cout << "- " << params->output_layouts[i].to_short_string() << std::endl;
 
-        {
+        // if (!calculated) {
             auto input_layout = params->input_layouts[0];
             auto output_layout = params->output_layouts[0];
             auto input_offset = params->input_offsets[0];
@@ -106,6 +108,8 @@ struct crop_impl : public typed_primitive_impl<crop> {
                 }
             }
 
+            calculated = true;
+
             // std::cout << "Input data:\n";
             // for (size_t i = 0; i < input_lock.size(); i++)
             //     std::cout << i << ". " << input_lock[i] << std::endl;
@@ -113,7 +117,7 @@ struct crop_impl : public typed_primitive_impl<crop> {
             // std::cout << "Output data:\n";
             // for (size_t i = 0; i < output_lock.size(); i++)
             //     std::cout << i << ". " << output_lock[i] << std::endl;
-        }
+        // }
 
         ev->set();
 

@@ -508,6 +508,14 @@ void program::build_program(bool is_internal) {
         if (get_engine().get_device_info().dev_type == device_type::discrete_gpu)
             transfer_memory_to_device();
     }
+
+    GPU_DEBUG_IF(true) {
+        GPU_DEBUG_TRACE_DETAIL << "Program's (id=" << get_id() << ") execution order\n";
+        for (auto& p : get_processing_order()) {
+            GPU_DEBUG_TRACE_DETAIL << " - " << get_processing_order().get_processing_number(p) << ". " << p->id() << " (unique_id=" << p->unique_id << ")\n";
+        }
+    }
+
 }
 
 void program::init_graph() {
@@ -636,8 +644,11 @@ void program::post_optimize_graph(bool is_internal) {
 
     // Recalculate processing order after all graph transformation to keep optimal primitives ordering
     // for OOO queue
-    if (_config.get_property(ov::intel_gpu::queue_type) == QueueTypes::out_of_order)
+    if (_config.get_property(ov::intel_gpu::queue_type) == QueueTypes::out_of_order) {
+
+
         get_processing_order().calculate_BFS_processing_order();
+    }
 }
 
 // mark if the node is constant assuming that all dependencies are marked properly

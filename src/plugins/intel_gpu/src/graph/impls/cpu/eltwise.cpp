@@ -20,8 +20,10 @@ struct eltwise_impl : public typed_primitive_impl<eltwise> {
     using parent::parent;
 
     eltwise_mode mode;
-    ov::TensorVector input_host_tensors;
-    ov::TensorVector output_host_tensors;
+    ov::TensorVector input_host_tensors_cache;
+    ov::TensorVector output_host_tensors_cache;
+
+    std::shared_ptr<ov::op::util::BinaryElementwiseArithmetic> op;
 
     DECLARE_OBJECT_TYPE_SERIALIZATION
 
@@ -60,21 +62,23 @@ struct eltwise_impl : public typed_primitive_impl<eltwise> {
         }
         auto ev = stream.create_user_event(false);
 
-        std::shared_ptr<ov::op::util::BinaryElementwiseArithmetic> op;
+        bool reallocate_tensors = input_host_tensors_cache.empty() || instance.get_network().reallocate_tensors;
 
-        if (mode == eltwise_mode::sum) {
-            op = std::make_shared<ov::op::v1::Add>();
-        } else if (mode == eltwise_mode::prod) {
-            op = std::make_shared<ov::op::v1::Multiply>();
-        } else if (mode == eltwise_mode::max) {
-            op = std::make_shared<ov::op::v1::Maximum>();
-        } else {
-            OPENVINO_THROW("[GPU] Unsupported eltwise operation");
-        }
+        ov::TensorVector input_host_tensors;
+        ov::TensorVector output_host_tensors;
 
-        bool need_tensor_creation = input_host_tensors.empty();
+        if (reallocate_tensors) {
+            if (mode == eltwise_mode::sum) {
+                op = std::make_shared<ov::op::v1::Add>();
+            } else if (mode == eltwise_mode::prod) {
+                op = std::make_shared<ov::op::v1::Multiply>();
+            } else if (mode == eltwise_mode::max) {
+                op = std::make_shared<ov::op::v1::Maximum>();
+            } else {
+                OPENVINO_THROW("[GPU] Unsupported eltwise operation");
+            }
 
-        if (need_tensor_creation) {
+
             std::vector<memory::ptr> input_mem_ptrs;
             for (size_t i = 0; i < instance.dependencies().size(); i++)
                 input_mem_ptrs.push_back(instance.dep_memory_ptr(i));
@@ -87,11 +91,19 @@ struct eltwise_impl : public typed_primitive_impl<eltwise> {
                 input_host_tensors.push_back(make_tensor(input_mem_ptrs[i]->get_layout(), input_mem_ptrs[i]->lock(stream, mem_lock_type::read)));
 
             output_host_tensors.push_back(make_tensor(output_mem_ptr->get_layout(), output_lock.data()));
+
+            if (!instance.get_network().reallocate_tensors) {
+                input_host_tensors_cache = input_host_tensors;
+                output_host_tensors_cache = output_host_tensors;
+            }
+        } else {
+            input_host_tensors = input_host_tensors_cache;
+            output_host_tensors = output_host_tensors_cache;
         }
 
         op->evaluate(output_host_tensors, input_host_tensors);
 
-        if (need_tensor_creation) {
+        if (reallocate_tensors) {
             for (size_t i = 0; i < instance.dependencies().size(); i++)
                 instance.dep_memory_ptr(i)->unlock(stream);
         }

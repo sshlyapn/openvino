@@ -18,6 +18,7 @@ struct shape_of_impl : public typed_primitive_impl<shape_of> {
     using parent::parent;
 
     std::string variable_id;
+    bool calculated = false;
 
     DECLARE_OBJECT_TYPE_SERIALIZATION
 
@@ -40,39 +41,31 @@ struct shape_of_impl : public typed_primitive_impl<shape_of> {
         auto& stream = instance.get_network().get_stream();
 
 
-        {
-            OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "shape_of_cpu::wait_for_events");
-            for (auto e : events) {
-                e->wait();
-            }
-        }
         auto ev = stream.create_user_event(false);
 
-        // std::cout << "Cpu impl Concat: " << instance.id() << " axis=" << instance.get_typed_desc<concatenation>()->axis << "\n";
+        // GPU_DEBUG_IF_ENV_VAR(execute_once, "EXECUTE_ONCE");
 
-        // auto input_mem_ptr = instance.dep_memory_ptr(0);
-        auto output_mem_ptr = instance.output_memory_ptr();
+        // if (execute_once)
 
-        cldnn::mem_lock<int32_t, mem_lock_type::write> output_lock(output_mem_ptr, stream);
+        // {
+        //     OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "shape_of_cpu::wait_for_events");
+        //     for (auto e : events) {
+        //         e->wait();
+        //     }
+        // }
 
-        auto shape = instance.get_input_layout().get_shape();
-        for (size_t i = 0; i < shape.size(); i++)
-            output_lock[i] = shape[i];
 
-        {
-            // auto input_mem_ptr = instance.dep_memory_ptr(0);
-            // auto output_mem_ptr = instance.output_memory_ptr();
+        // if (!calculated) {
+            auto output_mem_ptr = instance.output_memory_ptr();
 
-            // cldnn::mem_lock<uint8_t, mem_lock_type::read> input_lock(input_mem_ptr, stream);
-            // cldnn::mem_lock<uint8_t, mem_lock_type::read> output_lock(output_mem_ptr, stream);
+            cldnn::mem_lock<int32_t, mem_lock_type::write> output_lock(output_mem_ptr, stream);
 
-            // auto input = make_host_tensor(input_mem_ptr->get_layout(), input_lock.data());
-            // auto output = make_host_tensor(output_mem_ptr->get_layout(), output_lock.data());
+            auto shape = instance.get_input_layout().get_shape();
+            for (size_t i = 0; i < shape.size(); i++)
+                output_lock[i] = shape[i];
 
-            // ov::op::v0::ShapeOf op;
-
-            // op.evaluate({output}, {input});
-        }
+            calculated = true;
+        // }
 
         ev->set();
 

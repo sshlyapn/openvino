@@ -59,6 +59,11 @@ class ICompilationContext;
 
 struct network {
 public:
+    size_t iteration_counter = 0;
+
+    bool reallocate_tensors = true;
+    bool skip_cpu_impls = false;
+
     using ptr = std::shared_ptr<network>;
 
     struct VariableState {

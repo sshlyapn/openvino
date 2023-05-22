@@ -641,20 +641,25 @@ event::ptr primitive_inst::execute(const std::vector<event::ptr>& events) {
     {
         GPU_DEBUG_PROFILED_STAGE(instrumentation::pipeline_stage::inference);
 
+
+        if (get_network().skip_cpu_impls && _impl->is_cpu() && get_network().iteration_counter >= 1) {
+            return get_network().get_stream().create_user_event(true);
+        }
+
         auto ev = _impl->execute(dependencies, *this);
 
-        GPU_DEBUG_IF(!debug_config->dump_profiling_data.empty()) {
-            get_network().get_stream().wait_for_events({ev});
+        // GPU_DEBUG_IF(!debug_config->dump_profiling_data.empty()) {
+        //     get_network().get_stream().wait_for_events({ev});
 
-            if (ev != nullptr) {
-                auto profiling_info = ev->get_profiling_info();
-                for (const auto &interval : profiling_info) {
-                    if (interval.stage == cldnn::instrumentation::profiling_stage::executing) {
-                        GPU_DEBUG_CODE(stage_prof.set_custom_stage_duration(interval.value->value()));
-                    }
-                }
-            }
-        }
+        //     if (ev != nullptr) {
+        //         auto profiling_info = ev->get_profiling_info();
+        //         for (const auto &interval : profiling_info) {
+        //             if (interval.stage == cldnn::instrumentation::profiling_stage::executing) {
+        //                 GPU_DEBUG_CODE(stage_prof.set_custom_stage_duration(interval.value->value()));
+        //             }
+        //         }
+        //     }
+        // }
 
         return ev;
     }
@@ -952,10 +957,10 @@ event::ptr primitive_inst::update_weights() {
             stream.set_arguments(*kernel, weights_params.clKernel->params, args);
             auto ev = stream.enqueue_kernel(*kernel, weights_params.clKernel->params, args, {}, true);
 
-            GPU_DEBUG_GET_INSTANCE(debug_config);
-            GPU_DEBUG_IF(!debug_config->dump_profiling_data.empty()) {
-                stream.wait_for_events({ev});
-            }
+            // GPU_DEBUG_GET_INSTANCE(debug_config);
+            // GPU_DEBUG_IF(!debug_config->dump_profiling_data.empty()) {
+            //     stream.wait_for_events({ev});
+            // }
 
             return ev;
         }
@@ -1258,6 +1263,10 @@ void primitive_inst::add_profiling_data(instrumentation::pipeline_stage stage, b
             stage,
             cache_hit
     };
+
+    if (_network.iteration_counter < 20) {
+        return;
+    }
 
     auto hash = instrumentation::perf_counter_hash()(key);
     auto& d = _profiling_data[hash];

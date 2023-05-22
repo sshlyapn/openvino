@@ -21,8 +21,8 @@ struct activation_impl : public typed_primitive_impl<activation> {
     activation_func activation_function;
     activation_additional_params params;
 
-    ov::TensorVector input_host_tensors;
-    ov::TensorVector output_host_tensors;
+    ov::TensorVector input_host_tensors_cache;
+    ov::TensorVector output_host_tensors_cache;
 
     std::shared_ptr<ov::op::util::BinaryElementwiseArithmetic> op;
 
@@ -65,17 +65,20 @@ struct activation_impl : public typed_primitive_impl<activation> {
         }
         auto ev = stream.create_user_event(false);
 
-        bool need_tensor_creation = input_host_tensors.empty();
+        bool reallocate_tensors = input_host_tensors_cache.empty() || instance.get_network().reallocate_tensors;
 
-
-        if (need_tensor_creation) {
-
+        if (!op) {
             if (activation_function == activation_func::pow) {
                 op = std::make_shared<ov::op::v1::Power>();
             } else {
                 OPENVINO_THROW("[GPU] Unsupported activation\n");
             }
+        }
 
+        ov::TensorVector input_host_tensors;
+        ov::TensorVector output_host_tensors;
+
+        if (reallocate_tensors) {
             std::vector<memory::ptr> input_mem_ptrs;
             for (size_t i = 0; i < instance.dependencies().size(); i++)
                 input_mem_ptrs.push_back(instance.dep_memory_ptr(i));
@@ -94,11 +97,19 @@ struct activation_impl : public typed_primitive_impl<activation> {
 
             cldnn::mem_lock<int32_t, mem_lock_type::read> output_lock(output_mem_ptr, stream);
             output_host_tensors.push_back(make_tensor(output_mem_ptr->get_layout(), output_lock.data()));
+
+            if (!instance.get_network().reallocate_tensors) {
+                input_host_tensors_cache = input_host_tensors;
+                output_host_tensors_cache = output_host_tensors;
+            }
+        } else {
+            input_host_tensors = input_host_tensors_cache;
+            output_host_tensors = output_host_tensors_cache;
         }
 
         op->evaluate(output_host_tensors, input_host_tensors);
 
-        if (need_tensor_creation) {
+        if (reallocate_tensors) {
             for (size_t i = 0; i < instance.dependencies().size(); i++)
                 instance.dep_memory_ptr(i)->unlock(stream);
         }
