@@ -545,6 +545,8 @@ event::ptr primitive_inst::execute(const std::vector<event::ptr>& events) {
 
     dump_id(_node->get_unique_id());
 
+    bool need_set_args = false;
+
     std::vector<event::ptr> dependencies;
     if (is_dynamic()) {
         OPENVINO_ASSERT(_node != nullptr, "[GPU] Invalid primitive_inst object for dynamic shapes case: program_node can't be null");
@@ -587,6 +589,7 @@ event::ptr primitive_inst::execute(const std::vector<event::ptr>& events) {
         // Only try update weight and realloc when impl is updated.
         GPU_DEBUG_TRACE_DETAIL << id() << ": shape_changed()=" << shape_changed() << " _impl=" << !!_impl << " third=" << (!shape_changed() && _impl->is_dynamic()) << std::endl;
         if (shape_changed() || !_impl || (!shape_changed() && _impl->is_dynamic())) {
+            need_set_args = true;
             if (update_impl()) {
                 auto ev = update_weights();
                 if (ev)
@@ -609,7 +612,7 @@ event::ptr primitive_inst::execute(const std::vector<event::ptr>& events) {
 
     // Output buffer may be changed under the following conditions, so we need to set args to kernel on each iteration
 
-    if ((is_dynamic() || has_mutable_input() || is_output()) && !_impl->is_cpu()) {
+    if ((is_dynamic() || has_mutable_input() || is_output()) && !_impl->is_cpu() && (need_set_args || !is_dynamic())) {
         set_arguments();
     }
     on_execute();
