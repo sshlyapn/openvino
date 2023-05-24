@@ -63,6 +63,7 @@ enum class LogLevel : int8_t {
 #define GPU_DEBUG_LOG_PREFIX    std::cout << cldnn::debug_configuration::prefix << __FILENAME__ << ":" <<__LINE__ << ":" << __func__ << ": "
 #define GPU_DEBUG_LOG_COLOR_PREFIX  std::cout << DARK_GRAY << cldnn::debug_configuration::prefix << \
     BLUE << __FILENAME__ << ":" << PURPLE <<  __LINE__ << ":" << CYAN << __func__ << ": " << RESET
+#define GPU_DEBUG_IF_ENV_VAR(var_name, env_var) const auto var_name = std::getenv(env_var);
 #define DARK_GRAY   "\033[1;30m"
 #define BLUE        "\033[1;34m"
 #define PURPLE      "\033[1;35m"
@@ -75,6 +76,7 @@ enum class LogLevel : int8_t {
 #define GPU_DEBUG_PROFILED_STAGE(stage)
 #define GPU_DEBUG_PROFILED_STAGE_CACHE_HIT(val)
 #define GPU_DEBUG_LOG_RAW(min_verbose_level) if (0) std::cout << cldnn::debug_configuration::prefix
+#define GPU_DEBUG_IF_ENV_VAR(var_name, env_var) if (false)
 #endif
 
 // Macro below is inserted to avoid unused variable warning when GPU_DEBUG_CONFIG is OFF

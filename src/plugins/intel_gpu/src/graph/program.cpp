@@ -63,6 +63,7 @@
 #include "reduce_inst.h"
 #include "region_yolo_inst.h"
 #include "strided_slice_inst.h"
+#include "shape_of_inst.h"
 #include "loop_inst.h"
 #include "reverse_inst.h"
 #include "to_string_utils.h"
@@ -180,11 +181,11 @@ void program::init_primitives() {
     static bool is_initialized = false;
     if (!is_initialized) {
         common::register_implementations();
-        cpu::register_implementations();
-        ocl::register_implementations();
 #ifdef ENABLE_ONEDNN_FOR_GPU
         onednn::register_implementations();
 #endif
+        ocl::register_implementations();
+        cpu::register_implementations();
         is_initialized = true;
     }
 }
@@ -507,6 +508,14 @@ void program::build_program(bool is_internal) {
         if (get_engine().get_device_info().dev_type == device_type::discrete_gpu)
             transfer_memory_to_device();
     }
+
+    GPU_DEBUG_IF(true) {
+        GPU_DEBUG_TRACE_DETAIL << "Program's (id=" << get_id() << ") execution order\n";
+        for (auto& p : get_processing_order()) {
+            GPU_DEBUG_TRACE_DETAIL << " - " << get_processing_order().get_processing_number(p) << ". " << p->id() << " (unique_id=" << p->unique_id << ")\n";
+        }
+    }
+
 }
 
 void program::init_graph() {
@@ -516,6 +525,8 @@ void program::init_graph() {
     apply_opt_pass<calculate_prior_boxes>();
 
     apply_opt_pass<mark_nodes>();
+
+    apply_opt_pass<mark_shape_of_subgraphs>();
 }
 
 void program::run_graph_compilation() { apply_opt_pass<compile_graph>(); }
@@ -598,6 +609,8 @@ void program::pre_optimize_graph(bool is_internal) {
 
     // add optimization attributes for onednn primitives
     apply_opt_pass<add_onednn_optimization_attributes>();
+
+    apply_opt_pass<mark_shape_of_subgraphs>(true);
 }
 
 void program::post_optimize_graph(bool is_internal) {
@@ -631,8 +644,11 @@ void program::post_optimize_graph(bool is_internal) {
 
     // Recalculate processing order after all graph transformation to keep optimal primitives ordering
     // for OOO queue
-    if (_config.get_property(ov::intel_gpu::queue_type) == QueueTypes::out_of_order)
+    if (_config.get_property(ov::intel_gpu::queue_type) == QueueTypes::out_of_order) {
+
+
         get_processing_order().calculate_BFS_processing_order();
+    }
 }
 
 // mark if the node is constant assuming that all dependencies are marked properly
@@ -1086,6 +1102,10 @@ void program::fuse_nodes(program_node &fused_node,
     local_desc.input_layout = peer_node.get_dependency(0).get_output_layout();
     local_desc.output_layout = peer_layout;
 
+    if (fused_node.in_shape_of_subgraph && !peer_node.in_shape_of_subgraph) {
+        fused_node.in_shape_of_subgraph = false;
+    }
+
     int32_t orig_fused_node_num_deps = static_cast<int32_t>(fused_node.get_dependencies().size());
     auto fusedPadding = fused_node.get_output_layout().data_padding;
     cldnn::padding needed_padding = padding::max(peer_layout.data_padding,
@@ -1310,6 +1330,8 @@ program::primitives_info program::get_current_stage_info() const {
                             get_inference_precision(*p) : cldnn::data_types::f32,
                           p->selected_impl ? p->selected_impl->is_cpu() : false,
                           exec_id++);
+
+        pi.in_shape_of_subgraph = p->in_shape_of_subgraph;
 
         info.push_back(pi);
     }

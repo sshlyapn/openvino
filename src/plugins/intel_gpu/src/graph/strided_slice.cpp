@@ -114,13 +114,13 @@ std::string strided_slice_inst::to_string(strided_slice_node const& node) {
 
     json_composite strided_slice_info;
     strided_slice_info.add("input id", input.id());
-    std::vector<std::string> dependencies_info = {"begin_param id", "end_param id", "stride_param id"};
-    for (size_t i = 0; i < node.get_dependencies().size(); ++i) {
-        strided_slice_info.add(dependencies_info[i], node.get_dependency(i).id());
-    }
-    strided_slice_info.add("begin", node.get_primitive()->begin);
-    strided_slice_info.add("end", node.get_primitive()->end);
-    strided_slice_info.add("strides", node.get_primitive()->strides);
+    // std::vector<std::string> dependencies_info = {"begin_param id", "end_param id", "stride_param id"};
+    // for (size_t i = 0; i < node.get_dependencies().size(); ++i) {
+    //     strided_slice_info.add(dependencies_info[i], node.get_dependency(i).id());
+    // }
+    // strided_slice_info.add("begin", node.get_primitive()->begin);
+    // strided_slice_info.add("end", node.get_primitive()->end);
+    // strided_slice_info.add("strides", node.get_primitive()->strides);
     strided_slice_info.add("begin mask", node.get_primitive()->begin_mask);
     strided_slice_info.add("end mask", node.get_primitive()->end_mask);
     strided_slice_info.add("new axis mask", node.get_primitive()->new_axis_mask);

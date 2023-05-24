@@ -644,7 +644,7 @@ TEST(gather7_gpu_fp16, d44_axisY_bdim1) {
     auto& engine = get_test_engine();
 
     auto input1 = engine.allocate_memory({ data_types::f16, format::bfyx, tensor{ 4, 3, 1, 5 } }); // Dictionary
-    auto input2 = engine.allocate_memory({ data_types::f32, format::bfyx, tensor{ 4, 4, 1, 1 } }); // Indexes
+    auto input2 = engine.allocate_memory({ data_types::i32, format::bfyx, tensor{ 4, 4, 1, 1 } }); // Indexes
     int64_t axis = 2;
     int64_t batch_dim = 1;
 
@@ -667,17 +667,17 @@ TEST(gather7_gpu_fp16, d44_axisY_bdim1) {
     });
 
     set_values(input2, {
-        3.f, 2.f, 3.f, 4.f,
-        3.f, 2.f, 2.f, 1.f,
-        1.f, 1.f, 0.f, 4.f,
-        2.f, 4.f, 3.f, 2.f
+        3, 2, 3, 4,
+        3, 2, 2, 1,
+        1, 1, 0, 4,
+        2, 4, 3, 2
     });
 
     topology topology;
     topology.add(input_layout("InputDictionary", input1->get_layout()));
     topology.add(input_layout("InputText", input2->get_layout()));
     topology.add(
-        gather("gather", input_info("InputDictionary"), input_info("InputText"), axis, ov::Shape{4, 3, 4, 1}, batch_dim)
+        gather("gather", input_info("InputDictionary"), input_info("InputText"), axis, ov::Shape{4, 3, 4, 1, 1, 1}, batch_dim)
     );
 
     network network(engine, topology, get_test_default_config(engine));
@@ -1309,7 +1309,7 @@ TEST(gather_gpu_fp32, d22_axisY) {
     topology.add(input_layout("InputDictionary", input1->get_layout()));
     topology.add(input_layout("InputText", input2->get_layout()));
     topology.add(
-        gather("gather", input_info("InputDictionary"), input_info("InputText"), axis, ov::Shape{2, 2, 2, 2})
+        gather("gather", input_info("InputDictionary"), input_info("InputText"), axis, ov::Shape{2, 2, 2, 2, 1, 1, 1})
     );
 
     network network(engine, topology, get_test_default_config(engine));
