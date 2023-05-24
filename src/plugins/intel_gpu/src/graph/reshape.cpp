@@ -186,6 +186,7 @@ void reshape_inst::on_execute() {
     if (!can_be_optimized())
         return;
 
+    GPU_DEBUG_TRACE_DETAIL << id() << ": reshape_inst::on_execute " << (_outputs[0] && _network.get_engine().is_the_same_buffer(output_memory(), input_memory())) << std::endl;
     if (_outputs[0] && _network.get_engine().is_the_same_buffer(output_memory(), input_memory()))
         return;
 
@@ -206,6 +207,7 @@ void reshape_inst::update_output_memory() {
     build_deps();  // reshape need deps
     OPENVINO_ASSERT(input_memory_ptr() != nullptr, "[GPU] Failed to reuse input in ", id(), " primitive: input memory was not allocated");
     _outputs = {_network.get_engine().reinterpret_buffer(input_memory(), _impl_params->get_output_layout())};
+    GPU_DEBUG_TRACE_DETAIL << id() << ": reshape_inst::update_output_memory() reinterpret_buffer\n";
 }
 
 }  // namespace cldnn

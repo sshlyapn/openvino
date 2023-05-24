@@ -17,8 +17,8 @@
 namespace cldnn {
 
 template <typename T, typename U>
-class singleton_map : public std::map<T, U> {
-    singleton_map() : std::map<T, U>() {}
+class singleton_map : public std::vector<std::pair<T, U>> {
+    singleton_map() : std::vector<std::pair<T, U>>() {}
     singleton_map(singleton_map const&) = delete;
     void operator=(singleton_map const&) = delete;
 
@@ -117,7 +117,7 @@ public:
 
     static void add(impl_types impl_type, shape_types shape_type, factory_type factory, std::set<key_type> keys) {
         OPENVINO_ASSERT(impl_type != impl_types::any, "[GPU] Can't register impl with type any");
-        map_type::instance().insert({{impl_type, shape_type}, {keys, factory}});
+        map_type::instance().push_back({{impl_type, shape_type}, {keys, factory}});
     }
 
     static std::set<key_type> combine(const std::vector<data_types>& types, const std::vector<format::type>& formats) {

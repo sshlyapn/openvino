@@ -1382,7 +1382,7 @@ void network::allocate_primitive_instance(program_node const& node) {
     if (_primitives.count(node.id()))
         return;
 
-    GPU_DEBUG_TRACE_DETAIL << node.id() << ": allocate primitive instance" << std::endl;
+    GPU_DEBUG_TRACE_DETAIL << node.id() << ": allocate primitive instance with unique_id=" << node.get_unique_id() << std::endl;
 
     auto inst = node.type()->create_instance(*this, node);
 
