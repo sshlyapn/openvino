@@ -20,8 +20,6 @@ struct eltwise_impl : public typed_primitive_impl<eltwise> {
     using parent::parent;
 
     eltwise_mode mode;
-    ov::TensorVector input_host_tensors_cache;
-    ov::TensorVector output_host_tensors_cache;
 
     std::shared_ptr<ov::op::util::BinaryElementwiseArithmetic> op;
 
@@ -55,53 +53,51 @@ struct eltwise_impl : public typed_primitive_impl<eltwise> {
         OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "eltwise::execute_impl");
         auto& stream = instance.get_network().get_stream();
 
-        // std::cout << "Cpu impl eltwise: " << instance.id() << "\n";
-
         for (auto e : events) {
             e->wait();
         }
-        auto ev = stream.create_user_event(false);
 
-        bool reallocate_tensors = input_host_tensors_cache.empty() || true;
+        auto ev = stream.create_user_event(false);
 
         ov::TensorVector input_host_tensors;
         ov::TensorVector output_host_tensors;
 
-        if (reallocate_tensors) {
-            if (mode == eltwise_mode::sum) {
+        if (!op) {
+            switch (mode) {
+            case eltwise_mode::sum:
                 op = std::make_shared<ov::op::v1::Add>();
-            } else if (mode == eltwise_mode::prod) {
+                break;
+            case eltwise_mode::prod:
                 op = std::make_shared<ov::op::v1::Multiply>();
-            } else if (mode == eltwise_mode::max) {
+                break;
+            case eltwise_mode::max:
                 op = std::make_shared<ov::op::v1::Maximum>();
-            } else {
-                OPENVINO_THROW("[GPU] Unsupported eltwise operation");
+                break;
+            default:
+                OPENVINO_THROW("[GPU] Couldn't create eltwise operation: unsupported eltwise operation (", static_cast<size_t>(mode), ")");
             }
 
-
-            std::vector<memory::ptr> input_mem_ptrs;
-            for (size_t i = 0; i < instance.dependencies().size(); i++)
-                input_mem_ptrs.push_back(instance.dep_memory_ptr(i));
-
-            auto output_mem_ptr = instance.output_memory_ptr();
-
-            cldnn::mem_lock<int32_t, mem_lock_type::read> output_lock(output_mem_ptr, stream);
-
-            for (size_t i = 0; i < input_mem_ptrs.size(); i++)
-                input_host_tensors.push_back(make_tensor(input_mem_ptrs[i]->get_layout(), input_mem_ptrs[i]->lock(stream, mem_lock_type::read)));
-
-            output_host_tensors.push_back(make_tensor(output_mem_ptr->get_layout(), output_lock.data()));
-        } else {
-            input_host_tensors = input_host_tensors_cache;
-            output_host_tensors = output_host_tensors_cache;
+            OPENVINO_ASSERT(op->has_evaluate(), "[GPU] Couldn't find evaluate() function for eltwise ",
+                                                "primitive with id ", instance.id());
         }
+
+        std::vector<memory::ptr> input_mem_ptrs;
+        for (size_t i = 0; i < instance.dependencies().size(); i++)
+            input_mem_ptrs.push_back(instance.dep_memory_ptr(i));
+
+        auto output_mem_ptr = instance.output_memory_ptr();
+
+        cldnn::mem_lock<uint8_t, mem_lock_type::write> output_lock(output_mem_ptr, stream);
+
+        for (size_t i = 0; i < input_mem_ptrs.size(); i++)
+            input_host_tensors.push_back(make_tensor(input_mem_ptrs[i]->get_layout(), input_mem_ptrs[i]->lock(stream, mem_lock_type::read)));
+
+        output_host_tensors.push_back(make_tensor(output_mem_ptr->get_layout(), output_lock.data()));
 
         op->evaluate(output_host_tensors, input_host_tensors);
 
-        if (reallocate_tensors) {
-            for (size_t i = 0; i < instance.dependencies().size(); i++)
-                instance.dep_memory_ptr(i)->unlock(stream);
-        }
+        for (size_t i = 0; i < input_mem_ptrs.size(); i++)
+            input_mem_ptrs[i]->unlock(stream);
 
         ev->set();
 
@@ -122,7 +118,6 @@ public:
 namespace detail {
 
 attach_eltwise_impl::attach_eltwise_impl() {
-    std::cout << "Eltwise attach: CPU impl\n";
     auto formats = {
         format::bfyx,
         format::bfzyx,

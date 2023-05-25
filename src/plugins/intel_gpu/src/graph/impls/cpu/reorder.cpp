@@ -17,8 +17,7 @@ struct reorder_impl : public typed_primitive_impl<reorder> {
     using parent = typed_primitive_impl<reorder>;
     using parent::parent;
 
-    ov::HostTensorVector input_host_tensors_cache;
-    ov::HostTensorVector output_host_tensors_cache;
+    std::shared_ptr<ov::op::v0::Convert> op;
 
     DECLARE_OBJECT_TYPE_SERIALIZATION
 
@@ -40,38 +39,35 @@ struct reorder_impl : public typed_primitive_impl<reorder> {
         OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "reorder::execute_impl");
         auto& stream = instance.get_network().get_stream();
 
-        {
-            OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "reorder_cpu::wait_for_events");
-            for (auto e : events) {
-                e->wait();
-            }
+        for (auto e : events) {
+            e->wait();
         }
+
         auto ev = stream.create_user_event(false);
 
         if (instance.get_impl_params()->input_layouts[0].format != instance.get_impl_params()->input_layouts[0].format)
-            OPENVINO_THROW("[GPU] Unsupported reorder case: need to support different formats\n");
+            OPENVINO_THROW("[GPU] Unsupported reorder case: input and output type are different");
 
-        bool reallocate_tensors = input_host_tensors_cache.empty() || true;
+        ov::TensorVector input_host_tensors;
+        ov::TensorVector output_host_tensors;
 
-        ov::HostTensorVector input_host_tensors;
-        ov::HostTensorVector output_host_tensors;
+        auto input_mem_ptr = instance.input_memory_ptr();
+        auto output_mem_ptr = instance.output_memory_ptr();
 
-        if (reallocate_tensors) {
-            auto input_mem_ptr = instance.input_memory_ptr();
-            auto output_mem_ptr = instance.output_memory_ptr();
+        cldnn::mem_lock<uint8_t, mem_lock_type::read> input_lock(input_mem_ptr, stream);
+        cldnn::mem_lock<uint8_t, mem_lock_type::read> output_lock(output_mem_ptr, stream);
 
-            cldnn::mem_lock<int32_t, mem_lock_type::read> input_lock(input_mem_ptr, stream);
-            cldnn::mem_lock<int32_t, mem_lock_type::read> output_lock(output_mem_ptr, stream);
+        input_host_tensors.push_back(make_tensor(output_mem_ptr->get_layout(), input_lock.data()));
+        output_host_tensors.push_back(make_tensor(output_mem_ptr->get_layout(), output_lock.data()));
 
-            input_host_tensors.push_back(make_host_tensor(output_mem_ptr->get_layout(), input_lock.data()));
-            output_host_tensors.push_back(make_host_tensor(output_mem_ptr->get_layout(), output_lock.data()));
-        } else {
-            input_host_tensors = input_host_tensors_cache;
-            output_host_tensors = output_host_tensors_cache;
+        if (!op) {
+            op = std::make_shared<ov::op::v0::Convert>();
+
+            OPENVINO_ASSERT(op->has_evaluate(), "[GPU] Couldn't find evaluate() function for reorder ",
+                                                "primitive with id ", instance.id());
         }
 
-        ov::op::v0::Convert op;
-        op.evaluate(output_host_tensors, input_host_tensors);
+        op->evaluate(output_host_tensors, input_host_tensors);
 
         ev->set();
 
@@ -92,7 +88,6 @@ public:
 namespace detail {
 
 attach_reorder_impl::attach_reorder_impl() {
-    std::cout << "Concat attach: CPU impl\n";
     auto formats = {
         format::bfyx,
         format::bfzyx,

@@ -27,8 +27,7 @@ struct strided_slice_impl : public typed_primitive_impl<strided_slice> {
     std::vector<int64_t> shrink_axis_mask;
     std::vector<int64_t> ellipsis_mask;
 
-    ov::HostTensorVector input_host_tensors_cache;
-    ov::HostTensorVector output_host_tensors_cache;
+    std::shared_ptr<ov::op::v1::StridedSlice> op;
 
     DECLARE_OBJECT_TYPE_SERIALIZATION
 
@@ -84,107 +83,84 @@ struct strided_slice_impl : public typed_primitive_impl<strided_slice> {
         OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "strided_slice::execute_impl");
         auto& stream = instance.get_network().get_stream();
 
-        // std::cout << "Cpu impl strided_slice: " << instance.id() << "\n";
-
         for (auto e : events) {
             e->wait();
         }
 
         auto ev = stream.create_user_event(false);
 
-        auto& constant_mem = instance.get_impl_params()->memory_deps;
+        ov::TensorVector input_host_tensors;
+        ov::TensorVector output_host_tensors;
 
-        bool use_runtime_inputs = (begin_data.empty() && !constant_mem.count(1))
-                                || (end_data.empty() && !constant_mem.count(2))
-                                || (strides_data.empty() && !constant_mem.count(3));
+        ov::Tensor begin_host_tensor;
+        ov::Tensor end_host_tensor;
+        ov::Tensor strides_host_tensor;
 
-        if (use_runtime_inputs && instance.dependencies().size() != 4) {
-            OPENVINO_THROW("[GPU] Unexpected configuration of Strided Slice");
-        }
-
-
-        std::shared_ptr<ngraph::runtime::HostTensor> begin_host_tensor;
-        std::shared_ptr<ngraph::runtime::HostTensor> end_host_tensor;
-        std::shared_ptr<ngraph::runtime::HostTensor> strides_host_tensor;
-
-
-        bool reallocate_tensors = input_host_tensors_cache.empty() || true;
-
-        ov::HostTensorVector input_host_tensors;
-        ov::HostTensorVector output_host_tensors;
-
-        if (reallocate_tensors) {
-            ov::Shape begin_shape = begin_data.empty() ? instance.get_impl_params()->get_input_layout(1).get_shape() : ov::Shape{ begin_data.size() };
-            ov::Shape end_shape = end_data.empty() ? instance.get_impl_params()->get_input_layout(2).get_shape() : ov::Shape{ end_data.size() };
-            ov::Shape strides_shape = strides_data.empty() ? instance.get_impl_params()->get_input_layout(3).get_shape() : ov::Shape{ strides_data.size() };
-
-            if (begin_data.empty()) {
-                auto begin_mem = begin_data.empty() && !constant_mem.count(1) ? instance.dep_memory_ptr(1) : constant_mem.at(1);
-                begin_mem = instance.dep_memory_ptr(1);
-                begin_host_tensor = make_host_tensor(begin_mem->get_layout(), begin_mem->lock(stream, mem_lock_type::read));
-            } else {
-                begin_host_tensor = make_host_tensor({ begin_shape, data_types::i64, format::bfyx }, static_cast<void*>(begin_data.data()));
-            }
-
-            if (end_data.empty()) {
-                auto end_mem = end_data.empty() && !constant_mem.count(2) ? instance.dep_memory_ptr(2) : constant_mem.at(2);
-                end_mem = instance.dep_memory_ptr(2);
-                end_host_tensor = make_host_tensor(end_mem->get_layout(), end_mem->lock(stream, mem_lock_type::read));
-            } else {
-                end_host_tensor = make_host_tensor({ end_shape, data_types::i64, format::bfyx }, static_cast<void*>(end_data.data()));
-            }
-
-            if (strides_data.empty()) {
-                auto strides_mem = strides_data.empty() && !constant_mem.count(3) ? instance.dep_memory_ptr(3) : constant_mem.at(3);
-                strides_mem = instance.dep_memory_ptr(3);
-                strides_host_tensor = make_host_tensor(strides_mem->get_layout(), strides_mem->lock(stream, mem_lock_type::read));
-            } else {
-                strides_host_tensor = make_host_tensor({ strides_shape, data_types::i64, format::bfyx }, static_cast<void*>(strides_data.data()));
-            }
-
-            memory::ptr input_mem_ptr = instance.dep_memory_ptr(0);
-            auto output_mem_ptr = instance.output_memory_ptr();
-
-            input_host_tensors.push_back(make_host_tensor(input_mem_ptr->get_layout(), input_mem_ptr->lock(stream, mem_lock_type::read)));
-            input_host_tensors.push_back(begin_host_tensor);
-            input_host_tensors.push_back(end_host_tensor);
-            input_host_tensors.push_back(strides_host_tensor);
-            output_host_tensors.push_back(make_host_tensor(output_mem_ptr->get_layout(), output_mem_ptr->lock(stream, mem_lock_type::write)));
+        if (begin_data.empty()) {
+            auto begin_mem = instance.dep_memory_ptr(1);
+            begin_host_tensor = make_tensor(begin_mem->get_layout(), begin_mem->lock(stream, mem_lock_type::read));
         } else {
-            input_host_tensors = input_host_tensors_cache;
-            output_host_tensors = output_host_tensors_cache;
+            ov::Shape begin_shape = ov::Shape{ begin_data.size() };
+            begin_host_tensor = make_tensor({ begin_shape, data_types::i64, format::bfyx }, static_cast<void*>(begin_data.data()));
         }
 
-        ov::op::v1::StridedSlice op;
-
-        op.set_begin_mask(begin_mask);
-        op.set_end_mask(end_mask);
-        op.set_new_axis_mask(new_axis_mask);
-        op.set_shrink_axis_mask(shrink_axis_mask);
-        op.set_ellipsis_mask_mask(ellipsis_mask);
-
-        op.evaluate(output_host_tensors, input_host_tensors);
-
-
-        if (reallocate_tensors) {
-            if (begin_data.empty()) {
-                auto begin_mem = instance.dep_memory_ptr(1);
-                begin_mem->unlock(stream);
-            }
-
-            if (end_data.empty()) {
-                auto end_mem = instance.dep_memory_ptr(2);
-                end_mem->unlock(stream);
-            }
-
-            if (strides_data.empty()) {
-                auto strides_mem = instance.dep_memory_ptr(3);
-                strides_mem->unlock(stream);
-            }
-
-            instance.dep_memory_ptr(0)->unlock(stream);
-            instance.output_memory_ptr()->unlock(stream);
+        if (end_data.empty()) {
+            auto end_mem = instance.dep_memory_ptr(2);
+            end_host_tensor = make_tensor(end_mem->get_layout(), end_mem->lock(stream, mem_lock_type::read));
+        } else {
+            ov::Shape end_shape = ov::Shape{ end_data.size() };
+            end_host_tensor = make_tensor({ end_shape, data_types::i64, format::bfyx }, static_cast<void*>(end_data.data()));
         }
+
+        if (strides_data.empty()) {
+            auto strides_mem = instance.dep_memory_ptr(3);
+            strides_host_tensor = make_tensor(strides_mem->get_layout(), strides_mem->lock(stream, mem_lock_type::read));
+        } else {
+            ov::Shape strides_shape = ov::Shape{ strides_data.size() };
+            strides_host_tensor = make_tensor({ strides_shape, data_types::i64, format::bfyx }, static_cast<void*>(strides_data.data()));
+        }
+
+        auto input_mem_ptr = instance.dep_memory_ptr(0);
+        auto output_mem_ptr = instance.output_memory_ptr();
+
+        input_host_tensors.push_back(make_tensor(input_mem_ptr->get_layout(), input_mem_ptr->lock(stream, mem_lock_type::read)));
+        input_host_tensors.push_back(begin_host_tensor);
+        input_host_tensors.push_back(end_host_tensor);
+        input_host_tensors.push_back(strides_host_tensor);
+        output_host_tensors.push_back(make_tensor(output_mem_ptr->get_layout(), output_mem_ptr->lock(stream, mem_lock_type::write)));
+
+        if (!op) {
+            op = std::make_shared<ov::op::v1::StridedSlice>();
+
+            op->set_begin_mask(begin_mask);
+            op->set_end_mask(end_mask);
+            op->set_new_axis_mask(new_axis_mask);
+            op->set_shrink_axis_mask(shrink_axis_mask);
+            op->set_ellipsis_mask_mask(ellipsis_mask);
+
+            OPENVINO_ASSERT(op->has_evaluate(), "[GPU] Couldn't find evaluate() function for strided_slice ",
+                                                "primitive with id ", instance.id());
+        }
+
+        op->evaluate(output_host_tensors, input_host_tensors);
+
+        if (begin_data.empty()) {
+            auto begin_mem = instance.dep_memory_ptr(1);
+            begin_mem->unlock(stream);
+        }
+
+        if (end_data.empty()) {
+            auto end_mem = instance.dep_memory_ptr(2);
+            end_mem->unlock(stream);
+        }
+
+        if (strides_data.empty()) {
+            auto strides_mem = instance.dep_memory_ptr(3);
+            strides_mem->unlock(stream);
+        }
+
+        input_mem_ptr->unlock(stream);
+        output_mem_ptr->unlock(stream);
 
         ev->set();
 
@@ -205,7 +181,6 @@ public:
 namespace detail {
 
 attach_strided_slice_impl::attach_strided_slice_impl() {
-    std::cout << "StridedSlice attach: CPU impl\n";
     auto formats = {
         format::bfyx,
         format::bfzyx,

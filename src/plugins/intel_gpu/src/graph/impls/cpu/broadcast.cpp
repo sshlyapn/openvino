@@ -64,6 +64,9 @@ struct broadcast_impl : public typed_primitive_impl<broadcast> {
         if (!op) {
             op = std::make_shared<ov::op::v3::Broadcast>();
             op->set_broadcast_spec(broadcast_mode);
+
+            OPENVINO_ASSERT(op->has_evaluate(), "[GPU] Couldn't find evaluate() function for broadcast ",
+                                                "primitive with id ", instance.id());
         }
 
         std::vector<memory::ptr> input_mem_ptrs;
@@ -75,13 +78,13 @@ struct broadcast_impl : public typed_primitive_impl<broadcast> {
 
         auto output_mem_ptr = instance.output_memory_ptr();
 
-        cldnn::mem_lock<int32_t, mem_lock_type::read> output_lock(output_mem_ptr, stream);
+        cldnn::mem_lock<uint8_t, mem_lock_type::read> output_lock(output_mem_ptr, stream);
         output_host_tensors.push_back(make_tensor(output_mem_ptr->get_layout(), output_lock.data()));
 
         op->evaluate(output_host_tensors, input_host_tensors);
 
-        for (size_t i = 0; i < instance.dependencies().size(); i++)
-            instance.dep_memory_ptr(i)->unlock(stream);
+        for (size_t i = 0; i < input_mem_ptrs.size(); i++)
+            input_mem_ptrs[i]->unlock(stream);
 
         ev->set();
 

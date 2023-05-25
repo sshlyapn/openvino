@@ -19,8 +19,7 @@ struct scatter_update_impl : public typed_primitive_impl<scatter_update> {
 
     int64_t axis;
 
-    ov::HostTensorVector input_host_tensors_cache;
-    ov::HostTensorVector output_host_tensors_cache;
+    std::shared_ptr<ov::op::v3::ScatterUpdate> op;
 
     DECLARE_OBJECT_TYPE_SERIALIZATION
 
@@ -52,50 +51,43 @@ struct scatter_update_impl : public typed_primitive_impl<scatter_update> {
         OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "scatter_update::execute_impl");
         auto& stream = instance.get_network().get_stream();
 
-        // std::cout << "Cpu impl scatter_update: " << instance.id() << "\n";
-
         for (auto e : events) {
             e->wait();
         }
+
         auto ev = stream.create_user_event(false);
 
+        ov::TensorVector input_host_tensors;
+        ov::TensorVector output_host_tensors;
 
-        bool reallocate_tensors = input_host_tensors_cache.empty() || true;
+        auto axis_tensor = ov::Tensor(ov::element::i64, ov::Shape{1}, static_cast<void*>(&axis));
 
-        ov::HostTensorVector input_host_tensors;
-        ov::HostTensorVector output_host_tensors;
+        std::vector<memory::ptr> input_mem_ptrs;
+        for (size_t i = 0; i < instance.dependencies().size(); i++)
+            input_mem_ptrs.push_back(instance.dep_memory_ptr(i));
 
-        if (reallocate_tensors) {
-            auto axis_tensor = std::make_shared<ngraph::runtime::HostTensor>(ov::element::i64, ov::Shape{1}, static_cast<void*>(&axis));
+        auto output_mem_ptr = instance.output_memory_ptr();
 
-            std::vector<memory::ptr> input_mem_ptrs;
-            for (size_t i = 0; i < instance.dependencies().size(); i++)
-                input_mem_ptrs.push_back(instance.dep_memory_ptr(i));
+        cldnn::mem_lock<uint8_t, mem_lock_type::read> output_lock(output_mem_ptr, stream);
 
-            auto output_mem_ptr = instance.output_memory_ptr();
+        for (size_t i = 0; i < input_mem_ptrs.size(); i++)
+            input_host_tensors.push_back(make_tensor(input_mem_ptrs[i]->get_layout(), input_mem_ptrs[i]->lock(stream, mem_lock_type::read)));
 
+        input_host_tensors.push_back(axis_tensor);
 
-            cldnn::mem_lock<int32_t, mem_lock_type::read> output_lock(output_mem_ptr, stream);
+        output_host_tensors.push_back(make_tensor(output_mem_ptr->get_layout(), output_lock.data()));
 
-            // ToDo: consider to re-implement lock in more exception-safetest way
-            for (size_t i = 0; i < input_mem_ptrs.size(); i++)
-                input_host_tensors.push_back(make_host_tensor(input_mem_ptrs[i]->get_layout(), input_mem_ptrs[i]->lock(stream, mem_lock_type::read)));
+        if (!op) {
+            op = std::make_shared<ov::op::v3::ScatterUpdate>();
 
-            input_host_tensors.push_back(axis_tensor);
-
-            output_host_tensors.push_back(make_host_tensor(output_mem_ptr->get_layout(), output_lock.data()));
-        } else {
-            input_host_tensors = input_host_tensors_cache;
-            output_host_tensors = output_host_tensors_cache;
+            OPENVINO_ASSERT(op->has_evaluate(), "[GPU] Couldn't find evaluate() function for scatter_update ",
+                                                "primitive with id ", instance.id());
         }
 
-        ov::op::v3::ScatterUpdate op;
-        op.evaluate(output_host_tensors, input_host_tensors);
+        op->evaluate(output_host_tensors, input_host_tensors);
 
-        if (reallocate_tensors) {
-            for (size_t i = 0; i < instance.dependencies().size(); i++)
-                instance.dep_memory_ptr(i)->unlock(stream);
-        }
+        for (size_t i = 0; i < input_mem_ptrs.size(); i++)
+            input_mem_ptrs[i]->unlock(stream);
 
         ev->set();
 
@@ -116,7 +108,6 @@ public:
 namespace detail {
 
 attach_scatter_update_impl::attach_scatter_update_impl() {
-    std::cout << "ScatterUpdate attach: CPU impl\n";
     auto formats = {
         format::bfyx,
         format::bfzyx,

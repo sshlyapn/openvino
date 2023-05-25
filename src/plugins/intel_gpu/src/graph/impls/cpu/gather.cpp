@@ -20,16 +20,7 @@ struct gather_impl : public typed_primitive_impl<gather> {
     int64_t axis;
     int64_t batch_dims;
 
-    // ov::HostTensorVector input_host_tensors;
-    // ov::HostTensorPtr output_host_tensor;
-    // ov::HostTensorPtr ;
-
-
-    ov::TensorVector input_host_tensors_cache;
-    ov::TensorVector output_host_tensors_cache;
-
     std::shared_ptr<ov::op::v8::Gather> op;
-
 
     DECLARE_OBJECT_TYPE_SERIALIZATION
 
@@ -39,7 +30,6 @@ struct gather_impl : public typed_primitive_impl<gather> {
 
     gather_impl() : parent("gather_cpu_impl") {}
 
-    // ADD Impl name here
     explicit gather_impl(const gather_node& outer) {
         set_node_params(outer);
     }
@@ -65,68 +55,43 @@ struct gather_impl : public typed_primitive_impl<gather> {
         OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "gather::execute_impl");
         auto& stream = instance.get_network().get_stream();
 
-        // std::cout << "Cpu impl Gather: " << instance.id() << "\n";
-
-        {
-            OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "gather_cpu::wait_for_events");
-            for (auto e : events) {
-                e->wait();
-            }
+        for (auto e : events) {
+            e->wait();
         }
 
-
-        event::ptr ev = nullptr;
-
-        {
-            OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "gather_cpu::user_event_creation");
-            ev = stream.create_user_event(false);
-        }
-
-        // auto time2 = std::chrono::high_resolution_clock::now();
-
-        bool reallocate_tensors = input_host_tensors_cache.empty() || true;
+        auto ev = stream.create_user_event(false);
 
         ov::TensorVector input_host_tensors;
         ov::TensorVector output_host_tensors;
 
-        // auto time0 = std::chrono::high_resolution_clock::now();
-        if (reallocate_tensors) {
-            OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, "gather_cpu::tensors_creation");
+        if (!op) {
             op = std::make_shared<ov::op::v8::Gather>();
             op->set_batch_dims(batch_dims);
 
-            std::vector<memory::ptr> input_mem_ptrs;
-            for (size_t i = 0; i < instance.dependencies().size(); i++)
-                input_mem_ptrs.push_back(instance.dep_memory_ptr(i));
-
-            auto output_mem_ptr = instance.output_memory_ptr();
-
-            cldnn::mem_lock<int32_t, mem_lock_type::read> output_lock(output_mem_ptr, stream);
-
-            std::vector<int*> input_ptrs;
-            for (size_t i = 0; i < input_mem_ptrs.size(); i++)
-                input_ptrs.push_back(static_cast<int*>(input_mem_ptrs[i]->lock(stream, mem_lock_type::read)));
-            int* output_ptr = output_lock.data();
-
-            // ToDo: consider to re-implement lock in more exception-safetest way
-            for (size_t i = 0; i < input_mem_ptrs.size(); i++)
-                input_host_tensors.push_back(make_tensor(input_mem_ptrs[i]->get_layout(), input_ptrs[i]));
-
-            auto axis_tensor = ov::Tensor(ov::element::i64, ov::Shape{1}, static_cast<void*>(&axis));
-
-            output_host_tensors.push_back(make_tensor(output_mem_ptr->get_layout(), output_ptr));
-            input_host_tensors.push_back(axis_tensor);
-        } else {
-            input_host_tensors = input_host_tensors_cache;
-            output_host_tensors = output_host_tensors_cache;
+            OPENVINO_ASSERT(op->has_evaluate(), "[GPU] Couldn't find evaluate() function for gather ",
+                                                "primitive with id ", instance.id());
         }
+
+        std::vector<memory::ptr> input_mem_ptrs;
+        for (size_t i = 0; i < instance.dependencies().size(); i++)
+            input_mem_ptrs.push_back(instance.dep_memory_ptr(i));
+
+        auto output_mem_ptr = instance.output_memory_ptr();
+
+        cldnn::mem_lock<uint8_t, mem_lock_type::read> output_lock(output_mem_ptr, stream);
+
+        for (size_t i = 0; i < input_mem_ptrs.size(); i++)
+            input_host_tensors.push_back(make_tensor(input_mem_ptrs[i]->get_layout(), input_mem_ptrs[i]->lock(stream, mem_lock_type::read)));
+
+        auto axis_tensor = ov::Tensor(ov::element::i64, ov::Shape{1}, static_cast<void*>(&axis));
+
+        output_host_tensors.push_back(make_tensor(output_mem_ptr->get_layout(), output_lock.data()));
+        input_host_tensors.push_back(axis_tensor);
 
         op->evaluate(output_host_tensors, input_host_tensors);
 
-        if (reallocate_tensors) {
-            for (size_t i = 0; i < instance.dependencies().size(); i++)
-                instance.dep_memory_ptr(i)->unlock(stream);
-        }
+        for (size_t i = 0; i < input_mem_ptrs.size(); i++)
+            input_mem_ptrs[i]->unlock(stream);
 
         ev->set();
 
@@ -147,7 +112,6 @@ public:
 namespace detail {
 
 attach_gather_impl::attach_gather_impl() {
-    std::cout << "Attach CPU impl for Gather\n";
     auto formats = {
         format::bfyx,
         format::bfzyx,
