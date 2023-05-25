@@ -100,24 +100,21 @@ struct strided_slice_impl : public typed_primitive_impl<strided_slice> {
             auto begin_mem = instance.dep_memory_ptr(1);
             begin_host_tensor = make_tensor(begin_mem->get_layout(), begin_mem->lock(stream, mem_lock_type::read));
         } else {
-            ov::Shape begin_shape = ov::Shape{ begin_data.size() };
-            begin_host_tensor = make_tensor({ begin_shape, data_types::i64, format::bfyx }, static_cast<void*>(begin_data.data()));
+            begin_host_tensor = ov::Tensor(ov::element::Type_t::i64, {begin_data.size()}, begin_data.data());
         }
 
         if (end_data.empty()) {
             auto end_mem = instance.dep_memory_ptr(2);
             end_host_tensor = make_tensor(end_mem->get_layout(), end_mem->lock(stream, mem_lock_type::read));
         } else {
-            ov::Shape end_shape = ov::Shape{ end_data.size() };
-            end_host_tensor = make_tensor({ end_shape, data_types::i64, format::bfyx }, static_cast<void*>(end_data.data()));
+            end_host_tensor = ov::Tensor(ov::element::Type_t::i64, {end_data.size()}, end_data.data());
         }
 
         if (strides_data.empty()) {
             auto strides_mem = instance.dep_memory_ptr(3);
             strides_host_tensor = make_tensor(strides_mem->get_layout(), strides_mem->lock(stream, mem_lock_type::read));
         } else {
-            ov::Shape strides_shape = ov::Shape{ strides_data.size() };
-            strides_host_tensor = make_tensor({ strides_shape, data_types::i64, format::bfyx }, static_cast<void*>(strides_data.data()));
+            strides_host_tensor = ov::Tensor(ov::element::Type_t::i64, {strides_data.size()}, strides_data.data());
         }
 
         auto input_mem_ptr = instance.dep_memory_ptr(0);
@@ -137,12 +134,10 @@ struct strided_slice_impl : public typed_primitive_impl<strided_slice> {
             op->set_new_axis_mask(new_axis_mask);
             op->set_shrink_axis_mask(shrink_axis_mask);
             op->set_ellipsis_mask_mask(ellipsis_mask);
-
-            OPENVINO_ASSERT(op->has_evaluate(), "[GPU] Couldn't find evaluate() function for strided_slice ",
-                                                "primitive with id ", instance.id());
         }
 
-        op->evaluate(output_host_tensors, input_host_tensors);
+        OPENVINO_ASSERT(op->evaluate(output_host_tensors, input_host_tensors),
+                        "[GPU] Couldn't execute strided_slice primitive with id ", instance.id());
 
         if (begin_data.empty()) {
             auto begin_mem = instance.dep_memory_ptr(1);

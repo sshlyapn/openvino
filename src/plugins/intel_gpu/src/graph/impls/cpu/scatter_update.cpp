@@ -79,12 +79,10 @@ struct scatter_update_impl : public typed_primitive_impl<scatter_update> {
 
         if (!op) {
             op = std::make_shared<ov::op::v3::ScatterUpdate>();
-
-            OPENVINO_ASSERT(op->has_evaluate(), "[GPU] Couldn't find evaluate() function for scatter_update ",
-                                                "primitive with id ", instance.id());
         }
 
-        op->evaluate(output_host_tensors, input_host_tensors);
+        OPENVINO_ASSERT(op->evaluate(output_host_tensors, input_host_tensors),
+                        "[GPU] Couldn't execute scatter_update primitive with id ", instance.id());
 
         for (size_t i = 0; i < input_mem_ptrs.size(); i++)
             input_mem_ptrs[i]->unlock(stream);

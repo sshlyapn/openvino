@@ -61,13 +61,14 @@ struct range_impl : public typed_primitive_impl<range> {
         output_host_tensors.push_back(make_host_tensor(output_mem_ptr->get_layout(), output_lock.data()));
 
         if (!op) {
-            op = std::make_shared<ov::op::v4::Range>();
+            const auto output_dt = instance.get_impl_params()->get_output_layout().data_type;
 
-            OPENVINO_ASSERT(op->has_evaluate(), "[GPU] Couldn't find evaluate() function for range ",
-                                                "primitive with id ", instance.id());
+            op = std::make_shared<ov::op::v4::Range>();
+            op->set_output_type(data_type_to_element_type(output_dt));
         }
 
-        op->evaluate(output_host_tensors, input_host_tensors);
+        OPENVINO_ASSERT(op->evaluate(output_host_tensors, input_host_tensors),
+                        "[GPU] Couldn't execute range primitive with id ", instance.id());
 
         for (size_t i = 0; i < input_mem_ptrs.size(); i++)
             input_mem_ptrs[i]->unlock(stream);

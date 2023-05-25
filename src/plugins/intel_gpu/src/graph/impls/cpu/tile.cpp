@@ -62,9 +62,6 @@ struct tile_impl : public typed_primitive_impl<tile> {
 
         if (!op) {
             op = std::make_shared<ov::op::v0::Tile>();
-
-            OPENVINO_ASSERT(op->has_evaluate(), "[GPU] Couldn't find evaluate() function for tile ",
-                                                "primitive with id ", instance.id());
         }
 
         std::vector<memory::ptr> input_mem_ptrs;
@@ -87,7 +84,8 @@ struct tile_impl : public typed_primitive_impl<tile> {
         cldnn::mem_lock<int32_t, mem_lock_type::read> output_lock(output_mem_ptr, stream);
         output_host_tensors.push_back(make_tensor(output_mem_ptr->get_layout(), output_lock.data()));
 
-        op->evaluate(output_host_tensors, input_host_tensors);
+        OPENVINO_ASSERT(op->evaluate(output_host_tensors, input_host_tensors),
+                        "[GPU] Couldn't execute tile primitive with id ", instance.id());
 
         for (size_t i = 0; i < input_mem_ptrs.size(); i++)
             input_mem_ptrs[i]->unlock(stream);

@@ -4,6 +4,8 @@
 
 #include "shape_of_inst.h"
 #include "reshape_inst.h"
+#include "broadcast_inst.h"
+#include "tile_inst.h"
 #include "pass_manager.h"
 
 #include "intel_gpu/graph/program.hpp"
@@ -16,19 +18,19 @@ void mark_shape_of_subgraphs::look_for_shape_of_subgraph(program_node& node, pro
     if (shape_of_node)
         mark_node(node, parent_shape_of);
 
-    // Check if all dependencies are constant or in shape_of subgraphs
-    bool can_traverse_further = true;
+    // Check if all dependencies are constant or marked as a part of shape_of subgraphs
+    bool can_execute_in_subgraph = true;
     for (auto& dependency : node.get_dependencies()) {
         if (!dependency.first->is_in_shape_of_subgraph() && !dependency.first->is_constant()) {
-            can_traverse_further = false;
+            can_execute_in_subgraph = false;
             break;
         }
     }
 
     // Check if current node is a shape infer dependency of any of node's users
-    bool in_shape_infer_dep = node.is_shape_infer_dep();
+    bool is_shape_infer_dep = node.is_shape_infer_dep();
 
-    if (!can_traverse_further && !in_shape_infer_dep && !shape_of_node)
+    if (!can_execute_in_subgraph && !is_shape_infer_dep && !shape_of_node)
         return;
 
     if (!can_mark_node(node))
@@ -41,6 +43,12 @@ void mark_shape_of_subgraphs::look_for_shape_of_subgraph(program_node& node, pro
 }
 
 bool mark_shape_of_subgraphs::can_mark_node(program_node& node) {
+    if (node.has_fused_primitives())
+        return false;
+
+    if (node.is_type<broadcast>() || node.is_type<tile>())
+        return false;
+
     if (node.is_type<reshape>())
         return true;
 

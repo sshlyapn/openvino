@@ -54,7 +54,7 @@ struct activation_impl : public typed_primitive_impl<activation> {
     using parent::parent;
 
     activation_func activation_function;
-    activation_additional_params params;
+    activation_additional_params additional_params;
 
     std::shared_ptr<ov::op::Op> op;
 
@@ -74,16 +74,63 @@ struct activation_impl : public typed_primitive_impl<activation> {
         IE_ASSERT(arg.is_type<activation>());
         const auto& node = arg.as<activation>();
         activation_function = node.get_primitive()->activation_function;
+        additional_params = node.get_primitive()->additional_params;
     }
 
     void save(BinaryOutputBuffer& ob) const override {
         ob << make_data(&activation_function, sizeof(activation_func));
-        ob << make_data(&params, sizeof(activation_additional_params));
+        ob << make_data(&additional_params, sizeof(activation_additional_params));
     }
 
     void load(BinaryInputBuffer& ib) override {
         ib >> make_data(&activation_function, sizeof(activation_func));
-        ib >> make_data(&params, sizeof(activation_additional_params));
+        ib >> make_data(&additional_params, sizeof(activation_additional_params));
+    }
+
+    template <data_types DT>
+    static void execute_activation(std::shared_ptr<ov::op::Op> op,
+                                   const activation_inst& instance,
+                                   const activation_func& activation_function,
+                                   const activation_additional_params& additional_params) {
+        auto& stream = instance.get_network().get_stream();
+
+        ov::TensorVector input_host_tensors;
+        ov::TensorVector output_host_tensors;
+
+        std::vector<memory::ptr> input_mem_ptrs;
+        for (size_t i = 0; i < instance.dependencies().size(); i++)
+            input_mem_ptrs.push_back(instance.dep_memory_ptr(i));
+
+        // TODO: consider to re-implement lock/unlock in more exception-safetest way
+        for (size_t i = 0; i < input_mem_ptrs.size(); i++)
+            input_host_tensors.push_back(make_tensor(input_mem_ptrs[i]->get_layout(), input_mem_ptrs[i]->lock(stream, mem_lock_type::read)));
+
+        // Most of the evaluate functions expect same data type for all inputs, so we need to convert params from float
+        typename data_type_to_type<DT>::type param_a = static_cast<typename data_type_to_type<DT>::type>(additional_params.a);
+
+        auto input_dt = data_type_to_element_type(instance.get_input_layout().data_type);
+
+        if (activation_function == activation_func::pow) {
+            input_host_tensors.push_back(ov::Tensor(input_dt, {}, &param_a));
+        } else if (activation_function == activation_func::relu_negative_slope) {
+            if (input_host_tensors.size() < 2) {
+                input_host_tensors.push_back(ov::Tensor(input_dt, {}, &param_a));
+            }
+        } else if (activation_function == activation_func::swish) {
+            if (additional_params.a != 1.0f)
+                input_host_tensors.push_back(ov::Tensor(input_dt, {}, &param_a));
+        }
+
+        auto output_mem_ptr = instance.output_memory_ptr();
+
+        cldnn::mem_lock<uint8_t, mem_lock_type::write> output_lock(output_mem_ptr, stream);
+        output_host_tensors.push_back(make_tensor(output_mem_ptr->get_layout(), output_lock.data()));
+
+        OPENVINO_ASSERT(op->evaluate(output_host_tensors, input_host_tensors),
+                        "[GPU] Couldn't execute activation primitive with id ", instance.id());
+
+        for (size_t i = 0; i < input_mem_ptrs.size(); i++)
+            input_mem_ptrs[i]->unlock(stream);
     }
 
     event::ptr execute_impl(const std::vector<event::ptr>& events, activation_inst& instance) override {
@@ -112,8 +159,8 @@ struct activation_impl : public typed_primitive_impl<activation> {
                 op = std::make_shared<ov::op::v0::PRelu>(); break;
             case activation_func::clamp: {
                 auto clamp_op = std::make_shared<ov::op::v0::Clamp>();
-                clamp_op->set_min(params.a);
-                clamp_op->set_max(params.b);
+                clamp_op->set_min(additional_params.a);
+                clamp_op->set_max(additional_params.b);
                 op = clamp_op;
                 break;
             }
@@ -141,14 +188,10 @@ struct activation_impl : public typed_primitive_impl<activation> {
                 op = std::make_shared<ov::op::v0::Ceiling>(); break;
             case activation_func::erf:
                 op = std::make_shared<ov::op::v0::Erf>(); break;
-            case activation_func::hard_sigmoid:
-                op = std::make_shared<ov::op::v0::HardSigmoid>(); break;
             case activation_func::log:
                 op = std::make_shared<ov::op::v0::Log>(); break;
             case activation_func::negative:
                 op = std::make_shared<ov::op::v0::Negative>(); break;
-            case activation_func::selu:
-                op = std::make_shared<ov::op::v0::Selu>(); break;
             case activation_func::softplus:
                 op = std::make_shared<ov::op::v4::SoftPlus>(); break;
             case activation_func::tan:
@@ -191,46 +234,38 @@ struct activation_impl : public typed_primitive_impl<activation> {
                 op = round_op;
                 break;
             }
+            case activation_func::hard_sigmoid:
+            case activation_func::selu:
             default:
                 OPENVINO_THROW("[GPU] Couldn't create activation operation: unsupported activation type ",
-                               "(", static_cast<size_t>(activation_function), ") for primitive with id", instance.id());
+                               "(", static_cast<size_t>(activation_function), ") for primitive with id ", instance.id());
             }
-
-            OPENVINO_ASSERT(op->has_evaluate(), "[GPU] Couldn't find evaluate() function for activation ",
-                                                "primitive with id ", instance.id());
         }
 
-        ov::TensorVector input_host_tensors;
-        ov::TensorVector output_host_tensors;
+        auto params = instance.get_impl_params();
 
-        std::vector<memory::ptr> input_mem_ptrs;
-        for (size_t i = 0; i < instance.dependencies().size(); i++)
-            input_mem_ptrs.push_back(instance.dep_memory_ptr(i));
-
-        // TODO: consider to re-implement lock in more exception-safetest way
-        for (size_t i = 0; i < input_mem_ptrs.size(); i++)
-            input_host_tensors.push_back(make_tensor(input_mem_ptrs[i]->get_layout(), input_mem_ptrs[i]->lock(stream, mem_lock_type::read)));
-
-        if (activation_function == activation_func::pow) {
-            input_host_tensors.push_back(ov::Tensor(ov::element::Type_t::f32, {}, &params.a));
-        } else if (activation_function == activation_func::relu_negative_slope) {
-            if (input_host_tensors.size() < 2) {
-                input_host_tensors.push_back(ov::Tensor(ov::element::Type_t::f32, {}, &params.a));
-            }
-        } else if (activation_function == activation_func::swish) {
-            if (params.a != 1.0f)
-                input_host_tensors.push_back(ov::Tensor(ov::element::Type_t::f32, {}, &params.a));
+        switch (params->input_layouts[0].data_type) {
+        case data_types::f32:
+            execute_activation<data_types::f32>(op, instance, activation_function, additional_params);
+            break;
+        case data_types::f16:
+            execute_activation<data_types::f16>(op, instance, activation_function, additional_params);
+            break;
+        case data_types::i64:
+            execute_activation<data_types::i64>(op, instance, activation_function, additional_params);
+            break;
+        case data_types::i32:
+            execute_activation<data_types::i32>(op, instance, activation_function, additional_params);
+            break;
+        case data_types::u8:
+            execute_activation<data_types::u8>(op, instance, activation_function, additional_params);
+            break;
+        case data_types::i8:
+            execute_activation<data_types::i8>(op, instance, activation_function, additional_params);
+            break;
+        default:
+            OPENVINO_THROW("[GPU] Couldn't execute activation operation: unsupported input data type");
         }
-
-        auto output_mem_ptr = instance.output_memory_ptr();
-
-        cldnn::mem_lock<uint8_t, mem_lock_type::write> output_lock(output_mem_ptr, stream);
-        output_host_tensors.push_back(make_tensor(output_mem_ptr->get_layout(), output_lock.data()));
-
-        op->evaluate(output_host_tensors, input_host_tensors);
-
-        for (size_t i = 0; i < input_mem_ptrs.size(); i++)
-            input_mem_ptrs[i]->unlock(stream);
 
         ev->set();
 

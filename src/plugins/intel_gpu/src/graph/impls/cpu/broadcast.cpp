@@ -18,9 +18,11 @@ struct broadcast_impl : public typed_primitive_impl<broadcast> {
     using parent = typed_primitive_impl<broadcast>;
     using parent::parent;
 
-    std::shared_ptr<ov::op::v3::Broadcast> op;
-
+    ov::Shape target_shape;
     ov::op::BroadcastModeSpec broadcast_mode;
+    std::vector<size_t> axes_mapping;
+
+    std::shared_ptr<ov::op::v3::Broadcast> op;
 
     DECLARE_OBJECT_TYPE_SERIALIZATION
 
@@ -38,14 +40,21 @@ struct broadcast_impl : public typed_primitive_impl<broadcast> {
         IE_ASSERT(arg.is_type<broadcast>());
         const auto& node = arg.as<broadcast>();
         broadcast_mode = node.get_primitive()->broadcast_mode;
+        target_shape = node.get_primitive()->target_shape;
+        auto axes_mapping_set = node.get_primitive()->axes_mapping;
+        axes_mapping = std::vector<size_t>(axes_mapping_set.begin(), axes_mapping_set.end());
     }
 
     void save(BinaryOutputBuffer& ob) const override {
         ob << make_data(&broadcast_mode, sizeof(ov::op::BroadcastModeSpec));
+        ob << make_data(&target_shape, sizeof(ov::Shape));
+        ob << axes_mapping;
     }
 
     void load(BinaryInputBuffer& ib) override {
         ib >> make_data(&broadcast_mode, sizeof(ov::op::BroadcastModeSpec));
+        ib >> make_data(&target_shape, sizeof(ov::Shape));
+        ib >> axes_mapping;
     }
 
     event::ptr execute_impl(const std::vector<event::ptr>& events, broadcast_inst& instance) override {
@@ -76,12 +85,23 @@ struct broadcast_impl : public typed_primitive_impl<broadcast> {
         for (size_t i = 0; i < input_mem_ptrs.size(); i++)
             input_host_tensors.push_back(make_tensor(input_mem_ptrs[i]->get_layout(), input_mem_ptrs[i]->lock(stream, mem_lock_type::read)));
 
+        if (instance.dependencies().size() < 2) {
+            OPENVINO_ASSERT(!target_shape.empty(), "[GPU] Unexpected empty target_shape for broadcast operation with id ", instance.id());
+            input_host_tensors.push_back(ov::Tensor(ov::element::Type_t::i64, {target_shape.size()}, target_shape.data()));
+        }
+
+        if (instance.dependencies().size() < 3 && broadcast_mode == ov::op::BroadcastType::EXPLICIT) {
+            OPENVINO_ASSERT(!axes_mapping.empty(), "[GPU] Unexpected empty axes_mapping for broadcast operation with id ", instance.id());
+            input_host_tensors.push_back(ov::Tensor(ov::element::Type_t::i64, {axes_mapping.size()}, axes_mapping.data()));
+        }
+
         auto output_mem_ptr = instance.output_memory_ptr();
 
         cldnn::mem_lock<uint8_t, mem_lock_type::read> output_lock(output_mem_ptr, stream);
         output_host_tensors.push_back(make_tensor(output_mem_ptr->get_layout(), output_lock.data()));
 
-        op->evaluate(output_host_tensors, input_host_tensors);
+        OPENVINO_ASSERT(op->evaluate(output_host_tensors, input_host_tensors),
+                        "[GPU] Couldn't execute broadcast primitive with id ", instance.id());
 
         for (size_t i = 0; i < input_mem_ptrs.size(); i++)
             input_mem_ptrs[i]->unlock(stream);
