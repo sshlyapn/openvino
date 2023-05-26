@@ -17,14 +17,14 @@
 namespace cldnn {
 
 template <typename T, typename U>
-class singleton_map : public std::map<T, U> {
-    singleton_map() : std::map<T, U>() {}
-    singleton_map(singleton_map const&) = delete;
-    void operator=(singleton_map const&) = delete;
+class singleton_list : public std::vector<std::pair<T, U>> {
+    singleton_list() : std::vector<std::pair<T, U>>() {}
+    singleton_list(singleton_list const&) = delete;
+    void operator=(singleton_list const&) = delete;
 
 public:
-    static singleton_map& instance() {
-        static singleton_map instance_;
+    static singleton_list& instance() {
+        static singleton_list instance_;
         return instance_;
     }
 };
@@ -47,12 +47,12 @@ public:
     using key_builder = implementation_key;
     using key_type = typename key_builder::type;
     using factory_type = std::function<std::unique_ptr<primitive_impl>(const typed_program_node<primitive_kind>&, const kernel_impl_params&)>;
-    using map_type = singleton_map<std::pair<impl_types, shape_types>, std::pair<std::set<key_type>, factory_type>>;
+    using list_type = singleton_list<std::pair<impl_types, shape_types>, std::pair<std::set<key_type>, factory_type>>;
 
     static factory_type get(const kernel_impl_params& impl_params, impl_types preferred_impl_type, shape_types target_shape_type) {
         auto input_layout = !impl_params.input_layouts.empty() ? impl_params.input_layouts[0] : layout{ov::PartialShape{}, data_types::f32, format::any};
         auto key = key_builder()(input_layout);
-        for (auto& kv : map_type::instance()) {
+        for (auto& kv : list_type::instance()) {
             impl_types impl_type = kv.first.first;
             shape_types supported_shape_type = kv.first.second;
             if ((preferred_impl_type & impl_type) != impl_type)
@@ -85,7 +85,7 @@ public:
     }
 
     static bool check_key(impl_types target_impl_type, key_type key, shape_types target_shape_type) {
-        for (auto& kv : map_type::instance()) {
+        for (auto& kv : list_type::instance()) {
             impl_types impl_type = kv.first.first;
             shape_types supported_shape_type = kv.first.second;
             if ((target_impl_type & impl_type) != impl_type)
@@ -117,7 +117,7 @@ public:
 
     static void add(impl_types impl_type, shape_types shape_type, factory_type factory, std::set<key_type> keys) {
         OPENVINO_ASSERT(impl_type != impl_types::any, "[GPU] Can't register impl with type any");
-        map_type::instance().insert({{impl_type, shape_type}, {keys, factory}});
+        list_type::instance().push_back({{impl_type, shape_type}, {keys, factory}});
     }
 
     static std::set<key_type> combine(const std::vector<data_types>& types, const std::vector<format::type>& formats) {

@@ -182,8 +182,27 @@ void primitive_inst::update_shape() {
         set_shape_change();
 
     // We assume that tensor ranks are static, thus shape_of doesn't need to update anything even if input shape is dynamic
-    if (_node->is_type<shape_of>() && !input_shape_changed)
+    if (_node->is_type<shape_of>() && !input_shape_changed) {
+        reset_shape_change();
         return;
+    }
+
+    // Do not update shapes in shape_of subraph if shape_of's input shape is not changed
+    if (_node->is_in_shape_of_subgraph()) {
+        bool subgraph_input_changed = false;
+        for (size_t i = 0; i < dependant_shape_of_insts.size(); i++) {
+            GPU_DEBUG_TRACE_DETAIL << id() << ": checking " << dependant_shape_of_insts[i]->id() << " shape_changed=" << dependant_shape_of_insts[i]->shape_changed() << "\n";
+            if (dependant_shape_of_insts[i]->shape_changed()) {
+                subgraph_input_changed = true;
+                // break;
+            }
+        }
+        if (!subgraph_input_changed) {
+            GPU_DEBUG_TRACE_DETAIL << id() << ": skip shape_update, because it is in shape_of_subgrap and input shape is not changed\n";
+            reset_shape_change();
+            return;
+        }
+    }
 
     // Even though the predecessors' shapes are not changed, the output shape might be udpated by the mem_dep
     auto memory_deps = _node->get_const_memory_deps();
@@ -191,6 +210,19 @@ void primitive_inst::update_shape() {
         if (memory_deps.count(i) > 0) {
             continue;
         }
+        if (i >= _deps.size())
+            continue;
+
+        if (_deps[i].first->get_node().is_in_shape_of_subgraph()) {
+            bool can_skip = true;
+            const auto& insts = _deps[i].first->dependant_shape_of_insts;
+            for (auto inst : insts) {
+                can_skip &= !inst->shape_changed();
+            }
+            if (can_skip)
+                continue;
+        }
+
         input_shape_changed = true;
     }
 
@@ -353,6 +385,11 @@ bool primitive_inst::update_impl() {
         GPU_DEBUG_TRACE_DETAIL << id() << ": update dynamic impl " << prev_impl_str << " to new shape: " << s.str() << std::endl;
     };
 
+    if ((_impl != nullptr && _impl->is_cpu()) || can_be_optimized()) {
+        // Return false if shape not changed, otherwise return true to trigger realloc_if_needed, but do not change impl itself
+        return shape_changed();
+    }
+
     if (!_node->is_type<data>() && !(_node->is_type<mutable_data>() && _node->get_dependencies().empty())) {
         // Update param if fake_alignment is available
         auto updated_params = _node->type()->get_fake_aligned_params(*_impl_params);
@@ -431,6 +468,7 @@ event::ptr primitive_inst::execute(const std::vector<event::ptr>& events) {
     OPENVINO_ASSERT(_has_valid_input, primitive_id, " has invalid/unset input");
     GPU_DEBUG_GET_INSTANCE(debug_config);
 
+    bool need_args_update = false;
     std::vector<event::ptr> dependencies;
     if (is_dynamic()) {
         OPENVINO_ASSERT(_node != nullptr, "[GPU] Invalid primitive_inst object for dynamic shapes case: program_node can't be null");
@@ -471,6 +509,8 @@ event::ptr primitive_inst::execute(const std::vector<event::ptr>& events) {
         // Try update impl if current impl is dynamic because opt kernel may be added to impl cache through async compilation.
         // Only try update weight and realloc when impl is updated.
         if (shape_changed() || !_impl || (!shape_changed() && _impl->is_dynamic())) {
+            need_args_update = true;
+
             if (update_impl()) {
                 auto ev = update_weights();
                 if (ev)
@@ -488,7 +528,7 @@ event::ptr primitive_inst::execute(const std::vector<event::ptr>& events) {
     OPENVINO_ASSERT(_impl != nullptr, "[GPU] Implementation is nullptr for ", primitive_id,  " primitive");
 
     // Output buffer may be changed under the following conditions, so we need to set args to kernel on each iteration
-    if (is_dynamic() || has_mutable_input() || is_output()) {
+    if ((is_dynamic() && need_args_update) || has_mutable_input() || is_output()) {
         set_arguments();
     }
     on_execute();
@@ -543,6 +583,12 @@ void primitive_inst::set_arguments() {
 }
 
 void primitive_inst::build_deps() {
+    if (dependant_shape_of_insts.empty()) {
+        for (auto shape_of : _node->get_dependant_shape_of_nodes()) {
+            dependant_shape_of_insts.push_back(_network.get_primitive(shape_of->id()));
+        }
+    }
+
     if (!_deps.empty())
         return;
 
@@ -638,7 +684,7 @@ primitive_inst::primitive_inst(network& network, program_node const& node, bool 
     }
     if (_impl) {
         _impl->set_node_params(node);
-        if (_impl->is_dynamic()) {
+        if (_impl->is_dynamic() && !_impl->is_cpu()) {
             _dynamic_impl = _impl->clone();
             // Actual shape info layout is the following:
             // input_0 -> input_1, ..., fused_dep_0, fused_dep1, ..., output_0, output_1, ...
