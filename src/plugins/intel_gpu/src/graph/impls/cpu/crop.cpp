@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
+#include <array>
+
 #include "register.hpp"
 #include "crop_inst.h"
 #include "implementation_map.hpp"
@@ -37,21 +39,56 @@ struct crop_impl : public typed_primitive_impl<crop> {
         auto output_layout = params->output_layouts[0];
         auto input_offset = params->input_offsets[0];
 
+        const auto max_dims_num = 6;
+        const auto offsets_shape = input_offset.get_partial_shape(input_layout.get_rank()).to_shape();
+
+        int offsets[max_dims_num] = {0, 0, 0, 0, 0, 0};
+        for (size_t i = 0; i < 2; i++)
+            offsets[i] = offsets_shape[i];
+
+        for (size_t i = 2; i < offsets_shape.size(); i++)
+            offsets[i + max_dims_num - offsets_shape.size()] = offsets_shape[i];
+
         cldnn::mem_lock<T, mem_lock_type::read> input_lock(input_mem_ptr, stream);
         cldnn::mem_lock<T, mem_lock_type::write> output_lock(output_mem_ptr, stream);
 
         auto size_out = output_layout.get_tensor();
+        bool padded_output = output_mem_ptr->get_layout().data_padding;
 
-        size_t out_idx = 0;
-        for (cldnn::tensor::value_type b = input_offset.batch[0]; b < input_offset.batch[0] + size_out.batch[0]; ++b) {
-            for (cldnn::tensor::value_type f = input_offset.feature[0]; f < input_offset.feature[0] + size_out.feature[0]; ++f) {
-                for (cldnn::tensor::value_type w = input_offset.spatial[3]; w < input_offset.spatial[3] + size_out.spatial[3]; ++w) {
-                    for (cldnn::tensor::value_type z = input_offset.spatial[2]; z < input_offset.spatial[2] + size_out.spatial[2]; ++z) {
-                        for (cldnn::tensor::value_type y = input_offset.spatial[1]; y < input_offset.spatial[1] + size_out.spatial[1]; ++y) {
-                            cldnn::tensor input_t(cldnn::group(0), cldnn::batch(b), cldnn::feature(f), cldnn::spatial(input_offset.spatial[0], y, z, w));
-                            size_t input_idx = input_layout.get_linear_offset(input_t);
-                            for (cldnn::tensor::value_type x = input_offset.spatial[0]; x < input_offset.spatial[0] + size_out.spatial[0]; ++x) {
-                                output_lock[out_idx++] = input_lock[input_idx++];
+        if (padded_output) {
+            for (int b = 0; b < size_out.batch[0]; ++b) {
+                for (int f = 0; f < size_out.feature[0]; ++f) {
+                    for (int w = 0; w < size_out.spatial[3]; ++w) {
+                        for (int z = 0; z < size_out.spatial[2]; ++z) {
+                            for (int y = 0; y < size_out.spatial[1]; ++y) {
+                                cldnn::tensor input_t(cldnn::group(0),
+                                                    cldnn::batch(b + offsets[0]), cldnn::feature(f + offsets[1]),
+                                                    cldnn::spatial(offsets[5], y + offsets[4], z + offsets[3], w + offsets[2]));
+                                cldnn::tensor output_t(cldnn::group(0),
+                                                    cldnn::batch(b), cldnn::feature(f),
+                                                    cldnn::spatial(0, y, z, w));
+                                size_t input_idx = input_layout.get_linear_offset(input_t);
+                                size_t output_idx = output_layout.get_linear_offset(output_t);
+                                for (int x = 0; x < offsets[5] + size_out.spatial[0]; ++x) {
+                                    output_lock[output_idx++] = input_lock[input_idx++];
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            size_t out_idx = 0;
+            for (int b = offsets[0]; b < offsets[0] + size_out.batch[0]; ++b) {
+                for (int f = offsets[1]; f < offsets[1] + size_out.feature[0]; ++f) {
+                    for (int w = offsets[2]; w < offsets[2] + size_out.spatial[3]; ++w) {
+                        for (int z = offsets[3]; z < offsets[3] + size_out.spatial[2]; ++z) {
+                            for (int y = offsets[4]; y < offsets[4] + size_out.spatial[1]; ++y) {
+                                cldnn::tensor input_t(cldnn::group(0), cldnn::batch(b), cldnn::feature(f), cldnn::spatial(offsets[5], y, z, w));
+                                size_t input_idx = input_layout.get_linear_offset(input_t);
+                                for (int x = offsets[5]; x < offsets[5] + size_out.spatial[0]; ++x) {
+                                    output_lock[out_idx++] = input_lock[input_idx++];
+                                }
                             }
                         }
                     }
@@ -86,7 +123,7 @@ struct crop_impl : public typed_primitive_impl<crop> {
             calculate_crop<int64_t>(params, input_mem_ptr, output_mem_ptr, stream);
             break;
         case data_types::i32:
-            calculate_crop<int32_t>(params, input_mem_ptr, output_mem_ptr, stream);
+            calculate_crop<int>(params, input_mem_ptr, output_mem_ptr, stream);
             break;
         case data_types::u8:
             calculate_crop<uint8_t>(params, input_mem_ptr, output_mem_ptr, stream);
