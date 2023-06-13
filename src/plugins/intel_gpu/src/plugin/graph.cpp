@@ -407,7 +407,10 @@ std::shared_ptr<ngraph::Function> Graph::GetExecGraphInfoByPrimitivesInfo(std::v
         Precision prec = data_type_to_precision(prim_info.output_layout.data_type);
         Precision inference_precision = data_type_to_precision(prim_info.runtime_precision);
         info[ExecGraphInfoSerialization::OUTPUT_PRECISIONS] = prec.name();
-        info[ExecGraphInfoSerialization::LAYER_TYPE] = to_IE_type_name(prim_info.type_id);
+        auto n = to_IE_type_name(prim_info.type_id);
+        if (prim_info.in_subgraph)
+            n += "_MARKED";
+        info[ExecGraphInfoSerialization::LAYER_TYPE] = n;
         info[ExecGraphInfoSerialization::OUTPUT_LAYOUTS] = prim_info.layout_str;
         info[ExecGraphInfoSerialization::EXECUTION_ORDER] = std::to_string(prim_info.exec_id);
         info[ExecGraphInfoSerialization::IMPL_TYPE] = prim_info.kernel_id;

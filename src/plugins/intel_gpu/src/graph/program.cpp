@@ -1285,6 +1285,9 @@ program::primitives_info program::get_current_stage_info() const {
                           p->selected_impl ? p->selected_impl->is_cpu() : false,
                           exec_id++);
 
+        if (p->is_in_shape_of_subgraph())
+            pi.in_subgraph = true;
+
         info.push_back(pi);
     }
 

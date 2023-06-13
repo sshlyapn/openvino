@@ -718,7 +718,7 @@ void network::reset_execution(bool wait) {
     _events.clear();
 }
 
-void network::set_input_data(const primitive_id& id, memory::ptr data) {
+void network::set_input_data(const primitive_id& id, memory::ptr data, bool need_reset_execution) {
     std::shared_ptr<primitive_inst> primitive_inst;
 
     primitive_inst = find_primitive(id);
@@ -731,10 +731,19 @@ void network::set_input_data(const primitive_id& id, memory::ptr data) {
     }
 
     auto input = std::static_pointer_cast<input_layout_inst>(primitive_inst);
+    GPU_DEBUG_TRACE_DETAIL << "set input data for " << id << " " << data->get_layout().to_short_string() << "\n";
 
     // Wait for previous execution completion
+    auto time0 = std::chrono::high_resolution_clock::now();
+    if (need_reset_execution)
     reset_execution(true);
+    auto time1 = std::chrono::high_resolution_clock::now();
     input->set_data(data);
+    auto time2 = std::chrono::high_resolution_clock::now();
+    auto time_res0 = std::chrono::duration_cast<std::chrono::microseconds>(time1 - time0).count();
+    auto time_res1 = std::chrono::duration_cast<std::chrono::microseconds>(time2 - time1).count();
+    GPU_DEBUG_INFO << "Time reset execution = " << time_res0 << "\n";
+    GPU_DEBUG_INFO << "Time reset execution (set_data) = " << time_res1 << "\n";
 }
 
 void network::add_default_output_chains() {

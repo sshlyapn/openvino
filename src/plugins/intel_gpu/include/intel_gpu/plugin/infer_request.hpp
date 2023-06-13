@@ -19,6 +19,8 @@ class CompiledModel;
 
 class InferRequest : public InferenceEngine::IInferRequestInternal {
 public:
+    size_t start_time = 0;
+    size_t end_time = 0;
     using Ptr = std::shared_ptr<InferRequest>;
     // make sure all blobs and cldnn::memory objects
     // are in place and valid
@@ -75,7 +77,7 @@ private:
     InferenceEngine::IStreamsExecutor* streamExecutor = nullptr;
 
     void prepare_input(const cldnn::primitive_id &inputName, InferenceEngine::Blob::Ptr &inputBlob,
-                       std::vector<cldnn::event::ptr>& dependencies);
+                       std::vector<cldnn::event::ptr>& dependencies, bool need_reset = true);
     void prepare_output(const cldnn::primitive_id& outputName, InferenceEngine::Blob::Ptr& outputBlob);
     void allocate_dev_mem_if_needed(InferenceEngine::BlobMap& device_mems, InferenceEngine::Blob::Ptr& user_blob,
                                     const cldnn::primitive_id& blob_name, const cldnn::layout& layout,

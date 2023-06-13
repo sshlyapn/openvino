@@ -45,4 +45,83 @@ std::unique_ptr<surfaces_lock> surfaces_lock::create(engine_types engine_type, s
     }
 }
 
+ov::Shape MemoryStatistic::shape_math(const ov::Shape& shape1, const ov::Shape& shape2, math_op op) {
+    std::vector<size_t> result;
+
+    OPENVINO_ASSERT(shape1.size() == shape2.size());
+
+    for (size_t i = 0; i < shape1.size(); i++) {
+        if (op == math_op::SUB && shape1[i] < shape2[i])
+            return std::vector<size_t>();
+
+        if (op == math_op::SUB)
+            result.push_back(shape1[i] - shape2[i]);
+        else if (op == math_op::SUM)
+            result.push_back(shape1[i] + shape2[i]);
+        else if (op == math_op::MUL)
+            result.push_back(shape1[i] * shape2[i]);
+    }
+
+    return result;
+}
+
+void MemoryStatistic::add_shape(ov::Shape& shape) {
+    if (shapes.size() >= deque_size) {
+        shapes.pop_front();
+    }
+    shapes.push_back(shape);
+}
+
+bool MemoryStatistic::can_preallocate(size_t current_buffer_size, size_t desired_buffer_size) {
+    auto device_mem_usage = _engine->get_used_device_memory(cldnn::allocation_type::usm_device);
+
+    if (desired_buffer_size <= current_buffer_size)
+        return true;
+
+    float ration = static_cast<float>(desired_buffer_size) / static_cast<float>(current_buffer_size);
+
+    if (device_mem_usage * ration >= _engine->get_device_info().max_global_mem_size * 0.95) {
+        std::cout << "MEMORY LIMIT!!\n";
+    }
+
+    return device_mem_usage * ration < _engine->get_device_info().max_global_mem_size * 0.95;
+}
+
+std::pair<bool, ov::Shape> MemoryStatistic::predict_preallocated_shape_size(ov::Shape& current_shape, bool can_reuse_buffer) {
+    add_shape(current_shape);
+
+    if (can_reuse_buffer)
+        return {false, {}};
+
+    if (shapes.size() == deque_size) {
+        std::vector<ov::Shape> diffs;
+        for (size_t i = deque_size - 1; i >= deque_size - 2; --i) {
+            auto result = shape_math(shapes[i], shapes[i - 1], math_op::SUB);
+            if (result.empty())
+                break;
+            diffs.push_back(result);
+        }
+
+        OPENVINO_ASSERT(diffs.size() == 2);
+
+        if (diffs[0] == diffs[1]) {
+            const auto iters = 10;
+            std::vector<size_t> mul(diffs[0].size(), iters);
+            auto diff = shape_math(diffs[0], mul, math_op::MUL);
+            auto new_shape = shape_math(current_shape, diff, math_op::SUM);
+            return {true, new_shape};
+        } else {
+            const auto ratio = 1.1f;
+            auto current_shape_size = ov::shape_size(current_shape);
+            ov::Shape new_shape_size(current_shape.size(), 1);
+            new_shape_size[0] = static_cast<size_t>(current_shape_size * ratio);
+            // for (size_t i = 0; i < shapes.size(); i++)
+            //     std::cout << i << ". " << shapes[i] << "\n";
+            // std::cout << "Use 10% increase: " << current_shape << " -> " << new_shape_size << "\n";
+            return {true, new_shape_size};
+        }
+    }
+    return {false, {}};
+}
+
 }  // namespace cldnn

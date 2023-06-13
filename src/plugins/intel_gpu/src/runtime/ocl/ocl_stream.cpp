@@ -213,6 +213,8 @@ ocl_stream::ocl_stream(const ocl_engine &engine, const ExecutionConfig& config)
     queue_builder.set_profiling(config.get_property(ov::enable_profiling));
     queue_builder.set_out_of_order(queue_type == QueueTypes::out_of_order);
 
+    std::cout << "Create stream with " << queue_type << " and " << static_cast<int>(sync_method) << "\n";
+
     if (sync_method == sync_methods::none && queue_type == QueueTypes::out_of_order) {
         throw std::runtime_error("[CLDNN] Unexpected sync method (none) is specified for out_of_order queue");
     }

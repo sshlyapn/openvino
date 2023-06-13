@@ -59,6 +59,9 @@ class ICompilationContext;
 
 struct network {
 public:
+    std::map<std::string, std::unique_ptr<MemoryStatistic>> cached_sizes;
+
+    bool _allow_buffers_preallocation = false;
     using ptr = std::shared_ptr<network>;
 
     struct VariableState {
@@ -118,7 +121,7 @@ public:
     engine& get_engine() const { return _engine; }
 
     void reset_execution(bool wait = true);
-    void set_input_data(const primitive_id& id, memory::ptr data);
+    void set_input_data(const primitive_id& id, memory::ptr data, bool need_reset_execution = true);
     void set_output_memory(const primitive_id& id, memory::ptr mem);
 
     std::vector<std::shared_ptr<primitive_inst>> const& get_outputs() { return _outputs; }

@@ -457,11 +457,19 @@ void InferRequest::enqueue() {
         }
     }
 
+    auto time0 = std::chrono::high_resolution_clock::now();
+    bool need_reset = true;
     for (auto& item : _inputs) {
         std::string inputName = item.first;
         Blob::Ptr& inputBlob = item.second;
-        prepare_input(inputName, inputBlob, dependencies);
+        prepare_input(inputName, inputBlob, dependencies, need_reset);
+        need_reset = false;
     }
+    auto time1 = std::chrono::high_resolution_clock::now();
+
+    auto time_res0 = std::chrono::duration_cast<std::chrono::microseconds>(time1 - time0).count();
+    (void)time_res0;
+    // std::cout << "Time prepare inputs = " << time_res0 << "\n";
 
     cldnn::network::variables_states_map variables_states;
     for (auto &variable_state_pair : variables_states_)
@@ -556,7 +564,11 @@ void InferRequest::wait() {
                 same_mem = same_host_mem(outputMemory, dst_ptr);
             }
             if (!same_mem && outputMemory->size()) {
+                auto time0 = std::chrono::high_resolution_clock::now();
                 copy_output_data(outputMemory, bptr);
+                auto time1 = std::chrono::high_resolution_clock::now();
+                auto time_res0 = std::chrono::duration_cast<std::chrono::microseconds>(time1 - time0).count();
+                GPU_DEBUG_INFO << "Time copy_output_data = " << time_res0 << "\n";
             }
         }
     }
@@ -818,8 +830,13 @@ void InferRequest::InferImpl() {
     OV_ITT_SCOPED_TASK(itt::domains::intel_gpu_plugin, "InferRequest::InferImpl");
     setup_stream_graph();
     std::lock_guard<std::mutex> lk(m_graph->get_mutex());
+    auto time0 = std::chrono::high_resolution_clock::now();
     enqueue();
     wait();
+    auto time1 = std::chrono::high_resolution_clock::now();
+    auto time_res0 = std::chrono::duration_cast<std::chrono::microseconds>(time1 - time0).count();
+    (void)time_res0;
+    // std::cout << "Total time = " << time_res0 << " us" << "\n";
 }
 
 std::map<std::string, InferenceEngineProfileInfo> InferRequest::GetPerformanceCounts() const {
@@ -878,17 +895,20 @@ void InferRequest::allocate_dev_mem_if_needed(InferenceEngine::BlobMap& device_m
 }
 
 void InferRequest::prepare_input(const cldnn::primitive_id& inputName, Blob::Ptr& inputBlob,
-                                      std::vector<cldnn::event::ptr>& dependencies) {
+                                      std::vector<cldnn::event::ptr>& dependencies, bool need_reset) {
     OV_ITT_SCOPED_TASK(itt::domains::intel_gpu_plugin, "InferRequest::prepare_input");
+    auto time0 = std::chrono::high_resolution_clock::now();
     auto inputLayoutItr = m_graph->GetInputLayouts().find(inputName);
     OPENVINO_ASSERT(inputLayoutItr != m_graph->GetInputLayouts().end(), "[GPU] Input name mismatch");
 
+    auto time1 = std::chrono::high_resolution_clock::now();
     auto input_layout = inputLayoutItr->second;
     auto& prec = inputBlob->getTensorDesc().getPrecision();
     auto remote_ptr = inputBlob->as<gpu::ClBlob>();
     auto& stream = m_graph->GetNetwork()->get_stream();
     const bool is_dev_input = remote_ptr != nullptr;
     const bool can_use_usm = m_graph->get_engine().use_unified_shared_memory();
+    auto time2 = std::chrono::high_resolution_clock::now();
 
     auto conv_to_supported_prec = [](Precision::ePrecision prec) {
         switch (prec) {
@@ -904,6 +924,7 @@ void InferRequest::prepare_input(const cldnn::primitive_id& inputName, Blob::Ptr
     };
 
     if (input_layout.is_dynamic()) {
+        auto time2_1 = std::chrono::high_resolution_clock::now();
         bool has_device_blob = _deviceInputs.find(inputName) != _deviceInputs.end();
         bool should_allocate_device_blob = !has_device_blob;
         if (has_device_blob) {
@@ -913,20 +934,53 @@ void InferRequest::prepare_input(const cldnn::primitive_id& inputName, Blob::Ptr
                 should_allocate_device_blob = true;
             }
         }
+        auto time2_2 = std::chrono::high_resolution_clock::now();
+
+        auto& mem_stat = m_graph->GetNetwork()->cached_sizes[inputName];
+        if (!mem_stat)
+            mem_stat = cldnn::make_unique<cldnn::MemoryStatistic>(&m_graph->GetNetwork()->get_engine());
+
+        auto current_shape = ov::Shape(inputBlob->getTensorDesc().getDims());
+        auto res = mem_stat->predict_preallocated_shape_size(current_shape, !should_allocate_device_blob);
 
         if (should_allocate_device_blob) {
-            _deviceInputs[inputName] = create_device_blob(inputBlob->getTensorDesc());
+            bool apply_prealloc = false;
+            auto tensor_desc = inputBlob->getTensorDesc();
+            if (res.first && mem_stat->can_preallocate(ov::shape_size(current_shape), ov::shape_size(res.second))) {
+                tensor_desc.setDims(res.second);
+                apply_prealloc = true;
+            }
+
+            if (need_reset)
+                m_graph->GetNetwork()->_allow_buffers_preallocation = apply_prealloc;
+
+            _deviceInputs[inputName] = create_device_blob(tensor_desc);
+            if (apply_prealloc)
+                _deviceInputs[inputName] = reinterpret_device_blob(_deviceInputs[inputName], inputBlob->getTensorDesc());
+
+            auto time2_3 = std::chrono::high_resolution_clock::now();
+            auto time_res2 = std::chrono::duration_cast<std::chrono::microseconds>(time2_2 - time2_1).count();
+            auto time_res3 = std::chrono::duration_cast<std::chrono::microseconds>(time2_3 - time2_2).count();
+            GPU_DEBUG_INFO << " -  - Time time_res2 = " << time_res2 << "\n";
+            GPU_DEBUG_INFO << " -  - Time time_res3 = " << time_res3 << " " << res.second << " instead of " << current_shape << "\n";
         } else {
             _deviceInputs[inputName] = reinterpret_device_blob(_deviceInputs[inputName], inputBlob->getTensorDesc());
+            auto time2_3 = std::chrono::high_resolution_clock::now();
+            auto time_res2 = std::chrono::duration_cast<std::chrono::microseconds>(time2_2 - time2_1).count();
+            auto time_res3 = std::chrono::duration_cast<std::chrono::microseconds>(time2_3 - time2_2).count();
+            GPU_DEBUG_TRACE_DETAIL << " -  - Time time_res2 = " << time_res2 << "\n";
+            GPU_DEBUG_TRACE_DETAIL << " -  - Time time_res3 = " << time_res3 << "\n";
         }
     } else if (input_layout.is_static() && !is_dev_input && can_use_usm) {
         allocate_dev_mem_if_needed(_deviceInputs, inputBlob, inputName, input_layout, (conv_to_supported_prec(prec) != prec));
     }
+    auto time3 = std::chrono::high_resolution_clock::now();
     OPENVINO_ASSERT(_deviceInputs.find(inputName) != _deviceInputs.end(), "[GPU] Couldn't find device blob allocated for ", inputName, " input");
     auto reqBlob = _deviceInputs.at(inputName)->as<gpu::ClBlob>();
     auto _nw_ptr = m_graph->GetNetwork();
     const cldnn::primitive_id internalName = "parameter:" + inputName;
 
+    auto time4 = std::chrono::high_resolution_clock::now();
     switch (prec) {
         case Precision::FP64:
         case Precision::FP32:
@@ -940,6 +994,7 @@ void InferRequest::prepare_input(const cldnn::primitive_id& inputName, Blob::Ptr
         case Precision::U32:
         case Precision::U64:
         case Precision::I64: {
+            auto time4_0 = std::chrono::high_resolution_clock::now();
             auto impl = getBlobImpl(is_dev_input ?
                                     remote_ptr :
                                     reqBlob);
@@ -955,6 +1010,7 @@ void InferRequest::prepare_input(const cldnn::primitive_id& inputName, Blob::Ptr
                 }
             }
 
+            auto time4_1 = std::chrono::high_resolution_clock::now();
             if (!is_dev_input) {
                 Precision conv_prec = conv_to_supported_prec(prec);
                 // TODO: Remove this checks once 95363 issue is solved
@@ -985,12 +1041,31 @@ void InferRequest::prepare_input(const cldnn::primitive_id& inputName, Blob::Ptr
                     }
                 }
             }
-            _nw_ptr->set_input_data(internalName, inputMem);
+            auto time4_2 = std::chrono::high_resolution_clock::now();
+            _nw_ptr->set_input_data(internalName, inputMem, need_reset);
+            auto time4_3 = std::chrono::high_resolution_clock::now();
+            auto time_res_4_1 = std::chrono::duration_cast<std::chrono::microseconds>(time4_1 - time4_0).count();
+            auto time_res_4_2 = std::chrono::duration_cast<std::chrono::microseconds>(time4_2 - time4_1).count();
+            auto time_res_4_3 = std::chrono::duration_cast<std::chrono::microseconds>(time4_3 - time4_2).count();
+            GPU_DEBUG_TRACE_DETAIL << "Time time_res_4_1 = " << time_res_4_1 << "\n";
+            GPU_DEBUG_INFO << "Time time_res_4_2 = " << time_res_4_2 << "\n";
+            GPU_DEBUG_INFO << "Time time_res_4_3 = " << time_res_4_3 << "\n";
             break;
         }
         default:
             IE_THROW() << "Unsupported input precision " << prec;
     }
+    auto time5 = std::chrono::high_resolution_clock::now();
+    auto time_res5 = std::chrono::duration_cast<std::chrono::microseconds>(time5 - time4).count();
+    auto time_res4 = std::chrono::duration_cast<std::chrono::microseconds>(time4 - time3).count();
+    auto time_res3 = std::chrono::duration_cast<std::chrono::microseconds>(time3 - time2).count();
+    auto time_res2 = std::chrono::duration_cast<std::chrono::microseconds>(time2 - time1).count();
+    auto time_res1 = std::chrono::duration_cast<std::chrono::microseconds>(time1 - time0).count();
+    GPU_DEBUG_TRACE_DETAIL << " - Time time_res1 = " << time_res1 << "\n";
+    GPU_DEBUG_TRACE_DETAIL << " - Time time_res2 = " << time_res2 << "\n";
+    GPU_DEBUG_INFO << " - Time time_res3 = " << time_res3 << "\n";
+    GPU_DEBUG_TRACE_DETAIL << " - Time time_res4 = " << time_res4 << "\n";
+    GPU_DEBUG_INFO << " - Time time_res5 = " << time_res5 << "\n";
 }
 
 void InferRequest::prepare_output(const cldnn::primitive_id& outputName, Blob::Ptr& outputBlob) {

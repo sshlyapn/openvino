@@ -290,6 +290,8 @@ struct primitive_info {
           is_cpu(is_cpu),
           exec_id(exec_id) {}
 
+    bool in_subgraph = false;
+
     primitive_id original_id;
     std::string type_id;
     primitive::primitive_id_arr c_dependencies;

@@ -29,6 +29,7 @@
 #include <memory>
 #include <vector>
 #include <string>
+#include <deque>
 
 namespace cldnn {
 
@@ -120,6 +121,7 @@ class primitive_inst {
     friend class typed_primitive_inst;
 
 public:
+    std::unique_ptr<MemoryStatistic> _mem_stat;
     primitive_inst(network& network);
     virtual ~primitive_inst() = default;
 
@@ -273,6 +275,7 @@ protected:
     layout _node_output_layout;
 
     bool update_shape_done_by_other = false;
+    bool reallocate_done_by_other = false;
     std::unique_ptr<kernel_impl_params> _impl_params;
     std::unique_ptr<primitive_impl> _impl;
     std::unique_ptr<primitive_impl> _dynamic_impl = nullptr;

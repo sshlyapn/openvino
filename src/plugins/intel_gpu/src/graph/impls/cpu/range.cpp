@@ -42,7 +42,9 @@ struct range_impl : public typed_primitive_impl<range> {
         for (auto e : events) {
             e->wait();
         }
+
         auto ev = stream.create_user_event(false);
+        auto params = instance.get_impl_params();
 
         ov::HostTensorVector input_host_tensors;
         ov::HostTensorVector output_host_tensors;
@@ -61,7 +63,7 @@ struct range_impl : public typed_primitive_impl<range> {
         output_host_tensors.push_back(make_host_tensor(output_mem_ptr->get_layout(), output_lock.data()));
 
         if (!op) {
-            const auto output_dt = instance.get_impl_params()->get_output_layout().data_type;
+            const auto output_dt = params->get_output_layout().data_type;
 
             op = std::make_shared<ov::op::v4::Range>();
             op->set_output_type(data_type_to_element_type(output_dt));
