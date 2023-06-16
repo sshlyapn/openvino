@@ -73,17 +73,11 @@ void MemoryUsageTracker::add_shape(const std::string& id, const ov::Shape& shape
     shapes.push_back(shape);
 }
 
-bool MemoryUsageTracker::can_preallocate(size_t current_buffer_size, size_t desired_buffer_size) {
+bool MemoryUsageTracker::can_preallocate(size_t desired_buffer_size) {
+    const auto memory_threshold = 0.90f;
     auto device_mem_usage = _engine->get_used_device_memory(cldnn::allocation_type::usm_device);
 
-    if (desired_buffer_size <= current_buffer_size)
-        return true;
-
-    const auto memory_threshold = 0.95;
-    float ration = static_cast<float>(desired_buffer_size) / static_cast<float>(current_buffer_size);
-
-    // TOOD: need to exclude constants from global memory size
-    return device_mem_usage * ration < _engine->get_device_info().max_global_mem_size * memory_threshold;
+    return device_mem_usage + desired_buffer_size < _engine->get_device_info().max_global_mem_size * memory_threshold;
 }
 
 std::pair<bool, ov::Shape>

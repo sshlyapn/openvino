@@ -268,7 +268,7 @@ public:
     }
 
     std::pair<bool, ov::Shape> predict_preallocated_shape_size(const std::string& id, const ov::Shape& current_shape, bool can_reuse_buffer);
-    bool can_preallocate(size_t current_buffer_size, size_t desired_buffer_size);
+    bool can_preallocate(size_t desired_buffer_size);
 
 private:
     enum class math_op { SUM, SUB, MUL };

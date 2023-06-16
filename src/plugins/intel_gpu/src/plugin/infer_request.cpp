@@ -917,11 +917,9 @@ void InferRequest::prepare_input(const cldnn::primitive_id& inputName, Blob::Ptr
         if (should_allocate_device_blob) {
             const auto& tensor_desc = inputBlob->getTensorDesc();
             auto preallocation_shape = prealloc_info.second;
+            auto dt_size = cldnn::data_type_traits::size_of(DataTypeFromPrecision(tensor_desc.getPrecision()));
             auto can_preallocate_buffer = prealloc_info.first &&
-                                          mem_tracker->can_preallocate(ov::shape_size(current_shape), ov::shape_size(preallocation_shape));
-
-            if (can_preallocate_buffer)
-                _nw_ptr->set_use_buffers_preallocation(true);
+                                          mem_tracker->can_preallocate(ov::shape_size(preallocation_shape) * dt_size);
 
             if (can_preallocate_buffer) {
                 auto new_tensor_desc = tensor_desc;
