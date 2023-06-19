@@ -102,9 +102,7 @@ std::pair<bool, ov::Shape> MemoryStatistic::predict_preallocated_shape_size(ov::
             diffs.push_back(result);
         }
 
-        OPENVINO_ASSERT(diffs.size() == 2);
-
-        if (diffs[0] == diffs[1]) {
+        if (diffs[0] == diffs[1] && diffs.size() == 2) {
             const auto iters = 10;
             std::vector<size_t> mul(diffs[0].size(), iters);
             auto diff = shape_math(diffs[0], mul, math_op::MUL);
