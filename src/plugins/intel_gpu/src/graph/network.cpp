@@ -704,13 +704,9 @@ void network::reset_execution(bool wait) {
             get_stream().finish();
         } else if (queue_type == QueueTypes::out_of_order && _events.size() > 0) {
             std::vector<event::ptr> events;
-            for (auto& pair : _events) {
-                auto& ev = pair.second;
-                if (ev->is_set())
-                    continue;
-
-                events.push_back(ev);
-            }
+            auto const output_ids = get_output_ids();
+            for (auto output_id : output_ids)
+                events.push_back(_events[output_id]);
 
             get_stream().wait_for_events(events);
         }
@@ -1247,26 +1243,25 @@ void network::execute_impl(const std::vector<event::ptr>& events) {
     auto store_events = get_stream().get_queue_type() == QueueTypes::out_of_order || _enable_profiling;
     if (store_events) {
         if (_program != nullptr) {
-        for (auto& inst : _program->get_processing_order()) {
+        for (auto& inst : _mutable_data_insts) {
             // Special handling for mutable data. The event should be the same as the user or dependency with highest
             // processing_num as the mutable_data can be updated when is both user or dependency.
-            if (inst->is_type<mutable_data>()) {
-                decltype(_program->get_processing_order().get_processing_number(inst)) proc_num = 0;
-                for (auto& user : inst->get_users()) {
-                    auto user_proc_num = _program->get_processing_order().get_processing_number(user);
-                    if (user_proc_num > proc_num) {
-                        _events[inst->id()] = _events[user->id()];
-                        proc_num = user_proc_num;
-                    }
+            auto& node = inst->get_node();
+            decltype(_program->get_processing_order().get_processing_number(&node)) proc_num = 0;
+            for (auto& user : node.get_users()) {
+                auto user_proc_num = _program->get_processing_order().get_processing_number(user);
+                if (user_proc_num > proc_num) {
+                    _events[node.id()] = _events[user->id()];
+                    proc_num = user_proc_num;
                 }
+            }
 
-                if (!inst->get_dependencies().empty()) {
-                    for (auto& dep : inst->get_dependencies()) {
-                        auto dep_proc_num = _program->get_processing_order().get_processing_number(dep.first);
-                        if (dep_proc_num > proc_num) {
-                            _events[inst->id()] = _events[dep.first->id()];
-                            proc_num = dep_proc_num;
-                        }
+            if (!node.get_dependencies().empty()) {
+                for (auto& dep : node.get_dependencies()) {
+                    auto dep_proc_num = _program->get_processing_order().get_processing_number(dep.first);
+                    if (dep_proc_num > proc_num) {
+                        _events[node.id()] = _events[dep.first->id()];
+                        proc_num = dep_proc_num;
                     }
                 }
             }
@@ -1432,6 +1427,9 @@ void network::allocate_primitive_instance(program_node const& node) {
     if (inst->is_dynamic()) {
         _is_dynamic = true;
     }
+
+    if (node.is_type<mutable_data>())
+        _mutable_data_insts.push_back(inst);
 
     _primitives[node.id()] = inst;
     if (node.is_type<input_layout>()) {

@@ -247,6 +247,7 @@ private:
     std::vector<std::shared_ptr<primitive_inst>> _outputs;
     std::list<std::shared_ptr<primitive_inst>> _exec_order;
     std::list<std::shared_ptr<primitive_inst>> _data_outputs;
+    std::list<std::shared_ptr<primitive_inst>> _mutable_data_insts;
     variables_states_map _variables_states;
     std::vector<std::shared_ptr<primitive_inst>> _variable_state_primitives;
     program::primitives_info _prims_info;
