@@ -271,7 +271,7 @@ struct MemoryStatistic {
     ov::Shape shape_math(const ov::Shape& shape1, const ov::Shape& shape2, math_op op);
     void add_shape(ov::Shape& shape);
     bool can_preallocate(size_t current_buffer_size, size_t desired_buffer_size);
-    std::pair<bool, ov::Shape> predict_preallocated_shape_size(ov::Shape& current_shape, bool can_reuse_buffer);
+    std::pair<bool, ov::Shape> predict_preallocated_shape_size(const std::string& id, ov::Shape& current_shape, bool can_reuse_buffer);
 };
 
 }  // namespace cldnn

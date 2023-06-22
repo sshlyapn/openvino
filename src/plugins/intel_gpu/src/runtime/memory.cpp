@@ -87,7 +87,7 @@ bool MemoryStatistic::can_preallocate(size_t current_buffer_size, size_t desired
     return device_mem_usage * ration < _engine->get_device_info().max_global_mem_size * 0.95;
 }
 
-std::pair<bool, ov::Shape> MemoryStatistic::predict_preallocated_shape_size(ov::Shape& current_shape, bool can_reuse_buffer) {
+std::pair<bool, ov::Shape> MemoryStatistic::predict_preallocated_shape_size(const std::string& id, ov::Shape& current_shape, bool can_reuse_buffer) {
     add_shape(current_shape);
 
     if (can_reuse_buffer)
@@ -102,9 +102,7 @@ std::pair<bool, ov::Shape> MemoryStatistic::predict_preallocated_shape_size(ov::
             diffs.push_back(result);
         }
 
-        OPENVINO_ASSERT(diffs.size() == 2);
-
-        if (diffs[0] == diffs[1]) {
+        if (diffs[0] == diffs[1] && diffs.size() == 2) {
             const auto iters = 10;
             std::vector<size_t> mul(diffs[0].size(), iters);
             auto diff = shape_math(diffs[0], mul, math_op::MUL);

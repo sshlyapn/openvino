@@ -359,7 +359,7 @@ event::ptr primitive_inst::realloc_if_needed() {
     auto current_shape = actual_layout.get_shape();
 
     if (get_network()._allow_buffers_preallocation) {
-        auto res = _mem_stat->predict_preallocated_shape_size(current_shape, can_reuse_buffer);
+        auto res = _mem_stat->predict_preallocated_shape_size(id(), current_shape, can_reuse_buffer);
         if (res.first) {
             auto new_layout = actual_layout;
             new_layout.set_partial_shape(res.second);

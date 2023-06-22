@@ -469,7 +469,7 @@ void InferRequest::enqueue() {
 
     auto time_res0 = std::chrono::duration_cast<std::chrono::microseconds>(time1 - time0).count();
     (void)time_res0;
-    // std::cout << "Time prepare inputs = " << time_res0 << "\n";
+    std::cout << "Time prepare inputs = " << time_res0 << "\n";
 
     cldnn::network::variables_states_map variables_states;
     for (auto &variable_state_pair : variables_states_)
@@ -836,7 +836,7 @@ void InferRequest::InferImpl() {
     auto time1 = std::chrono::high_resolution_clock::now();
     auto time_res0 = std::chrono::duration_cast<std::chrono::microseconds>(time1 - time0).count();
     (void)time_res0;
-    // std::cout << "Total time = " << time_res0 << " us" << "\n";
+    std::cout << "Total time = " << time_res0 << " us" << "\n";
 }
 
 std::map<std::string, InferenceEngineProfileInfo> InferRequest::GetPerformanceCounts() const {
@@ -941,7 +941,7 @@ void InferRequest::prepare_input(const cldnn::primitive_id& inputName, Blob::Ptr
             mem_stat = cldnn::make_unique<cldnn::MemoryStatistic>(&m_graph->GetNetwork()->get_engine());
 
         auto current_shape = ov::Shape(inputBlob->getTensorDesc().getDims());
-        auto res = mem_stat->predict_preallocated_shape_size(current_shape, !should_allocate_device_blob);
+        auto res = mem_stat->predict_preallocated_shape_size(inputName, current_shape, !should_allocate_device_blob);
 
         if (should_allocate_device_blob) {
             bool apply_prealloc = false;
