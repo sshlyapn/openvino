@@ -99,30 +99,50 @@ std::pair<bool, ov::Shape>
 
     // Check if there is enough data for prediction
     auto& shapes = _shapes_info[id];
-    if (shapes.size() == _max_deque_size) {
+    const auto shapes_num = shapes.size();
+
+    // Number of shapes used for iterations mode predictions
+    const auto min_shapes_num = 3;
+
+    if (shapes_num >= min_shapes_num) {
         std::vector<ov::Shape> diffs;
-        for (size_t i = _max_deque_size - 1; i >= 1; --i) {
-            auto result = shapes_math(shapes[i], shapes[i - 1], math_op::SUB);
+
+        for (size_t i = 0; i < min_shapes_num - 1; ++i) {
+            auto result = shapes_math(shapes[shapes_num - i - 1], shapes[shapes_num - i - 2], math_op::SUB);
             if (result.empty())
                 break;
             diffs.push_back(result);
         }
 
-        bool is_same_diff = diffs.size() > 1;
+        bool can_use_iterations_preallocation = diffs.size() == min_shapes_num - 1;
         for (size_t i = 1; i < diffs.size(); ++i) {
             if (diffs[0] != diffs[i]) {
-                is_same_diff = false;
+                can_use_iterations_preallocation = false;
                 break;
             }
         }
 
-        if (is_same_diff) {
+        if (can_use_iterations_preallocation)
+            can_use_iterations_preallocation = !all_zeroes(diffs[0]);
+
+        // Allow iterations preallocation only for per dimension diff less than
+        // '_max_per_dim_diff' value to avoid huge unexpected memory preallocations
+        if (can_use_iterations_preallocation) {
+            for (size_t i = 0; i < diffs[0].size(); ++i) {
+                if (diffs[0][i] > _max_per_dim_diff) {
+                    can_use_iterations_preallocation = false;
+                    break;
+                }
+            }
+        }
+
+        if (can_use_iterations_preallocation) {
             // Apply preallocation for the next N iterations
             ov::Shape mul_shape(diffs[0].size(), _next_iters_preallocation_count);
-            auto diff = shapes_math(diffs[0], mul_shape, math_op::MUL);
-            auto new_shape = shapes_math(current_shape, diff, math_op::SUM);
+            auto preallocation_shape = shapes_math(diffs[0], mul_shape, math_op::MUL);
+            auto new_shape = shapes_math(current_shape, preallocation_shape, math_op::SUM);
             return {true, new_shape};
-        } else {
+        } else if (_buffers_preallocation_ratio > 1.0f) {
             // Apply percentage buffer preallocation
             auto current_shape_size = ov::shape_size(current_shape);
             ov::Shape new_shape_size(current_shape.size(), 1);
