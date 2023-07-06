@@ -457,12 +457,10 @@ void InferRequest::enqueue() {
         }
     }
 
-    bool is_first_input = true;
     for (auto& item : _inputs) {
         std::string inputName = item.first;
         Blob::Ptr& inputBlob = item.second;
-        prepare_input(inputName, inputBlob, dependencies, is_first_input);
-        is_first_input = false;
+        prepare_input(inputName, inputBlob, dependencies);
     }
 
     auto networkPtr = m_graph->GetNetwork();
@@ -875,7 +873,7 @@ void InferRequest::allocate_dev_mem_if_needed(InferenceEngine::BlobMap& device_m
 }
 
 void InferRequest::prepare_input(const cldnn::primitive_id& inputName, Blob::Ptr& inputBlob,
-                                 std::vector<cldnn::event::ptr>& dependencies, bool is_first_input) {
+                                 std::vector<cldnn::event::ptr>& dependencies) {
     OV_ITT_SCOPED_TASK(itt::domains::intel_gpu_plugin, "InferRequest::prepare_input");
     auto inputLayoutItr = m_graph->GetInputLayouts().find(inputName);
     OPENVINO_ASSERT(inputLayoutItr != m_graph->GetInputLayouts().end(), "[GPU] Input name mismatch");
@@ -1001,7 +999,7 @@ void InferRequest::prepare_input(const cldnn::primitive_id& inputName, Blob::Ptr
                     }
                 }
             }
-            _nw_ptr->set_input_data(internalName, inputMem, is_first_input);
+            _nw_ptr->set_input_data(internalName, inputMem);
             break;
         }
         default:
