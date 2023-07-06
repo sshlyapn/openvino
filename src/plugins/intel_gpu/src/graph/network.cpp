@@ -320,7 +320,7 @@ network::network(program::ptr program, const ExecutionConfig& config, stream::pt
     , _is_primary_stream(is_primary_stream)
     , _enable_profiling(config.get_property(ov::enable_profiling))
     , _reset_arguments(true)
-    , _memory_usage_tracker(std::make_shared<MemoryUsageTracker>(&program->get_engine())) {
+    , _memory_usage_tracker(new MemoryUsageTracker(&program->get_engine(), config.get_property(ov::intel_gpu::buffers_preallocation_ratio))) {
     if (!_internal) {
         net_id = get_unique_net_id();
     }
@@ -372,7 +372,7 @@ network::network(cldnn::BinaryInputBuffer& ib, const ExecutionConfig& config, st
     , _internal(false)
     , _is_primary_stream(is_primary_stream)
     , _reset_arguments(true)
-    , _memory_usage_tracker(std::make_shared<MemoryUsageTracker>(&engine)) {
+    , _memory_usage_tracker(new MemoryUsageTracker(&engine, config.get_property(ov::intel_gpu::buffers_preallocation_ratio))) {
     net_id = get_unique_net_id();
     if (is_primary_stream)
         ib.new_network_added();
