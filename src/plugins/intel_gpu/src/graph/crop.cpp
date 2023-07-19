@@ -40,7 +40,7 @@ layout crop_inst::calc_output_layout(crop_node const& node, kernel_impl_params c
 }
 
 template<typename ShapeType>
-std::vector<layout> crop_inst::calc_output_layouts(const crop_node& /*node*/, const kernel_impl_params& impl_param) {
+std::vector<layout> crop_inst::calc_output_layouts(const crop_node& node, const kernel_impl_params& impl_param) {
     OPENVINO_ASSERT(static_cast<bool>(impl_param.desc->output_data_types[0]) == false,
            "Output data type forcing is not supported for crop_node!");
 
@@ -52,6 +52,31 @@ std::vector<layout> crop_inst::calc_output_layouts(const crop_node& /*node*/, co
     };
     for (size_t i = 1; i < impl_param.input_layouts.size(); ++i) {
         input_shapes.push_back(impl_param.input_layouts[i].get<ShapeType>());
+    }
+
+    if (node.id().find("/super_crop_") != std::string::npos) {
+        auto in_layout = impl_param.input_layouts[0];
+        auto input_shape = in_layout.get_partial_shape();
+        auto output_shape = ov::PartialShape();
+        for (size_t i = 1; i < input_shape.size(); ++i)
+            output_shape.push_back(input_shape[i]);
+        auto output_layout = in_layout;
+        output_layout.set_partial_shape(output_shape);
+        output_layout.format = in_layout.format.adjust_to_rank(in_layout.format, output_shape.size());
+
+        if (in_layout.is_static()) {
+            // auto axis_values_mem = impl_param.memory_deps.at(1);
+            // cldnn::mem_lock<int32_t, mem_lock_type::read> axis_values_mem_lock(axis_values_mem, impl_param.get_stream());
+            auto offset_layout = in_layout;
+            auto input_shape = offset_layout.get_partial_shape();
+            input_shape[0] = ov::Dimension(6);
+            offset_layout.set_partial_shape(input_shape);
+
+            auto k_param = const_cast<kernel_impl_params*>(&impl_param);
+            k_param->input_offsets[0] = offset_layout.get_tensor();
+        }
+
+        return {output_layout};
     }
 
     // TODO: calling shape_infer for all cropped outpus is redundant... Need to optimize.

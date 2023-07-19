@@ -467,6 +467,8 @@ JitConstants EltwiseKernelBase::MakeIndexJitConstants(const eltwise_params& para
         }
     }
 
+    jit.AddConstant(MakeJitConstant("LAYER_ID", params.layerID));
+
     for (size_t i = 0; i < params.inputs.size(); i++) {
         // const should be added only to inputs which will not be updated
         std::string const_str = "const";
@@ -504,11 +506,13 @@ JitConstants EltwiseKernelBase::MakeIndexJitConstants(const eltwise_params& para
                         jit.AddConstant(MakeJitConstant(idx_order, "d5,d4,d2,d1"));
                     } else if (in_c == 5) {
                         jit.AddConstant(MakeJitConstant(idx_order, "d5,d4,d3,d2,d1"));
+                    } else if (in_c == 6) {
+                        jit.AddConstant(MakeJitConstant(idx_order, "0,d5,d4,d3,d2,d1"));
                     }
                 } else if (out_c <= 4 && in_c == 5) {
                     // quite strange case, but can happen due to reorders fusing
                     // it means that z coord is equal to 1, so z offset will be always equal to 0
-                    jit.AddConstant(MakeJitConstant(idx_order, "d4,d3,0,d2,d1"));
+                    jit.AddConstant(MakeJitConstant(idx_order, "0,d4,d3,d2,d1"));
                 } else if (out_c == 6) {
                     if (in_c < 5) {
                         jit.AddConstant(MakeJitConstant(idx_order, "d6,d5,d2,d1"));

@@ -114,6 +114,21 @@ void CreateGatherOpBase(Program& p, const std::shared_ptr<T>& op, const int64_t 
         layerName = get_crop_layer_name(layerName, static_cast<size_t>(result));
         auto cropPrim = cldnn::crop(layerName, reordered_inputs[0], outTensor, offsetTensor);
         p.add_primitive(*op, cropPrim);
+    } else if (!is_static && axis == 0 && input_rank > 1 && indices.get_partial_shape().rank().get_length() == 0) {
+        // Gather -> Crop
+        // this Gather simply divides an input tensor along Batch axis
+        auto get_crop_layer_name = [&](std::string name, size_t idx)->std::string {
+            return (name + "/super_crop_" + std::to_string(idx));
+        };
+
+        cldnn::tensor out_tensor{-1,-1,-1,-1};
+        cldnn::tensor offset_tensor{-1,-1,-1,-1};
+
+        // Create Crop
+        layerName = get_crop_layer_name(layerName, static_cast<size_t>(0));
+        auto cropPrim = cldnn::crop(layerName, reordered_inputs[0], out_tensor, offset_tensor);
+        // cropPrim.input.push_back(indices.get_node_shared_ptr()->get_friendly_name());
+        p.add_primitive(*op, cropPrim);
     } else {
         auto gatherPrim = cldnn::gather(layerName,
                                         reordered_inputs[0],
