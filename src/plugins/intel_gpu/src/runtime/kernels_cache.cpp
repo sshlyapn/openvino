@@ -223,6 +223,7 @@ void kernels_cache::build_batch(const engine& build_engine, const batch_program&
     std::ofstream dump_file;
     if (dump_sources) {
         dump_file.open(current_dump_file_name);
+        GPU_DEBUG_TRACE << "Build batch: " << current_dump_file_name << "\n";
         if (dump_file.good()) {
             for (auto& s : batch.source)
                 dump_file << s;

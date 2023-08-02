@@ -101,7 +101,13 @@ KERNEL(kernel_name)(
 #if ASYMMETRIC_WEIGHTS_QUANTIZATION
                                 wei -= TO_ACCUMULATOR_TYPE(weights_zp[f]);
 #endif
+
+                                ACCUMULATOR_TYPE dotProd_old = dotProd;
                                 dotProd += in * wei;
+#if CUSTOM_CONDITION
+                                if (x == 0 && y == 0 && f == 0 && b == 0)
+                                    printf("%f = %f + %f * %f\n", dotProd, dotProd_old, in, wei);
+#endif
                             }
                         }
                     }
@@ -139,6 +145,18 @@ KERNEL(kernel_name)(
 #if HAS_FUSED_OPS
     FUSED_OPS;
     OUTPUT_TYPE res = FUSED_OPS_RESULT;
+
+    // float dequantized_out_0_tmp = dequantized+eltwise0_data0;
+    // float dequantized_out_1_tmp = dequantized_out_0+eltwise1_data0;
+
+#if CUSTOM_CONDITION
+    if (x == 0 && y == 0 && f == 0 && b == 0) {
+        printf("%f = %f + %f\n", dequantized_out_0_tmp, dequantized, eltwise0_data0);
+        printf("[%d] %f = %f + %f\n", dst_index, dequantized_out_1_tmp, dequantized_out_0, eltwise1_data0);
+    }
+#endif
+
+
 
     output[dst_index] = res;
 #else

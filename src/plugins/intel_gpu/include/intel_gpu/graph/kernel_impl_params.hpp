@@ -46,6 +46,8 @@ struct kernel_impl_params {
     std::vector<cldnn::fused_primitive_desc_onednn> fused_desc_onednn;
 #endif // ENABLE_ONEDNN_FOR_GPU
 
+    std::vector<padding> output_paddings;
+
     optional_layout weights_layout = optional_layout();
 
     optional_layout bias_layout = optional_layout();
@@ -81,6 +83,8 @@ struct kernel_impl_params {
                        , output_layouts(_out_layouts)
                        , fused_desc(_fused_descs)
                        , primary_input_idx(0) {
+        for (auto& l : _out_layouts)
+            output_paddings.push_back(l.data_padding);
     }
 
     layout get_input_layout(size_t idx = 0) const {

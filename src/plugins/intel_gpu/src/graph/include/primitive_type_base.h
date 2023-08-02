@@ -104,6 +104,10 @@ struct primitive_type_base : primitive_type {
             GPU_DEBUG_TRACE_DETAIL << impl_param.desc->id << " input tensor: " << t.to_short_string() << std::endl;
         }
         auto res = typed_primitive_inst<PType>::calc_output_layout(node, impl_param);
+        // OPENVINO_ASSERT(impl_param.output_paddings.size() == 1, "Unexpected number of output paddings", impl_param.output_paddings.size());
+        // if (static_cast<bool>(res.data_padding) != static_cast<bool>(impl_param.output_paddings[0]))
+        //     GPU_DEBUG_TRACE_DETAIL << node.id() << " WARNING UNEXECTED PADDING " << res << "\n";
+        // res.data_padding = impl_param.output_paddings[0];
 
         GPU_DEBUG_TRACE_DETAIL << impl_param.desc->id << " output tensor: " << res.to_short_string() << std::endl;
         return res;
@@ -118,7 +122,13 @@ struct primitive_type_base : primitive_type {
 
         auto res = typed_primitive_inst<PType>::template calc_output_layouts<ov::PartialShape>(node, impl_param);
 
+        // OPENVINO_ASSERT(impl_param.output_paddings.size() == res.size() || impl_param.output_paddings.empty(), "Unexpected number of output paddings", impl_param.output_paddings.size(), res.size());
+
+        // size_t i = 0;
         for (auto& t : res) {
+            // if (static_cast<bool>(t.data_padding) != static_cast<bool>(impl_param.output_paddings[i]))
+            //     GPU_DEBUG_TRACE_DETAIL << node.id() << " WARNING UNEXECTED PADDING " << t << "\n";
+            // t.data_padding = impl_param.output_paddings[i++];
             GPU_DEBUG_TRACE_DETAIL << impl_param.desc->id << " output tensor: " << t.to_short_string() << std::endl;
         }
 

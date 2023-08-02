@@ -13,6 +13,7 @@ using namespace cldnn;
 using namespace ov::intel_gpu;
 
 void prepare_padding::run(program& p) {
+    std::cout << "Prepare_padding " << output_size_handling_enabled << "\n";
     if (output_size_handling_enabled) {
         // Prepare upper padding for primitives that support output_size parameter.
         for (const auto& node : p.get_processing_order()) {
@@ -155,9 +156,17 @@ void prepare_padding::run(program& p) {
             continue;
 
         auto conv = node.get_primitive();
-        if (node.is_dynamic()) continue;
+
+        // if (node.is_dynamic())
+        //     continue;
+
         auto& conv_input_node = node.get_dependency(0);
         auto conv_layout = node.get_output_layout();
+
+        if (node.is_dynamic()
+            && (conv->auto_pad != ov::op::PadType::EXPLICIT || node.get_dependency(0).get_users().size() != 1))
+            continue;
+
 
         // right now output padding optimization is only available for bfyx format and data type = float32
         if (conv_layout.format != cldnn::format::bfyx &&
@@ -200,6 +209,31 @@ void prepare_padding::run(program& p) {
         auto pad = conv->padding_begin;
         auto stride = conv->stride;
         auto dilation = conv->dilation;
+
+        // convolution:/decoder/mid_block/resnets.0/conv1/Conv/WithoutBiases
+        if (node.is_dynamic() && conv->auto_pad == ov::op::PadType::EXPLICIT) {
+            auto pad_begin = conv->padding_begin;
+            tensor::value_type pad_begin_z = pad_begin.size() >= 3 ? pad_begin[pad_begin.size() - 3] : 0;
+            tensor::value_type pad_begin_y = pad_begin.size() >= 2 ? pad_begin[pad_begin.size() - 2] : 0;
+            tensor::value_type pad_begin_x = pad_begin.size() >= 1 ? pad_begin[pad_begin.size() - 1] : 0;
+
+            auto pad_end = conv->padding_end;
+            tensor::value_type pad_z = pad_end.size() >= 3 ? pad_end[pad_end.size() - 3] : 0;
+            tensor::value_type pad_y = pad_end.size() >= 2 ? pad_end[pad_end.size() - 2] : 0;
+            tensor::value_type pad_x = pad_end.size() >= 1 ? pad_end[pad_end.size() - 1] : 0;
+
+
+            cldnn::padding needed_padding({0, 0, pad_begin_x, pad_begin_y, pad_begin_z}, {0, 0, pad_x, pad_y, pad_z}, 0);
+            needed_padding = padding::max(prev_prim_output_layout.data_padding, needed_padding);
+
+            GPU_DEBUG_TRACE_DETAIL << "Set CONVOLUTION padding for " << node.id() << " to input " << conv_input_node.id() << "\n";
+
+            p.apply_needed_padding(node, conv_input_node, needed_padding);
+
+            GPU_DEBUG_TRACE_DETAIL << conv_input_node.id() << " layout: " << conv_input_node.get_output_layout() << "\n";
+            continue;
+        }
+
         uint32_t stride_z = stride.size() >= 3 ? static_cast<uint32_t>(stride[stride.size() - 3]) : 1;
         uint32_t stride_y = stride.size() >= 2 ? static_cast<uint32_t>(stride[stride.size() - 2]) : 1;
         uint32_t stride_x = stride.size() >= 1 ? static_cast<uint32_t>(stride[stride.size() - 1]) : 1;

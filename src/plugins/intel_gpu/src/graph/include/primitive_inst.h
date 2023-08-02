@@ -393,7 +393,8 @@ protected:
     virtual bool need_reset_output_memory() const {
         std::vector<primitive_id> users;
         for (auto u : _node->get_users())
-            users.push_back(u->id());
+            if (u->get_dependency_index(*_node) == 0)
+                users.push_back(u->id());
 
         for (const auto& u : _network.get_primitives(users)) {
             if (u->need_reset_input_memory())

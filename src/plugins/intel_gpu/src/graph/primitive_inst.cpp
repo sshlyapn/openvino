@@ -328,6 +328,44 @@ void primitive_inst::update_shape() {
     _impl_params->memory_deps = memory_deps;
 
     auto update_output_layout = [&](layout& layout, size_t idx) {
+        auto user = get_users().front();
+        if (/* false &&  */get_users().size() == 1 && user->is_type<convolution>() && user->get_dependency_index(get_node()) == 0) {
+            auto conv = get_users().front()->as<convolution>().get_primitive();
+            if (conv->auto_pad == ov::op::PadType::EXPLICIT) {
+                auto conv_inst = _network.get_primitive(get_users().front()->id());
+                auto pad_begin = conv->padding_begin;
+                tensor::value_type pad_begin_z = pad_begin.size() >= 3 ? pad_begin[pad_begin.size() - 3] : 0;
+                tensor::value_type pad_begin_y = pad_begin.size() >= 2 ? pad_begin[pad_begin.size() - 2] : 0;
+                tensor::value_type pad_begin_x = pad_begin.size() >= 1 ? pad_begin[pad_begin.size() - 1] : 0;
+
+                auto pad_end = conv->padding_end;
+                tensor::value_type pad_z = pad_end.size() >= 3 ? pad_end[pad_end.size() - 3] : 0;
+                tensor::value_type pad_y = pad_end.size() >= 2 ? pad_end[pad_end.size() - 2] : 0;
+                tensor::value_type pad_x = pad_end.size() >= 1 ? pad_end[pad_end.size() - 1] : 0;
+
+                padding needed_padding({0, 0, pad_begin_x, pad_begin_y, pad_begin_z}, {0, 0, pad_x, pad_y, pad_z}, 0);
+
+                auto l_copy = layout;
+                l_copy.data_padding = needed_padding;
+
+                if (!_impl_params->output_paddings.empty()) {
+                    auto l_copy2 = layout;
+                    l_copy2.data_padding = _impl_params->output_paddings[0];
+                    GPU_DEBUG_TRACE_DETAIL << "FROM IMPL PARAMS " << l_copy2 << "\n";
+                    if (static_cast<bool>(_impl_params->output_paddings[0]) != static_cast<bool>(needed_padding))
+                        GPU_DEBUG_TRACE_DETAIL << id() << " WARNING UNEXECTED PADDING 1: " << conv->id << " " << layout << " " << l_copy << "\n";
+                } else {
+                    if (static_cast<bool>(layout.data_padding) != static_cast<bool>(needed_padding))
+                        GPU_DEBUG_TRACE_DETAIL << id() << " WARNING UNEXECTED PADDING 2: " << conv->id << " " << layout << " " << l_copy << "\n";
+                }
+
+                OPENVINO_ASSERT(static_cast<bool>(_impl_params->output_paddings[0]) == static_cast<bool>(needed_padding), "Unexpected padding for primitive w/o original padding");
+                layout.data_padding = padding::max(layout.data_padding, needed_padding);
+
+                GPU_DEBUG_TRACE_DETAIL << id() << " Set CONVOLUTION padding for " << conv->id << " " << layout << "\n";
+            }
+        }
+
         layout.data_padding = padding::max(_node->get_primitive()->output_paddings[idx], layout.data_padding);
         if (_impl_params->get_output_layout(idx) != layout) {
             GPU_DEBUG_TRACE_DETAIL << id() << ": update shape: was: " << _impl_params->get_output_layout(idx).to_short_string()
@@ -416,13 +454,19 @@ event::ptr primitive_inst::realloc_if_needed() {
             _outputs[0] = _network.get_engine().reinterpret_buffer(*_outputs[0], actual_layout);
         }
         if (need_reset_output_memory()) {
-            ev = _outputs[0]->fill(_network.get_stream());
+            if (can_be_optimized()) {
+                GPU_DEBUG_TRACE_DETAIL << "Need memory reset[1] , but skip because optimized out " << id() << "\n";
+            } else {
+                GPU_DEBUG_TRACE_DETAIL << "Need memory reset[1] for " << id() << "\n";
+                ev = _outputs[0]->fill(_network.get_stream());
+            }
         }
     } else {
         GPU_DEBUG_TRACE_DETAIL << id() << ": realloc output memory. "
                                <<  " Current buffer_size=" << max_output_layout_size
                                <<  " Requested buffer_size=" << actual_layout.count() << std::endl;
-        _outputs = allocate_outputs(&updated_params, need_reset_output_memory(), true);
+        // std::cout << "Need memory reset[2] for " << id() << "\n";
+        _outputs = allocate_outputs(&updated_params, true, true);
         // TODO : need to handle multiple outputs
         max_output_layout_size = updated_params.output_layouts[0].count();
     }
@@ -554,6 +598,12 @@ bool primitive_inst::update_impl() {
             o.data_padding.set_dynamic_pad(tensor(0));
         }
 
+        if (updated_params_no_dyn_pad.input_layouts.size() && updated_params_no_dyn_pad.output_layouts.size()) {
+            GPU_DEBUG_TRACE_DETAIL << id() << ": KERNEL IMPLS shapes " << updated_params_no_dyn_pad.input_layouts[0] << " " << updated_params_no_dyn_pad.output_layouts[0] << std::endl;
+        } else {
+            GPU_DEBUG_TRACE_DETAIL << id() << ": KERNEL IMPLS shapes " << std::endl;
+        }
+
         auto& cache = get_network().get_program()->get_implementations_cache();
         std::shared_ptr<primitive_impl> cached_impl = nullptr;
         {
@@ -610,6 +660,9 @@ bool primitive_inst::update_impl() {
                 if (!can_be_optimized()) {
                     auto& kernels_cache = get_network().get_program()->get_kernels_cache();
                     auto kernels = kernels_cache.compile(updated_params_no_dyn_pad, _impl->get_kernels_source());
+                    GPU_DEBUG_TRACE_DETAIL << id() << "Compiled batch_hash: " << _impl->get_kernels_dump_info().first << "\n";
+                    GPU_DEBUG_TRACE_DETAIL << id() << "Compiled kernel_entry: " << _impl->get_kernels_dump_info().second << "\n";
+
                     _impl->set_kernels(kernels);
                     cache.add(updated_params_no_dyn_pad, _impl->clone());
                 }

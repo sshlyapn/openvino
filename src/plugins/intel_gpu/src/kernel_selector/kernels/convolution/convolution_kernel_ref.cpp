@@ -70,6 +70,11 @@ JitConstants ConvolutionKernel_Ref::GetJitConstants(const convolution_params& pa
     jit.Merge(MakeTypeJitConstants(accumulator_dt, "ACCUMULATOR"));
     jit.Merge(MakeActivationJitConstants(params.activations, activation_dt, "_TYPED"));
 
+    if (params.layerID == "convolution:/down_blocks.0/resnets.0/conv1/Conv/WithoutBiases") {
+        std::cout << "---> ADD CUSOTOM JIT\n";
+        jit.AddConstant(MakeJitConstant("CUSTOM_CONDITION", 1));
+    }
+
     if (!params.fused_ops.empty()) {
         std::vector<std::string> idx_order;
         if (DataTensor::ChannelsCount(params.outputs[0].GetLayout()) == 4) {

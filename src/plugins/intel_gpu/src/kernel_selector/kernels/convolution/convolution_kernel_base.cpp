@@ -163,6 +163,7 @@ KernelsData ConvolutionKernelBase::GetCommonKernelsData(const Params& params,
     convolution_params& newParams = *static_cast<convolution_params*>(kd.params.get());
 
     if (!Validate(params, options)) {
+        // std::cout << "Check Conv vase kernel1 " << kernelName << " " << params.is_shape_agnostic << "\n";
         return {};
     }
 
@@ -179,19 +180,23 @@ KernelsData ConvolutionKernelBase::GetCommonKernelsData(const Params& params,
     const bool bWeightsOK = bSupportedWeightsLayout || options.allowStaticInputReordering;
 
     if (!succeed || !bWeightsOK) {
+        // std::cout << "Check Conv vase kernel2 " << kernelName << " " << params.is_shape_agnostic << "\n";
         return {};
     }
 
     if (NeedPaddedInput()) {
         kd.reorderInput = ConvolutionUpdateInputParams(newParams);
 
-        if (kd.reorderInput && !options.allowInputReordering)
+        if (kd.reorderInput && !options.allowInputReordering) {
+            // std::cout << "Check Conv vase kernel3 " << kernelName << " " << params.is_shape_agnostic << "\n";
             return {};
+        }
     }
     DispatchData dispatchData = SetDefault(newParams, autoTuneIndex);
 
     if (!params.is_shape_agnostic && !CheckWorkGroups(dispatchData)) {
         // Internal Error - wrong calculation of global/local work group sizes
+        // std::cout << "Check Conv vase kernel4 " << kernelName << " " << params.is_shape_agnostic << "\n";
         return {};
     }
 
@@ -254,6 +259,12 @@ KernelsData ConvolutionKernelBase::GetCommonKernelsData(const Params& params,
 bool CheckConvolutionPaddedInputDesc(const convolution_params& params, const DataTensor& reqDesc) {
     assert(params.inputs.size() >= 1);
 
+    // std::cout << "Proper padding " << reqDesc.X().pad.before << " " << params.inputs[0].X().pad.before << "\n";
+    // std::cout << "Proper padding " << reqDesc.X().pad.after << " " << params.inputs[0].X().pad.after << "\n";
+
+    // std::cout << "Proper padding " << reqDesc.Y().pad.before << " " << params.inputs[0].Y().pad.before << "\n";
+    // std::cout << "Proper padding " << reqDesc.Y().pad.after << " " << params.inputs[0].Y().pad.after << "\n";
+
     bool properPadding = reqDesc.X().pad.before <= params.inputs[0].X().pad.before &&
                          reqDesc.Y().pad.before <= params.inputs[0].Y().pad.before &&
                          reqDesc.Feature().pad.before <= params.inputs[0].Feature().pad.before &&
@@ -282,6 +293,14 @@ static DataTensor GetConvolutionBFYXPaddedTensor(const convolution_params& cp) {
 
 
     const auto inputLimitX = (cp.outputs[0].X().v - 1) * cp.stride.x + (cp.filterSize.x - 1) * cp.dilation.x + 1;
+
+    // InputLimitX: 64 1 3 1
+    // (64 - 1) * 1 + (3 - 1) * 1 + 1 = 63 + 2 + 1 = 66
+    // InputLimitX: 64 1 3 1. 1 64
+
+    // 64 -
+
+    // std::cout << "InputLimitX: " << cp.outputs[0].X().v << " " << cp.stride.x << " " << cp.filterSize.x << " " << cp.dilation.x << ". " << pad[0].before << " " << t.X().v << "\n";
     const auto inputLimitY = (cp.outputs[0].Y().v - 1) * cp.stride.y + (cp.filterSize.y - 1) * cp.dilation.y + 1;
     const auto inputLimitZ = (cp.outputs[0].Z().v - 1) * cp.stride.z + (cp.filterSize.z - 1) * cp.dilation.z + 1;
 

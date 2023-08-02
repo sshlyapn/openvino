@@ -313,12 +313,13 @@ static std::string get_file_path_for_binary_dump(cldnn::layout layout, std::stri
     for (size_t r = 0 ; r < layout.get_rank() ; r++) {
         tensor += ("_" + to_string(dims[r]));
     }
+    std::string padded = layout.data_padding ? "__padded" : "";
 
 #ifdef GPU_DEBUG_CONFIG
     GPU_DEBUG_GET_INSTANCE(debug_config);
     std::string layer_name = debug_config->get_name_for_dump(name);
     filename = debug_config->dump_layers_path + layer_name
-                + "__" + data_type + "_" + tensor + "__" + format + ".bin";
+                + "__" + data_type + "_" + tensor + "__" + format + padded + ".bin";
 #endif
     return filename;
 }
@@ -1173,7 +1174,7 @@ void network::execute_impl(const std::vector<event::ptr>& events) {
     // Wait for previous execution completion
     reset_execution(false);
     GPU_DEBUG_TRACE << "----------------------------------------------" << std::endl;
-    GPU_DEBUG_TRACE << "Start network execution" << std::endl;
+    // std::cout << "Start network execution " << get_id() << " " << iteration << std::endl;
 
     std::vector<memory::ptr> in_out_mem;
     auto is_surface_lock_check_needed = [&](const shared_mem_type& shared_mem_type) {
