@@ -8866,7 +8866,7 @@ public:
     void SetUp() override {
         rg.set_seed(GET_SUITE_NAME);
     }
-    
+
     static void TearDownTestCase() {
         all_generic_params.clear();
         all_layer_params.clear();

@@ -50,6 +50,9 @@ void compile_graph::run(program& p) {
                                !(node->is_type<mutable_data>() && node->get_dependencies().empty()) &&
                                (!node->is_dynamic() || (use_shape_agnostic_impl && node->type()->does_dynamic_implementation_exist(*node)));
 
+        // if (node->is_type<convolution>() && node->as<convolution>().use_explicit_padding())
+        //     can_select_impl = false;
+
         // TODO: Remove this WA once we have shape agnostic reshape kernel
         if (node->is_type<reshape>() && node->is_dynamic() && !node->can_be_optimized())
             can_select_impl = false;
@@ -57,6 +60,7 @@ void compile_graph::run(program& p) {
         // TODO: Remove this WA once we have shape agnostic conv kernl with specified auto_pad attributes
         if (node->is_type<convolution>() && node->is_dynamic() && !node->as<convolution>().use_explicit_padding()) {
             can_select_impl = false;
+            std::cout << "Cant select dynamic impl for " << node->id() << "\n";
         }
 
         // TODO: need to come up with better handling of unsupported shape agnostic cases

@@ -1357,6 +1357,7 @@ void program::set_layout_optimizer_attributes(layout_optimizer& lo) {
     size_t opt_deconv_layers_b_fs_zyx_fsv16 = 0;
     size_t opt_deconv_layers_b_fs_yx_fsv16 = 0;
     size_t total_crop_layers = 0;
+    size_t total_dynamic_conv = 0;
 
     for (auto& node : get_processing_order()) {
         auto &prim = *node;
@@ -1387,6 +1388,9 @@ void program::set_layout_optimizer_attributes(layout_optimizer& lo) {
 
             if (conv.weights_zero_points_term() || conv.activations_zero_points_term())
                 total_asym_quantized_conv_layers++;
+
+            if (conv.is_dynamic())
+                total_dynamic_conv++;
         }
         if (prim.type() == cldnn::deconvolution::type_id()) {
             if (lo.is_format_optimized(prim.as<deconvolution>(), format::b_fs_zyx_fsv16))
@@ -1551,6 +1555,13 @@ void program::set_layout_optimizer_attributes(layout_optimizer& lo) {
                                   total_grouped_conv_layers == 0 &&
                                   total_dw_splitted_conv_layers == 0 &&
                                   total_dw_conv_layers == 0;
+
+    if (total_dynamic_conv >= 5) {
+        should_use_fs_b_yx_fsv32_conv = false;
+        should_use_b_fs_yx_fsv16_conv = false;
+        should_use_b_fs_zyx_fsv32_conv = false;
+        std::cout << "Prohibit Blocked formats, dynamic conv number = " << total_dynamic_conv << "\n";
+    }
 
     if (should_use_fs_b_yx_fsv32_conv)
         lo.set_optimization_attribute(layout_optimizer::optimization_attributes_type::fs_b_yx_fsv32_network, 1);

@@ -50,6 +50,8 @@ ParamsKey ConvolutionKernel_bfyx_os_iyx_osv16::GetSupportedKey() const {
     k.EnableBatching();
     k.EnableDilation();
     k.EnableGroupedConvolution();
+
+    k.EnableDynamicShapesSupport();
     return k;
 }
 
@@ -110,9 +112,10 @@ static void shrink_blocks_to_output_size(size_t output_x, size_t output_y, size_
 ConvolutionKernel_bfyx_os_iyx_osv16::AutoTuneOption ConvolutionKernel_bfyx_os_iyx_osv16::GetAutoTuneOptions(
     const Params& p,
     int autoTuneIndex) const {
-    if ((autoTuneIndex >= 0) && (autoTuneIndex < static_cast<int>(autoTuneOptions.size()))) {
-        return autoTuneOptions[autoTuneIndex];
-    }
+    // std::cout << "Auto tune option\n";
+    // if ((autoTuneIndex >= 0) && (autoTuneIndex < static_cast<int>(autoTuneOptions.size()))) {
+    //     return autoTuneOptions[autoTuneIndex];
+    // }
 
     AutoTuneOption option = {0, 0, 0, EXE_MODE_DEFAULT};
 
@@ -128,7 +131,7 @@ ConvolutionKernel_bfyx_os_iyx_osv16::AutoTuneOption ConvolutionKernel_bfyx_os_iy
         // if less than 16 values is required to compute one single row of output
         // then each WI shall compute one single row to maximize reuse within SIMD subgroup (this gives very nice
         // performance results)
-        } else if (cp.outputs[0].X().v + (cp.filterSize.x - 1) * cp.dilation.x < sub_group_size) {
+        } else if (!p.is_shape_agnostic && cp.outputs[0].X().v + (cp.filterSize.x - 1) * cp.dilation.x < sub_group_size) {
             option.blockWidth = cp.outputs[0].X().v;
             option.blockHeight = 1;
             option.prefetch = 4;
@@ -153,7 +156,7 @@ ConvolutionKernel_bfyx_os_iyx_osv16::AutoTuneOption ConvolutionKernel_bfyx_os_iy
 
     // if this is not 1x1 batch1 case then shrink filters, other way we're memory bound and it's best to use 16x1 block
     // sizes
-    if (cp.filterSize.x != 1 || cp.filterSize.y != 1 || cp.outputs[0].Batch().v != 1) {
+    if (!p.is_shape_agnostic && (cp.filterSize.x != 1 || cp.filterSize.y != 1 || cp.outputs[0].Batch().v != 1)) {
         shrink_blocks_to_output_size(cp.outputs[0].X().v, cp.outputs[0].Y().v, option.blockWidth, option.blockHeight, sub_group_size);
     }
     return option;
@@ -161,6 +164,7 @@ ConvolutionKernel_bfyx_os_iyx_osv16::AutoTuneOption ConvolutionKernel_bfyx_os_iy
 
 ConvolutionKernelBase::DispatchData ConvolutionKernel_bfyx_os_iyx_osv16::SetDefault(const convolution_params& cp,
                                                                                     int autoTuneIndex) const {
+    // std::cout << "SetDefault autoTuneIndex = " << autoTuneIndex << "\n";
     DispatchData dispatchData = ConvolutionKernelBase::SetDefault(cp);
     const auto& sub_group_size = GetSubGroupSize(cp);
 
@@ -169,6 +173,9 @@ ConvolutionKernelBase::DispatchData ConvolutionKernel_bfyx_os_iyx_osv16::SetDefa
     const size_t of_threads_per_batch = RoundUp(of_maps_per_group, sub_group_size) * cp.groups;
 
     auto tuneOptions = GetAutoTuneOptions(cp, autoTuneIndex);
+    // std::cout << "Tuning params before: block_width,block_height=" << tuneOptions.blockWidth << ", " << tuneOptions.blockHeight << "; "
+    //           << "prefetch=" << tuneOptions.prefetch << "\n";
+
     dispatchData.cldnnStyle.blockWidth = tuneOptions.blockWidth;
     dispatchData.cldnnStyle.blockHeight = tuneOptions.blockHeight;
     dispatchData.cldnnStyle.prefetch = tuneOptions.prefetch;
@@ -184,6 +191,12 @@ ConvolutionKernelBase::DispatchData ConvolutionKernel_bfyx_os_iyx_osv16::SetDefa
     dispatchData.cldnnStyle.inputBlockArraySize = input_block_dims.first;
     dispatchData.cldnnStyle.inputBlockWidth = input_block_dims.second;
 
+    GPU_DEBUG_TRACE_DETAIL << "In shape: " << cp.inputs[0].Batch().v << "x" << cp.inputs[0].Feature().v << "x" << cp.inputs[0].Y().v << "x" << cp.inputs[0].X().v << "\n";
+    GPU_DEBUG_TRACE_DETAIL << "Out shape: " << cp.outputs[0].Batch().v << "x" << cp.outputs[0].Feature().v << "x" << cp.outputs[0].Y().v << "x" << cp.outputs[0].X().v << "\n";
+    GPU_DEBUG_TRACE_DETAIL << "Tuning params: block_width,block_height=" << tuneOptions.blockWidth << ", " << tuneOptions.blockHeight << "; "
+              << "input_block_arr,input_block_width=" << dispatchData.cldnnStyle.inputBlockArraySize << ", " << dispatchData.cldnnStyle.inputBlockWidth << "; "
+              << "prefetch=" << dispatchData.cldnnStyle.prefetch << "; ss size=" << sub_group_size << "\n";
+
     dispatchData.gws[0] = CeilDiv(cp.outputs[0].X().v, dispatchData.cldnnStyle.blockWidth);
     dispatchData.gws[1] = CeilDiv(cp.outputs[0].Y().v, dispatchData.cldnnStyle.blockHeight);
     dispatchData.gws[2] = of_threads_per_batch * cp.outputs[0].Batch().v;
@@ -191,6 +204,9 @@ ConvolutionKernelBase::DispatchData ConvolutionKernel_bfyx_os_iyx_osv16::SetDefa
     dispatchData.lws[0] = 1;
     dispatchData.lws[1] = 1;
     dispatchData.lws[2] = sub_group_size;
+
+    GPU_DEBUG_TRACE_DETAIL << "GWS: " << dispatchData.gws[0] << "x" << dispatchData.gws[1] << "x" << dispatchData.gws[2] << " "
+              << "LWS: " << dispatchData.lws[0] << "x" << dispatchData.lws[1] << "x" << dispatchData.lws[2] << "\n";
 
     return dispatchData;
 }
@@ -200,9 +216,47 @@ KernelsPriority ConvolutionKernel_bfyx_os_iyx_osv16::GetKernelsPriority(const Pa
 }
 
 bool ConvolutionKernel_bfyx_os_iyx_osv16::Validate(const Params& p, const optional_params& o) const {
-    if (!ConvolutionKernelBase::Validate(p, o) || !ConvolutionCheckInput(p, o)) {
-        return false;
+    if (p.is_shape_agnostic) {
+        if (ConvolutionKernelBase::Validate(p, o)) {
+            // std::cout << "OSV16 shape agnostic Validate - true\n";
+
+            auto& conv_params = static_cast<const convolution_params&>(p);
+            auto& input = conv_params.inputs[0];
+            if (p.is_shape_agnostic && input.is_dynamic()) {
+                if (input.Feature().v == 0) {
+                    GPU_DEBUG_TRACE_DETAIL << "OSV16 shape agnostic Validate - false because of dynamic BF\n";
+                    return false;
+                }
+            }
+
+            bool properPadding = conv_params.padding.x == conv_params.inputs[0].X().pad.before &&
+                                 conv_params.padding.y == conv_params.inputs[0].Y().pad.before &&
+                                 conv_params.padding.z == conv_params.inputs[0].Z().pad.before;
+
+            // TODO: need to add padding after
+            properPadding &= conv_params.padding.x == conv_params.inputs[0].X().pad.after &&
+                             conv_params.padding.y == conv_params.inputs[0].Y().pad.after &&
+                             conv_params.padding.z == conv_params.inputs[0].Z().pad.after;
+
+            if (!properPadding) {
+                GPU_DEBUG_TRACE_DETAIL << "OSV16 shape agnostic Validate - false because of dynamic PROHIBITED PADDINGS: "
+                << input.X().pad.before << "x" << input.Y().pad.before << " " << input.X().pad.after << "x" << input.Y().pad.after << "\n";
+                return false;
+            }
+
+            return true;
+        } else {
+            // std::cout << "OSV16 shape agnostic Validate - false " << ConvolutionKernelBase::Validate(p, o) << " " << ConvolutionCheckInput(p, o) << "\n";
+            return false;
+        }
+    } else {
+        if (!ConvolutionKernelBase::Validate(p, o) || (!ConvolutionCheckInput(p, o))) {
+            // std::cout << "OSV16 Validate - false " << ConvolutionKernelBase::Validate(p, o) << " " << ConvolutionCheckInput(p, o) << "\n";
+            return false;
+        }
     }
+
+    // std::cout << "OSV16 Validate - true\n";
 
     return true;
 }

@@ -163,7 +163,7 @@ KernelsData ConvolutionKernelBase::GetCommonKernelsData(const Params& params,
     convolution_params& newParams = *static_cast<convolution_params*>(kd.params.get());
 
     if (!Validate(params, options)) {
-        // std::cout << "Check Conv vase kernel1 " << kernelName << " " << params.is_shape_agnostic << "\n";
+        // std::cout << "Check Conv base kernel1 " << kernelName << " " << params.is_shape_agnostic << "\n";
         return {};
     }
 
@@ -180,15 +180,15 @@ KernelsData ConvolutionKernelBase::GetCommonKernelsData(const Params& params,
     const bool bWeightsOK = bSupportedWeightsLayout || options.allowStaticInputReordering;
 
     if (!succeed || !bWeightsOK) {
-        // std::cout << "Check Conv vase kernel2 " << kernelName << " " << params.is_shape_agnostic << "\n";
+        // std::cout << "Check Conv base kernel2 " << kernelName << " " << params.is_shape_agnostic << "\n";
         return {};
     }
 
-    if (NeedPaddedInput()) {
+    if (!params.is_shape_agnostic && NeedPaddedInput()) {
         kd.reorderInput = ConvolutionUpdateInputParams(newParams);
 
         if (kd.reorderInput && !options.allowInputReordering) {
-            // std::cout << "Check Conv vase kernel3 " << kernelName << " " << params.is_shape_agnostic << "\n";
+            // std::cout << "Check Conv base kernel3 " << kernelName << " " << params.is_shape_agnostic << "\n";
             return {};
         }
     }
@@ -196,7 +196,7 @@ KernelsData ConvolutionKernelBase::GetCommonKernelsData(const Params& params,
 
     if (!params.is_shape_agnostic && !CheckWorkGroups(dispatchData)) {
         // Internal Error - wrong calculation of global/local work group sizes
-        // std::cout << "Check Conv vase kernel4 " << kernelName << " " << params.is_shape_agnostic << "\n";
+        // std::cout << "Check Conv base kernel4 " << kernelName << " " << params.is_shape_agnostic << "\n";
         return {};
     }
 

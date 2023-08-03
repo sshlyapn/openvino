@@ -1040,6 +1040,10 @@ format layout_optimizer::get_expected_format(convolution_node const& node) {
         return format::adjust_to_rank(format::bfyx, output_layout.get_partial_shape().size());
     }
 
+    // Use planar bfyx format for dynamic convolutions
+    if (node.is_dynamic() && output_layout.get_partial_shape().size() == 4)
+        return format::bfyx;
+
     if (input_layout.is_dynamic() || output_layout.is_dynamic()) {
         if (input_layout.get_partial_shape().size() <= 4)
             expected_format = format::b_fs_yx_fsv16;
@@ -1997,7 +2001,7 @@ bool layout_optimizer::is_format_optimized(const convolution_node& node, const f
     auto prim = node.get_primitive();
 
     if (input_layout.is_dynamic() || output_layout.is_dynamic())
-        return true;
+        return false;
     switch (format) {
         case format::b_fs_yx_fsv16:
             return convolution_b_fs_yx_fsv16_opt(input_layout, output_layout, weights_layout, prim, use_weak_restrictions) &&

@@ -842,13 +842,14 @@ event::ptr primitive_inst::execute(const std::vector<event::ptr>& events) {
         GPU_DEBUG_PROFILED_STAGE(instrumentation::pipeline_stage::inference);
         auto ev = _impl->execute(dependencies, *this);
 
-        GPU_DEBUG_IF(!debug_config->dump_profiling_data.empty()) {
+        if (cldnn::debug_configuration::get_instance()->verbose >= static_cast<std::underlying_type<ov::intel_gpu::LogLevel>::type>(ov::intel_gpu::LogLevel::TRACE_DETAIL)) {
             get_network().get_stream().wait_for_events({ev});
 
             if (ev != nullptr) {
                 auto profiling_info = ev->get_profiling_info();
                 for (const auto &interval : profiling_info) {
                     if (interval.stage == cldnn::instrumentation::profiling_stage::executing) {
+                        GPU_DEBUG_TRACE_DETAIL << id() << " execution time=" << std::chrono::duration_cast<std::chrono::microseconds>(interval.value->value()).count() << "mcs" << std::endl;
                         GPU_DEBUG_CODE(stage_prof.set_custom_stage_duration(interval.value->value()));
                     }
                 }
@@ -972,6 +973,7 @@ primitive_inst::primitive_inst(network& network, program_node const& node, bool 
     if (_impl) {
         _impl->set_node_params(node);
         if (_impl->is_dynamic() && !_impl->is_cpu()) {
+            GPU_DEBUG_TRACE_DETAIL << id() << ": initialize with dynamic impl " << _impl->get_kernel_name() << std::endl;
             _dynamic_impl = _impl->clone();
             // Actual shape info layout is the following:
             // input_0 -> input_1, ..., fused_dep_0, fused_dep1, ..., output_0, output_1, ...
@@ -990,6 +992,10 @@ primitive_inst::primitive_inst(network& network, program_node const& node, bool 
             _shape_info_memory = _network.get_engine().allocate_memory(layout{{shape_elements}, data_types::i32, format::bfyx});
         }
     }
+
+    if (node.get_output_layout().data_padding)
+        GPU_DEBUG_TRACE_DETAIL << id() << ": has data padding at initialization! " << node.get_output_layout() << std::endl;
+
     _impl_params->strm = _network.get_stream_ptr();
     if (_outputs[0])
         max_output_layout_size = _outputs[0]->get_layout().get_tensor().count();
@@ -1167,9 +1173,19 @@ event::ptr primitive_inst::update_weights() {
             reorder_impl->set_arguments(*reorder_inst, args);
             auto ev = reorder_impl->execute({}, *reorder_inst);
 
-            GPU_DEBUG_GET_INSTANCE(debug_config);
-            GPU_DEBUG_IF(!debug_config->dump_profiling_data.empty()) {
+
+            if (cldnn::debug_configuration::get_instance()->verbose >= static_cast<std::underlying_type<ov::intel_gpu::LogLevel>::type>(ov::intel_gpu::LogLevel::TRACE_DETAIL)) {
                 stream.wait_for_events({ev});
+
+                if (ev != nullptr) {
+                    auto profiling_info = ev->get_profiling_info();
+                    for (const auto &interval : profiling_info) {
+                        if (interval.stage == cldnn::instrumentation::profiling_stage::executing) {
+                            GPU_DEBUG_TRACE_DETAIL << id() << " WEIGHTS REORDER execution time=" << std::chrono::duration_cast<std::chrono::microseconds>(interval.value->value()).count() << "mcs" << std::endl;
+                            GPU_DEBUG_CODE(stage_prof.set_custom_stage_duration(interval.value->value()));
+                        }
+                    }
+                }
             }
 
             return ev;

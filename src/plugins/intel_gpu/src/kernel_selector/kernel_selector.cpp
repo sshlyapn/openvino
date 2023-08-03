@@ -76,6 +76,11 @@ KernelsData kernel_selector_base::GetNaiveBestKernel(const KernelList& all_impls
     KernelsData kernelsData;
     std::string kernelName;
 
+    // std::cout << "Candidates are:\n";
+    // for (auto& impl : all_impls) {
+    //     std::cout << "Impl " << impl->GetName() << "\n";
+    // }
+
     for (const auto& implementation : all_impls) {
         // TODO: Unify this check with the Validate virtual method. Make
         // sure that the method is called here only, not in all the

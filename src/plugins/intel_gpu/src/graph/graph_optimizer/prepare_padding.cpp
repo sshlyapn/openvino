@@ -13,7 +13,7 @@ using namespace cldnn;
 using namespace ov::intel_gpu;
 
 void prepare_padding::run(program& p) {
-    std::cout << "Prepare_padding " << output_size_handling_enabled << "\n";
+    // std::cout << "Prepare_padding " << output_size_handling_enabled << "\n";
     if (output_size_handling_enabled) {
         // Prepare upper padding for primitives that support output_size parameter.
         for (const auto& node : p.get_processing_order()) {
@@ -163,9 +163,35 @@ void prepare_padding::run(program& p) {
         auto& conv_input_node = node.get_dependency(0);
         auto conv_layout = node.get_output_layout();
 
-        if (node.is_dynamic()
-            && (conv->auto_pad != ov::op::PadType::EXPLICIT || node.get_dependency(0).get_users().size() != 1))
+        auto get_padding = [&](const convolution_node& conv_node) {
+            auto pad_begin = conv->padding_begin;
+            tensor::value_type pad_begin_z = pad_begin.size() >= 3 ? pad_begin[pad_begin.size() - 3] : 0;
+            tensor::value_type pad_begin_y = pad_begin.size() >= 2 ? pad_begin[pad_begin.size() - 2] : 0;
+            tensor::value_type pad_begin_x = pad_begin.size() >= 1 ? pad_begin[pad_begin.size() - 1] : 0;
+
+            auto pad_end = conv->padding_end;
+            tensor::value_type pad_z = pad_end.size() >= 3 ? pad_end[pad_end.size() - 3] : 0;
+            tensor::value_type pad_y = pad_end.size() >= 2 ? pad_end[pad_end.size() - 2] : 0;
+            tensor::value_type pad_x = pad_end.size() >= 1 ? pad_end[pad_end.size() - 1] : 0;
+
+
+            cldnn::padding needed_padding({0, 0, pad_begin_x, pad_begin_y, pad_begin_z}, {0, 0, pad_x, pad_y, pad_z}, 0);
+            return needed_padding;
+        };
+
+        if (node.is_dynamic() && (conv->auto_pad != ov::op::PadType::EXPLICIT || node.get_dependency(0).get_users().size() != 1)) {
+            GPU_DEBUG_TRACE_DETAIL << "WARNING: SKIP!!! Set CONVOLUTION padding for " << node.id() << " to input " << conv_input_node.id() << "\n";
+
+            auto needed_padding = get_padding(node);
+            if (node.get_dependency(0).get_users().size() != 1 && static_cast<bool>(needed_padding)) {
+                auto expected_layout = node.get_input_layout();
+                expected_layout.data_padding = needed_padding;
+                GPU_DEBUG_TRACE_DETAIL << "---> HUGE WARNING: CONVOLUTION padding for " << node.id() << " to input " << conv_input_node.id() << ": " << expected_layout << "\n";
+
+            }
+
             continue;
+        }
 
 
         // right now output padding optimization is only available for bfyx format and data type = float32
