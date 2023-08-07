@@ -26,10 +26,13 @@ If not than required reorder is added to the network.
 /*
 Add a reorder in between node and usr
 */
-void add_required_reorders::add_reorder(program& p, program_node* node, program_node* usr) {
+void add_required_reorders::add_reorder(program& p, program_node* node, program_node* usr, bool keep_original_dt) {
     layout reorder_layout = node->get_output_layout();
     reorder_layout.format = usr->get_output_layout().format;
     reorder_layout.data_type = usr->get_output_layout().data_type;
+
+    if (keep_original_dt)
+        reorder_layout.data_type = node->get_output_layout().data_type;
 
     auto new_reorder = std::make_shared<reorder>(node->id() + "_reorder_" + usr->id(), node->id(), reorder_layout);
     auto& new_reorder_node = p.get_or_create(new_reorder);
@@ -194,8 +197,10 @@ void add_required_reorders::run(program& p) {
 
         layout original_layout = usr->get_output_layout();
 
+        std::cout << "HERE 0 : " << usr->id() << "\n";
         for (auto& node : usr->get_dependencies()) {
             if (!node.first->is_in_data_flow() && !weights_data) {
+                std::cout << "HERE 1 : " << usr->id() << "\n";
                 if (cldnn::format::dimension(original_layout.format) == cldnn::format::dimension(node.first->get_output_layout().format)) {
                     /*
                         ToDo: Here we should handle also the situation where primitive usr has data inputs in different
@@ -238,6 +243,7 @@ void add_required_reorders::run(program& p) {
                                 auto next_usr = *next_usr_itr++;
                                 if (!next_usr->is_type<reorder>()) {
                                     if ((next_usr->get_output_layout() != usr->get_output_layout())) {
+                                        std::cout << "Add reorder 1 " << usr->id() << " " << next_usr->id() << "\n";
                                         add_reorder(p, usr, next_usr);
                                     }
                                 }
@@ -286,6 +292,8 @@ void add_required_reorders::run(program& p) {
                 }
             }
 
+            std::cout << "HERE 2 : " << usr->id() << " " << correct_layout_selected << "\n";
+
             if (!correct_layout_selected) {
                 for (auto new_layout_format : preferred_layout_formats) {
                     layout current_layout(original_layout.get_partial_shape(), original_layout.data_type, new_layout_format);
@@ -296,6 +304,8 @@ void add_required_reorders::run(program& p) {
                     }
                 }
             }
+
+            std::cout << "HERE 3 : " << usr->id() << " " << correct_layout_selected << "\n";
 
             if (!correct_layout_selected) {
                 // goal of this section is to use int32 implementation
@@ -338,6 +348,7 @@ void add_required_reorders::run(program& p) {
                         auto next_usr = *next_usr_itr++;
                         if (!next_usr->is_type<reorder>()) {
                             if ((next_usr->get_output_layout() != usr->get_output_layout())) {
+                                std::cout << "Add reorder 2 " << usr->id() << " " << next_usr->id() << "\n";
                                 add_reorder(p, usr, next_usr);
                             }
                         }
@@ -358,8 +369,16 @@ void add_required_reorders::run(program& p) {
                         continue;
                 }
 
-                if (usr->get_output_layout() != node.first->get_output_layout())
-                    add_reorder(p, node.first, usr);
+                if (usr->get_output_layout() != node.first->get_output_layout()) {
+                    // Preserve original data type to prevent Convolution input data type from changing
+                    // in the following sequence: Conv1(U8, unsupported format) -> Conv2(FP16, bfyx).
+                    // Without this condition, inserted reorder will change Conv2 input to FP16, instead of
+                    // expected U8 format.
+                    const bool keep_original_dt = false;
+                    // const bool keep_original_dt = usr->is_type<convolution>();
+                    std::cout << "Add reorder 3 " << usr->id() << " " << node.first->id() << "\n";
+                    add_reorder(p, node.first, usr, keep_original_dt);
+                }
             }
         }
     }

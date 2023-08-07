@@ -8866,7 +8866,7 @@ public:
     void SetUp() override {
         rg.set_seed(GET_SUITE_NAME);
     }
-    
+
     static void TearDownTestCase() {
         all_generic_params.clear();
         all_layer_params.clear();
@@ -9751,6 +9751,107 @@ TEST(convolution_gpu_onednn, has_proper_synchronization) {
     for (size_t i = 0; i < res_ref->get_layout().get_linear_size(); ++i) {
         ASSERT_EQ(test_mem[i], ref_mem[i]);
     }
+}
+
+TEST(convolution_gpu_onednn, proper_input_dt_propagation) {
+    auto& engine = get_test_engine();
+    if (!engine.get_device_info().supports_immad)
+        return;
+
+    tests::random_generator rg(GET_SUITE_NAME);
+    int input_b = 16, input_f = 16, input_y = 3, input_x = 3;
+    int output_b = 16, output_f = 16, output_y = 6, output_x = 6;
+
+    auto input_size = tensor(input_b, input_f, input_x, input_y);
+    auto input_data = rg.generate_random_4d<FLOAT16>(input_b, input_f, input_y, input_x, -1, 1);
+    auto input_data_bfyx = flatten_4d(format::bfyx, input_data);
+    auto input_mem = engine.allocate_memory({ data_types::u8, format::bfyx, input_size });
+    set_values(input_mem, input_data_bfyx);
+
+    auto weights_size = tensor(16, 16, 1, 1, 1);
+    auto weights_data = rg.generate_random_4d<FLOAT16>(output_f, input_f, 1, 1, -1, 1);
+    auto weights_data_bfyx = flatten_4d(format::bfyx, weights_data);
+    auto weights_mem = engine.allocate_memory({ data_types::i8, format::bfyx, weights_size });
+
+    auto in_lo_mem = engine.allocate_memory({ {1, 1, 1, 1}, data_types::f32, format::bfyx });
+    auto in_hi_mem = engine.allocate_memory({ {1, 1, 1, 1}, data_types::f32, format::bfyx });
+    auto out_lo_mem = engine.allocate_memory({ {1, 1, 1, 1}, data_types::f32, format::bfyx });
+    auto out_hi_mem = engine.allocate_memory({ {1, 1, 1, 1}, data_types::f32, format::bfyx });
+
+    auto input = input_layout("input", input_mem->get_layout());
+    auto in_lo = data("in_lo", in_lo_mem);
+    auto in_hi = data("in_hi", in_hi_mem);
+    auto out_lo = data("out_lo", out_lo_mem);
+    auto out_hi = data("out_hi", out_hi_mem);
+    auto weights = data("weights", weights_mem);
+    auto input_reorder = reorder("input_blocked", input_info("input"), { data_types::u8, format::bs_fs_yx_bsv16_fsv32, input_size });
+    auto conv1 = convolution("conv1", input_info("input_blocked"), "weights", no_bias, 1, {1, 1}, {1, 1}, {0, 0}, {0, 0}, false);
+    auto quantize1 = quantize("quantize", input_info("conv1"), input_info("in_lo"), input_info("in_hi"),
+                     input_info("out_lo"), input_info("out_hi"), 256, data_types::u8);
+    auto conv2 = convolution("conv2", input_info("quantize"), "weights", no_bias, 1, { 1, 1 }, { 1, 1 }, { 1, 1 }, { 2, 2 }, false);
+    auto output_reorder = reorder("reorder", input_info("conv2"), { data_types::f32, format::bfyx, { output_b, output_f, output_y, output_x } });
+
+    topology topology_test(input, in_lo, in_hi, out_lo, out_hi, weights, input_reorder, conv1, quantize1, conv2, output_reorder);
+
+    ExecutionConfig config_test = get_test_default_config(engine);
+    ov::intel_gpu::ImplementationDesc conv1_impl_test = { format::bs_fs_yx_bsv16_fsv32, "", impl_types::onednn };
+    ov::intel_gpu::ImplementationDesc conv2_impl_test = { format::bfyx, "", impl_types::ocl };
+    config_test.set_property(ov::intel_gpu::force_implementations(ov::intel_gpu::ImplForcingMap{ { "conv1", conv1_impl_test }, { "conv2", conv2_impl_test } }));
+    config_test.set_property(ov::intel_gpu::optimize_data(false));
+
+    network network_test(engine, topology_test, config_test);
+
+    network_test.set_input_data("input", input_mem);
+
+    auto outputs_test = network_test.execute();
+
+    ASSERT_EQ(outputs_test.size(), size_t(1));
+    ASSERT_EQ(outputs_test.begin()->first, "reorder");
+
+    auto output_memory_test = outputs_test.at("reorder").get_memory();
+    auto output_layout_test = output_memory_test->get_layout();
+    cldnn::mem_lock<float> output_ptr_test(output_memory_test, get_test_stream());
+}
+
+TEST(convolution_gpu_onednn, proper_input_dt_propagation2) {
+    auto& engine = get_test_engine();
+    if (!engine.get_device_info().supports_immad)
+        return;
+
+    tests::random_generator rg(GET_SUITE_NAME);
+    int input_b = 1, input_f = 16, input_y = 3, input_x = 3;
+    int output_b = 1, output_f = 16, output_y = 6, output_x = 6;
+
+    auto input_mem = engine.allocate_memory({ {input_b, input_f, input_y, input_x}, data_types::u8, format::bs_fs_yx_bsv16_fsv32 });
+    auto input2_mem = engine.allocate_memory({ {input_b, input_f, input_y, input_x}, data_types::u8, format::bs_fs_yx_bsv16_fsv32 });
+    auto weights_mem = engine.allocate_memory({ {16, 16, 1, 1}, data_types::i8, format::bfyx });
+
+    auto input = input_layout("input", input_mem->get_layout());
+    auto input_const = data("input_const", input2_mem);
+    auto weights = data("weights", weights_mem);
+    auto eltwise1 = eltwise("eltwise1", input_info("input"), input_info("input_const"), eltwise_mode::sum);
+    auto conv1 = convolution("conv1", input_info("eltwise1"), "weights", no_bias, 1, { 1, 1 }, { 1, 1 }, { 1, 1 }, { 2, 2 }, false);
+    auto output_reorder = reorder("reorder", input_info("conv1"), { data_types::f32, format::bfyx, { output_b, output_f, output_y, output_x } });
+
+    topology topology_test(input, input_const, eltwise1, weights, conv1, output_reorder);
+
+    ExecutionConfig config_test = get_test_default_config(engine);
+    ov::intel_gpu::ImplementationDesc conv1_impl_test = { format::bfyx, "", impl_types::ocl };
+    config_test.set_property(ov::intel_gpu::force_implementations(ov::intel_gpu::ImplForcingMap{ { "conv1", conv1_impl_test } }));
+    config_test.set_property(ov::intel_gpu::optimize_data(false));
+
+    network network_test(engine, topology_test, config_test);
+
+    network_test.set_input_data("input", input_mem);
+
+    auto outputs_test = network_test.execute();
+
+    ASSERT_EQ(outputs_test.size(), size_t(1));
+    ASSERT_EQ(outputs_test.begin()->first, "reorder");
+
+    auto output_memory_test = outputs_test.at("reorder").get_memory();
+    auto output_layout_test = output_memory_test->get_layout();
+    cldnn::mem_lock<float> output_ptr_test(output_memory_test, get_test_stream());
 }
 
 #endif   // ENABLE_ONEDNN_FOR_GPU

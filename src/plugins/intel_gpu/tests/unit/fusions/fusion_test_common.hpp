@@ -74,7 +74,7 @@ public:
         for (auto i : fused.get_primitives_info()) {
             description << "  " << i.original_id << " " << i.kernel_id << std::endl;
         }
-        SCOPED_TRACE(description.str());
+        std::cout << description.str();
         // Subtract reorders count to handle execution in different layouts when input/output reorders can be added in the graph
         ASSERT_EQ(fused.get_executed_primitives().size() - (count_reorder ? 0 : reorders_count_fused), p.expected_fused_primitives);
         ASSERT_EQ(not_fused.get_executed_primitives().size() - (count_reorder ? 0 : reorders_count_not_fused), p.expected_not_fused_primitives);

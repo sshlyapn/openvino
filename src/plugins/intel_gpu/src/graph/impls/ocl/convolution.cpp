@@ -47,6 +47,9 @@ public:
         const auto& deformable_groups = primitive->deformable_groups;
         const auto transposed = primitive->transposed;
 
+        if (primitive->id == "convolution:logits/semantic/Conv2D")
+            std::cout << "convolution:logits/semantic/Conv2D get_kernel_params\n";
+
         auto conv_params = get_weight_bias_zero_point_default_params<kernel_selector::convolution_params>(impl_param,
                                                                                                           primitive->grouped_weights_shape,
                                                                                                           is_shape_agnostic);
@@ -140,6 +143,9 @@ public:
         } else {
             conv_params.quantization = kernel_selector::QuantizationType::NONE;
         }
+
+        std::cout << primitive->id << " " << impl_param.input_layouts[0].data_type << " " << impl_param.input_layouts[1].data_type << " " << static_cast<int>(conv_params.quantization)
+                  << " (" << primitive->weights_zero_points << ", " << primitive->activations_zero_points << ")\n";
 
         auto can_swap_xy = [&](kernel_selector::convolution_params& cp) -> bool {
             if (cp.inputs[0].GetLayout() == kernel_selector::Tensor::DataLayout::bfyx
@@ -318,6 +324,11 @@ attach_convolution_impl::attach_convolution_impl() {
         std::make_tuple(data_types::f16, format::bs_fs_yx_bsv4_fsv2),
         std::make_tuple(data_types::u8, format::bs_fs_yx_bsv4_fsv2),
         std::make_tuple(data_types::i8, format::bs_fs_yx_bsv4_fsv2),
+
+        // std::make_tuple(data_types::f32, format::bs_fs_yx_bsv16_fsv32),
+        // std::make_tuple(data_types::f16, format::bs_fs_yx_bsv16_fsv32),
+        // std::make_tuple(data_types::u8, format::bs_fs_yx_bsv16_fsv32),
+        // std::make_tuple(data_types::i8, format::bs_fs_yx_bsv16_fsv32),
     });
 
     auto types = {
