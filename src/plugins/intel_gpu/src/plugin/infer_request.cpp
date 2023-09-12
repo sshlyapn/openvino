@@ -25,6 +25,18 @@ const char str_device_output_unsupported_blob[] = "Device output is of an unsupp
 const char str_input_not_allocated[] = "Input data was not allocated.";
 const char str_output_not_allocated[] = "Output data was not allocated.";
 
+static bool can_use_usm_host(const cldnn::engine& engine) {
+    auto can_use_usm = engine.use_unified_shared_memory();
+
+    // WA: Disable USM host memory for infer request`s tensors for PVC as
+    // it has performance issues in case of host <-> device data transfers inside kernels
+    auto supported_simd_sizes = engine.get_device_info().supported_simd_sizes;
+    if (std::find(supported_simd_sizes.begin(), supported_simd_sizes.end(), 8) == supported_simd_sizes.end())
+        can_use_usm = false;
+
+    return can_use_usm;
+}
+
 template <typename src_t, typename dst_t>
 void convertAndCopy(const InferenceEngine::Blob* src, dst_t* dst) {
     if (!dst) {
@@ -788,6 +800,7 @@ void InferRequest::allocate_dev_mem_if_needed(InferenceEngine::BlobMap& device_m
     const auto alloc_type = m_graph->get_engine().detect_usm_allocation_type(input_ptr);
     const auto is_usm_host = alloc_type == cldnn::allocation_type::usm_host;
     const auto has_device_blob = device_mems.find(blob_name) != device_mems.end();
+    const auto can_use_usm_host_memory = can_use_usm_host(m_graph->get_engine());
     bool can_skip_allocation = false;
 
     if (has_device_blob) {
@@ -805,22 +818,31 @@ void InferRequest::allocate_dev_mem_if_needed(InferenceEngine::BlobMap& device_m
         // Or if blob has usm_host type and lockable memory is expected by impl
         can_skip_allocation |= need_lockable_mem ? impl_mem->get_allocation_type() == cldnn::allocation_type::usm_host
                                                  : impl_mem->get_allocation_type() != cldnn::allocation_type::usm_host;
+
+        if (need_lockable_mem && !can_use_usm_host_memory)
+            can_skip_allocation |= impl_mem->get_allocation_type() == cldnn::allocation_type::cl_mem;
+
         // In case of lockable memory we need to keep updated device's usm_host memory buffer with
         // user's blob to avoid incorrect behaviour if user will call set_blob() with
         // the following sequence (usm_host, system_host, usm_host, system_host...)
-        if (need_lockable_mem)
+        if (need_lockable_mem && can_use_usm_host_memory)
             can_skip_allocation &= users_blobs_matching.find(blob_name) != users_blobs_matching.end()
                                 && users_blobs_matching[blob_name] == user_blob;
     }
 
     if (!can_skip_allocation) {
-        if (is_usm_host) {
+        if (is_usm_host && can_use_usm_host_memory) {
             // For USM case we create host blob using custom USM host allocator
             // and then create shared device blob on top of this buffer
             device_mems[blob_name] = create_shared_device_blob(user_blob->getTensorDesc(), layout, user_blob->buffer().as<void*>());
         } else if (need_lockable_mem) {
-            device_mems[blob_name] =
-                create_remote_blob<RemoteUSMbuffer>(user_blob->getTensorDesc(), layout, BlobType::BT_USM_HOST_INTERNAL);
+            if (can_use_usm_host_memory) {
+                device_mems[blob_name] =
+                    create_remote_blob<RemoteUSMbuffer>(user_blob->getTensorDesc(), layout, BlobType::BT_USM_HOST_INTERNAL);
+            } else {
+                device_mems[blob_name] =
+                    create_remote_blob<RemoteCLbuffer>(user_blob->getTensorDesc(), layout, BlobType::BT_BUF_INTERNAL);
+            }
         } else {
             device_mems[blob_name] = create_device_blob(user_blob->getTensorDesc());
         }
