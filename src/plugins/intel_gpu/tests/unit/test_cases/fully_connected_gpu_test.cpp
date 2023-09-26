@@ -2828,3 +2828,636 @@ INSTANTIATE_TEST_SUITE_P(
     ),
     fully_connected_types_u8_f32_test::PrintToStringParamName
 );
+
+static double get_exectime_fc(const std::shared_ptr<event>& event) {
+    using namespace std::chrono;
+    double avg_time = 0.0;
+    auto intervals = event->get_profiling_info();
+    for (const auto& q : intervals)
+    {
+        if (q.stage != instrumentation::profiling_stage::executing) {
+            continue;
+        }
+        avg_time = duration_cast<duration<double, microseconds::period>>(q.value->value()).count();
+        break;
+    }
+    return avg_time;
+}
+
+TEST(fully_connected_gpu_opt, dynamic_fc_tests_dynamic) {
+    tests::random_generator rg(GET_SUITE_NAME);
+    auto& engine = get_test_engine();
+    std::vector<std::string> times;
+    double exectime_total = 0;
+
+    auto kernels = { "fully_connected_gpu_bfyx_ref", "fully_connected_gpu_bf_tiled" };
+
+
+    std::vector<size_t> batch_sizes = { 1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+        22, 23, 26, 27, 28, 29, 31, 32, 33, 35, 36, 37, 38, 39, 40, 41, 42, 44, 45, 47, 51, 53, 59, 64, 71};
+
+    batch_sizes = {15, 1};
+
+    std::vector<std::pair<size_t, size_t>> weights_sizes = {{11008, 4096}, {4096, 11008}, {32000, 4096}, {4096, 4096}};
+
+
+    for (auto forced_kernel : kernels) {
+        ov::intel_gpu::ImplementationDesc fc_impl = { format::bfyx, forced_kernel, impl_types::ocl };
+        ExecutionConfig cfg{ ov::intel_gpu::queue_type(QueueTypes::out_of_order),
+                            ov::intel_gpu::force_implementations(ov::intel_gpu::ImplForcingMap{ {"fc", fc_impl} }),
+                            ov::intel_gpu::optimize_data(true),
+                            ov::enable_profiling(true),
+                            ov::intel_gpu::allow_new_shape_infer(true) };
+
+        for (const auto& weights : weights_sizes) {
+            for (const auto& batch_size : batch_sizes) {
+                // FLOAT16* data_vec;
+                cldnn::memory_ptr input_data_mem;
+                std::vector<FLOAT16> input_data_vec;
+
+                const int32_t input_f = weights.second, weight_b = weights.first;
+
+                auto input_dyn_layout = layout{ ov::PartialShape{ ov::Dimension(), ov::Dimension(), input_f }, data_types::f16,format::bfyx };
+
+                auto weights_data = engine.allocate_memory({ ov::PartialShape{ weight_b, input_f }, data_types::f16,format::bfyx});
+                auto weights_data_vec = rg.generate_random_1d<FLOAT16>(weight_b * input_f, 0, 1);
+
+                set_values(weights_data, weights_data_vec);
+
+                cldnn::topology topology{
+                    input_layout("input", input_dyn_layout),
+                    data("weights", weights_data),
+                    fully_connected("fc", input_info("input"), "weights", "", padding(), 3)
+                };
+
+                network network(engine, topology, cfg);
+
+                auto input_actual_layout = layout{ ov::PartialShape{ 1, (ov::Dimension::value_type)batch_size, input_f }, data_types::f16,format::bfyx};
+                input_data_mem = engine.allocate_memory(input_actual_layout);
+                input_data_vec = rg.generate_random_1d<FLOAT16>(batch_size * input_f, 0, 1);
+                set_values(input_data_mem, input_data_vec);
+                // data_vec = input_data_vec.data();
+                network.set_input_data("input", input_data_mem);
+
+                auto outputs = network.execute();
+                ASSERT_EQ(outputs.size(), size_t(1));
+                ASSERT_EQ(outputs.begin()->first, "fc");
+
+                auto output_prim_mem = outputs.begin()->second.get_memory(true);
+
+                auto out_l = network.get_output_layout(outputs.begin()->first);
+                ASSERT_EQ(out_l.batch(), 1); // fake_alignment
+                ASSERT_EQ(out_l.feature(), batch_size);
+                ASSERT_EQ(out_l.spatial(0), 1);
+                ASSERT_EQ(out_l.spatial(1), weight_b);
+
+                double exectime = get_exectime_fc(network.get_primitive_event("fc"));
+
+                auto kernel_name = network.get_primitive("fc")->get_implementation_name();
+
+                if (network.get_primitive("fc")->get_impl()->is_dynamic())
+                    kernel_name += ", dynamic";
+
+                std::stringstream time_str;
+                time_str << "Time for " << batch_size << "x" << input_f << " -> " << batch_size << "x" << weight_b << " " << exectime << "us" << " (" << kernel_name << ")";
+
+                times.push_back(time_str.str());
+
+                std::cout << time_str.str() << std::endl;
+                exectime_total += exectime;
+            }
+        }
+    }
+    std::cout << std::endl;
+
+    for (auto& t : times)
+        std::cout << t << std::endl;
+
+    std::cout << "Total avg time: " << (exectime_total / (batch_sizes.size() * weights_sizes.size())) << "us" << std::endl;
+    std::cout << "Total time for: " << exectime_total << "us" << std::endl;
+}
+
+TEST(fully_connected_gpu_opt, dynamic_fc_tests_static) {
+    tests::random_generator rg(GET_SUITE_NAME);
+    auto& engine = get_test_engine();
+
+    auto kernels = {/*  "fully_connected_gpu_bfyx_ref",  */"fully_connected_gpu_bf_tiled" };
+
+    const auto iters = 100;
+    std::vector<std::string> times;
+    double exectime_total = 0;
+
+    std::vector<size_t> batch_sizes = { 1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+        22, 23, 26, 27, 28, 29, 31, 32, 33, 35, 36, 37, 38, 39, 40, 41, 42, 44, 45, 47, 51, 53, 59, 64, 71};
+
+    batch_sizes = {15, 1};
+    batch_sizes = {1};
+
+    std::vector<std::pair<size_t, size_t>> weights_sizes = {{11008, 4096}, {4096, 11008}, {32000, 4096}, {4096, 4096}}; // llama cases
+
+    weights_sizes = {{10240, 2560}, {2540, 10240}, {7680, 2560}, {2560, 2560}};
+
+    for (auto forced_kernel : kernels) {
+        ov::intel_gpu::ImplementationDesc fc_impl = { format::bfyx, forced_kernel, impl_types::ocl };
+        ExecutionConfig cfg{ ov::intel_gpu::queue_type(QueueTypes::out_of_order),
+                            ov::intel_gpu::force_implementations(ov::intel_gpu::ImplForcingMap{ {"fc", fc_impl} }),
+                            ov::intel_gpu::optimize_data(true),
+                            ov::enable_profiling(true),
+                            ov::intel_gpu::allow_new_shape_infer(true) };
+
+
+        for (const auto& weights : weights_sizes) {
+            for (const auto& batch_size : batch_sizes) {
+                cldnn::memory_ptr input_data_mem;
+                std::vector<FLOAT16> input_data_vec;
+
+                const int32_t input_f = weights.second, weight_b = weights.first;
+
+                auto input_dyn_layout = layout{ ov::PartialShape{ 1, (ov::Dimension::value_type)batch_size, input_f }, data_types::f16, format::bfyx };
+
+                auto weights_data = engine.allocate_memory({ ov::PartialShape{ weight_b, input_f }, data_types::f16, format::bfyx});
+                auto weights_data_vec = rg.generate_random_1d<FLOAT16>(weight_b * input_f, 0, 1);
+
+                set_values(weights_data, weights_data_vec);
+
+                cldnn::topology topology{
+                    input_layout("input", input_dyn_layout),
+                    data("weights", weights_data),
+                    fully_connected("fc", input_info("input"), "weights", "", padding(), 3)
+                };
+
+                network network(engine, topology, cfg);
+
+                auto input_actual_layout = layout{ ov::PartialShape{ 1, (ov::Dimension::value_type)batch_size, input_f }, data_types::f16, format::bfyx};
+                input_data_mem = engine.allocate_memory(input_actual_layout);
+                input_data_vec = rg.generate_random_1d<FLOAT16>(batch_size * input_f, 0, 1);
+                set_values(input_data_mem, input_data_vec);
+                // data_vec = input_data_vec.data();
+                network.set_input_data("input", input_data_mem);
+
+                auto outputs = network.execute();
+                ASSERT_EQ(outputs.size(), size_t(1));
+                ASSERT_EQ(outputs.begin()->first, "fc");
+
+                auto output_prim_mem = outputs.begin()->second.get_memory(true);
+
+                auto out_l = network.get_output_layout(outputs.begin()->first);
+                ASSERT_EQ(out_l.batch(), 1); // fake_alignment
+                ASSERT_EQ(out_l.feature(), batch_size);
+                ASSERT_EQ(out_l.spatial(0), 1);
+                ASSERT_EQ(out_l.spatial(1), weight_b);
+
+                double exectime = get_exectime_fc(network.get_primitive_event("fc"));
+
+                auto kernel_name = network.get_primitive("fc")->get_implementation_name();
+
+                if (network.get_primitive("fc")->get_impl()->is_dynamic())
+                    kernel_name += ", dynamic";
+                else
+                    kernel_name += ", static";
+
+                for (int iter = 0; iter < iters - 1; ++iter) {
+                    auto outputs = network.execute();
+                    auto output_prim_mem = outputs.begin()->second.get_memory();
+                    exectime += get_exectime_fc(network.get_primitive_event("fc"));
+                }
+
+                std::stringstream time_str;
+                time_str << "Time for " << batch_size << "x" << input_f << " -> " << batch_size << "x" << weight_b << " " << (exectime / (float)iters) << "us" << " (" << kernel_name << ")";
+
+                times.push_back(time_str.str());
+
+                std::cout << time_str.str() << std::endl;
+                exectime_total += exectime;
+            }
+        }
+    }
+
+    std::cout << std::endl;
+
+    std::cout << "Average time for " << iters << " iters\n";
+    for (auto& t : times)
+        std::cout << t << std::endl;
+
+    std::cout << "Total avg time: " << (exectime_total / (batch_sizes.size() * weights_sizes.size())) << "us" << std::endl;
+    std::cout << "Total time for: " << exectime_total << "us" << std::endl;
+}
+
+
+TEST(fully_connected_gpu_opt, dynamic_fc_tests_static_e2e_time) {
+    tests::random_generator rg(GET_SUITE_NAME);
+    auto& engine = get_test_engine();
+
+    auto kernels = {/*  "fully_connected_gpu_bfyx_ref",  */"fully_connected_gpu_bf_tiled" };
+
+    const auto iters = 100;
+    std::vector<std::string> times;
+    double exectime_total = 0;
+
+    std::vector<size_t> batch_sizes = { 1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+        22, 23, 26, 27, 28, 29, 31, 32, 33, 35, 36, 37, 38, 39, 40, 41, 42, 44, 45, 47, 51, 53, 59, 64, 71};
+
+    batch_sizes = {15, 1};
+    batch_sizes = {1};
+
+    std::vector<std::pair<size_t, size_t>> weights_sizes = {{11008, 4096}, {4096, 11008}, {32000, 4096}, {4096, 4096}}; // llama cases
+
+    weights_sizes = {{10240, 2560}, {2540, 10240}, {7680, 2560}, {2560, 2560}};
+
+    for (auto forced_kernel : kernels) {
+        ov::intel_gpu::ImplementationDesc fc_impl = { format::bfyx, forced_kernel, impl_types::ocl };
+        ExecutionConfig cfg{ ov::intel_gpu::queue_type(QueueTypes::out_of_order),
+                            ov::intel_gpu::force_implementations(ov::intel_gpu::ImplForcingMap{ {"fc", fc_impl} }),
+                            ov::intel_gpu::optimize_data(true),
+                            ov::enable_profiling(true),
+                            ov::intel_gpu::allow_new_shape_infer(true) };
+
+
+        for (const auto& weights : weights_sizes) {
+            for (const auto& batch_size : batch_sizes) {
+                cldnn::memory_ptr input_data_mem;
+                std::vector<FLOAT16> input_data_vec;
+
+                const int32_t input_f = weights.second, weight_b = weights.first;
+
+                auto input_dyn_layout = layout{ ov::PartialShape{ 1, (ov::Dimension::value_type)batch_size, input_f }, data_types::f16, format::bfyx };
+
+                auto weights_data = engine.allocate_memory({ ov::PartialShape{ weight_b, input_f }, data_types::f16, format::bfyx});
+                auto weights_data_vec = rg.generate_random_1d<FLOAT16>(weight_b * input_f, 0, 1);
+
+                set_values(weights_data, weights_data_vec);
+
+                cldnn::topology topology{
+                    input_layout("input", input_dyn_layout),
+                    data("weights", weights_data),
+                    fully_connected("fc", input_info("input"), "weights", "", padding(), 3)
+                };
+
+                network network(engine, topology, cfg);
+
+                auto input_actual_layout = layout{ ov::PartialShape{ 1, (ov::Dimension::value_type)batch_size, input_f }, data_types::f16, format::bfyx};
+                input_data_mem = engine.allocate_memory(input_actual_layout);
+                input_data_vec = rg.generate_random_1d<FLOAT16>(batch_size * input_f, 0, 1);
+                set_values(input_data_mem, input_data_vec);
+                // data_vec = input_data_vec.data();
+                network.set_input_data("input", input_data_mem);
+
+
+                auto time0 = std::chrono::high_resolution_clock::now();
+                auto outputs = network.execute();
+                network.get_stream().finish();
+
+                auto time1 = std::chrono::high_resolution_clock::now();
+                auto time_res0 = std::chrono::duration_cast<std::chrono::microseconds>(time1 - time0).count();
+
+                ASSERT_EQ(outputs.size(), size_t(1));
+                ASSERT_EQ(outputs.begin()->first, "fc");
+
+                auto output_prim_mem = outputs.begin()->second.get_memory(true);
+
+                auto out_l = network.get_output_layout(outputs.begin()->first);
+                ASSERT_EQ(out_l.batch(), 1); // fake_alignment
+                ASSERT_EQ(out_l.feature(), batch_size);
+                ASSERT_EQ(out_l.spatial(0), 1);
+                ASSERT_EQ(out_l.spatial(1), weight_b);
+
+                double exectime = get_exectime_fc(network.get_primitive_event("fc"));
+
+                auto kernel_name = network.get_primitive("fc")->get_implementation_name();
+
+                if (network.get_primitive("fc")->get_impl()->is_dynamic())
+                    kernel_name += ", dynamic";
+                else
+                    kernel_name += ", static";
+
+                for (int iter = 0; iter < iters - 1; ++iter) {
+                    auto time0 = std::chrono::high_resolution_clock::now();
+                    auto outputs = network.execute();
+                    network.get_stream().finish();
+                    auto time1 = std::chrono::high_resolution_clock::now();
+                    auto output_prim_mem = outputs.begin()->second.get_memory();
+                    exectime += get_exectime_fc(network.get_primitive_event("fc"));
+                    time_res0 += std::chrono::duration_cast<std::chrono::microseconds>(time1 - time0).count();
+                }
+
+                std::stringstream time_str;
+                time_str << "Time for " << batch_size << "x" << input_f << " -> " << batch_size << "x" << weight_b << " " << (exectime / (float)iters) << "us, " << (time_res0 / (float)iters)  << "us " << " (" << kernel_name << ")";
+
+                times.push_back(time_str.str());
+
+                std::cout << time_str.str() << std::endl;
+                exectime_total += exectime;
+            }
+        }
+    }
+
+    std::cout << std::endl;
+
+    std::cout << "Average time for " << iters << " iters\n";
+    for (auto& t : times)
+        std::cout << t << std::endl;
+
+    std::cout << "Total avg time: " << (exectime_total / (batch_sizes.size() * weights_sizes.size())) << "us" << std::endl;
+    std::cout << "Total time for: " << exectime_total << "us" << std::endl;
+}
+
+TEST(fully_connected_gpu_opt, reorder) {
+    tests::random_generator rg(GET_SUITE_NAME);
+    auto& engine = get_test_engine();
+
+
+    const auto iters = 100;
+    std::vector<std::string> times;
+    double exectime_total = 0;
+
+    std::vector<size_t> batch_sizes = { 1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+        22, 23, 26, 27, 28, 29, 31, 32, 33, 35, 36, 37, 38, 39, 40, 41, 42, 44, 45, 47, 51, 53, 59, 64, 71};
+
+    batch_sizes = {1, 2, 4, 8};
+
+
+    ExecutionConfig cfg{ ov::intel_gpu::queue_type(QueueTypes::out_of_order),
+                        ov::intel_gpu::optimize_data(true),
+                        ov::enable_profiling(true),
+                        ov::intel_gpu::allow_new_shape_infer(true) };
+
+    for (const auto& batch_size : batch_sizes) {
+        cldnn::memory_ptr input_data_mem;
+        cldnn::memory_ptr input_data_mem2;
+        cldnn::memory_ptr output_data_mem;
+        cldnn::memory_ptr output_data_mem2;
+        std::vector<float> input_data_vec;
+
+        auto input_dyn_layout = layout{ ov::PartialShape{ (ov::Dimension::value_type)batch_size, 3, 4096, 4096 }, data_types::f32, format::bfyx };
+
+        cldnn::topology topology{
+            input_layout("input", input_dyn_layout),
+            reorder("reorder", input_info("input"), format::bfyx, data_types::f16)
+        };
+
+        network network(engine, topology, cfg);
+
+        auto input_actual_layout = layout{ ov::PartialShape{ (ov::Dimension::value_type)batch_size, 3, 4096, 4096 }, data_types::f32, format::bfyx};
+        input_data_mem = engine.allocate_memory(input_actual_layout);
+        input_data_mem2 = engine.allocate_memory(input_actual_layout);
+        network.set_input_data("input", input_data_mem);
+
+        auto output_actual_layout = layout{ ov::PartialShape{ (ov::Dimension::value_type)batch_size, 3, 4096, 4096 }, data_types::f16, format::bfyx};
+        output_data_mem2 = engine.allocate_memory(output_actual_layout);
+
+
+        auto outputs = network.execute();
+        ASSERT_EQ(outputs.size(), size_t(1));
+        ASSERT_EQ(outputs.begin()->first, "reorder");
+
+        auto output_prim_mem = outputs.begin()->second.get_memory(true);
+
+        auto out_l = network.get_output_layout(outputs.begin()->first);
+
+        double exectime = get_exectime_fc(network.get_primitive_event("reorder"));
+
+        output_data_mem = output_prim_mem;
+
+        auto kernel_name = network.get_primitive("reorder")->get_implementation_name();
+
+        if (network.get_primitive("reorder")->get_impl()->is_dynamic())
+            kernel_name += ", dynamic";
+        else
+            kernel_name += ", static";
+
+        for (int iter = 0; iter < iters - 1; ++iter) {
+            if (iter % 2 == 0) {
+                network.set_input_data("input", input_data_mem2);
+                network.get_primitive("reorder")->set_output_memory(output_data_mem2);
+            } else {
+                network.set_input_data("input", input_data_mem);
+                network.get_primitive("reorder")->set_output_memory(output_data_mem);
+            }
+
+            auto outputs = network.execute();
+            auto output_prim_mem = outputs.begin()->second.get_memory();
+            exectime += get_exectime_fc(network.get_primitive_event("reorder"));
+        }
+
+        std::stringstream time_str;
+        time_str << "Time for reorder " << batch_size << "x3x4096x4096 (" << ((batch_size * 3 * 4096 * 4096 * 4) / 1024 / 1024) << "MB -> " << ((batch_size * 3 * 4096 * 4096 * 2) / 1024 / 1024) << "MB) f32->f16 " << (exectime / (float)iters) << "us" << " (" << kernel_name << ")";
+
+        times.push_back(time_str.str());
+
+        std::cout << time_str.str() << std::endl;
+        exectime_total += exectime;
+    }
+
+    std::cout << std::endl;
+
+    std::cout << "Average time for " << iters << " iters\n";
+    for (auto& t : times)
+        std::cout << t << std::endl;
+
+    std::cout << "Total time for: " << exectime_total << "us" << std::endl;
+}
+
+TEST(fully_connected_gpu_opt, reorder_w_finish) {
+    tests::random_generator rg(GET_SUITE_NAME);
+    auto& engine = get_test_engine();
+
+
+    const auto iters = 100;
+    std::vector<std::string> times;
+    double exectime_total = 0;
+
+    std::vector<size_t> batch_sizes = { 1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+        22, 23, 26, 27, 28, 29, 31, 32, 33, 35, 36, 37, 38, 39, 40, 41, 42, 44, 45, 47, 51, 53, 59, 64, 71};
+
+    batch_sizes = {1, 2, 4, 8};
+
+
+    ExecutionConfig cfg{ ov::intel_gpu::queue_type(QueueTypes::out_of_order),
+                        ov::intel_gpu::optimize_data(true),
+                        ov::enable_profiling(true),
+                        ov::intel_gpu::allow_new_shape_infer(true) };
+
+    for (const auto& batch_size : batch_sizes) {
+        cldnn::memory_ptr input_data_mem;
+        cldnn::memory_ptr input_data_mem2;
+        cldnn::memory_ptr output_data_mem;
+        cldnn::memory_ptr output_data_mem2;
+        std::vector<float> input_data_vec;
+
+        auto input_dyn_layout = layout{ ov::PartialShape{ (ov::Dimension::value_type)batch_size, 3, 4096, 4096 }, data_types::f32, format::bfyx };
+
+        cldnn::topology topology{
+            input_layout("input", input_dyn_layout),
+            reorder("reorder", input_info("input"), format::bfyx, data_types::f16)
+        };
+
+        network network(engine, topology, cfg);
+
+        auto input_actual_layout = layout{ ov::PartialShape{ (ov::Dimension::value_type)batch_size, 3, 4096, 4096 }, data_types::f32, format::bfyx};
+        input_data_mem = engine.allocate_memory(input_actual_layout);
+        input_data_mem2 = engine.allocate_memory(input_actual_layout);
+        network.set_input_data("input", input_data_mem);
+
+        auto output_actual_layout = layout{ ov::PartialShape{ (ov::Dimension::value_type)batch_size, 3, 4096, 4096 }, data_types::f16, format::bfyx};
+        output_data_mem2 = engine.allocate_memory(output_actual_layout);
+
+
+        auto outputs = network.execute();
+        ASSERT_EQ(outputs.size(), size_t(1));
+        ASSERT_EQ(outputs.begin()->first, "reorder");
+
+        auto output_prim_mem = outputs.begin()->second.get_memory(true);
+
+        auto out_l = network.get_output_layout(outputs.begin()->first);
+
+        double exectime = get_exectime_fc(network.get_primitive_event("reorder"));
+
+        output_data_mem = output_prim_mem;
+
+        auto kernel_name = network.get_primitive("reorder")->get_implementation_name();
+
+        if (network.get_primitive("reorder")->get_impl()->is_dynamic())
+            kernel_name += ", dynamic";
+        else
+            kernel_name += ", static";
+
+        for (int iter = 0; iter < iters - 1; ++iter) {
+            // if (iter % 2 == 0) {
+            //     network.set_input_data("input", input_data_mem2);
+            //     network.get_primitive("reorder")->set_output_memory(output_data_mem2);
+            // } else {
+            //     network.set_input_data("input", input_data_mem);
+            //     network.get_primitive("reorder")->set_output_memory(output_data_mem);
+            // }
+
+            auto outputs = network.execute();
+            network.get_stream().finish();
+            auto output_prim_mem = outputs.begin()->second.get_memory();
+            exectime += get_exectime_fc(network.get_primitive_event("reorder"));
+        }
+
+        std::stringstream time_str;
+        time_str << "Time for reorder " << batch_size << "x3x4096x4096 (" << ((batch_size * 3 * 4096 * 4096 * 4) / 1024 / 1024) << "MB -> " << ((batch_size * 3 * 4096 * 4096 * 2) / 1024 / 1024) << "MB) f32->f16 " << (exectime / (float)iters) << "us" << " (" << kernel_name << ")";
+
+        times.push_back(time_str.str());
+
+        std::cout << time_str.str() << std::endl;
+        exectime_total += exectime;
+    }
+
+    std::cout << std::endl;
+
+    std::cout << "Average time for " << iters << " iters\n";
+    for (auto& t : times)
+        std::cout << t << std::endl;
+
+    std::cout << "Total time for: " << exectime_total << "us" << std::endl;
+}
+
+
+TEST(fully_connected_gpu_opt, reorder_w_finish_e2e) {
+    tests::random_generator rg(GET_SUITE_NAME);
+    auto& engine = get_test_engine();
+
+
+    const auto iters = 100;
+    std::vector<std::string> times;
+    double exectime_total = 0;
+
+    std::vector<size_t> batch_sizes = { 1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+        22, 23, 26, 27, 28, 29, 31, 32, 33, 35, 36, 37, 38, 39, 40, 41, 42, 44, 45, 47, 51, 53, 59, 64, 71};
+
+    batch_sizes = {1, 2, 4, 8};
+
+
+    ExecutionConfig cfg{ ov::intel_gpu::queue_type(QueueTypes::out_of_order),
+                        ov::intel_gpu::optimize_data(true),
+                        // ov::enable_profiling(true),
+                        ov::intel_gpu::allow_new_shape_infer(true) };
+
+    for (const auto& batch_size : batch_sizes) {
+        cldnn::memory_ptr input_data_mem;
+        cldnn::memory_ptr input_data_mem2;
+        cldnn::memory_ptr output_data_mem;
+        cldnn::memory_ptr output_data_mem2;
+        std::vector<float> input_data_vec;
+
+        auto input_dyn_layout = layout{ ov::PartialShape{ (ov::Dimension::value_type)batch_size, 4096 * 4096 }, data_types::f32, format::bfyx };
+
+        cldnn::topology topology{
+            input_layout("input", input_dyn_layout),
+            reorder("reorder", input_info("input"), format::bfyx, data_types::f32)
+        };
+
+        network network(engine, topology, cfg);
+
+        auto input_actual_layout = layout{ ov::PartialShape{ (ov::Dimension::value_type)batch_size, 4096 * 4096 }, data_types::f32, format::bfyx};
+        input_data_mem = engine.allocate_memory(input_actual_layout);
+        input_data_mem2 = engine.allocate_memory(input_actual_layout);
+        network.set_input_data("input", input_data_mem);
+
+        auto output_actual_layout = layout{ ov::PartialShape{ (ov::Dimension::value_type)batch_size, 4096 * 4096 }, data_types::i32, format::bfyx};
+        output_data_mem2 = engine.allocate_memory(output_actual_layout);
+
+
+        auto time0 = std::chrono::high_resolution_clock::now();
+        auto outputs = network.execute();
+        ASSERT_EQ(outputs.size(), size_t(1));
+        ASSERT_EQ(outputs.begin()->first, "reorder");
+
+        network.get_stream().finish();
+        auto time1 = std::chrono::high_resolution_clock::now();
+        auto output_prim_mem = outputs.begin()->second.get_memory(true);
+
+        auto out_l = network.get_output_layout(outputs.begin()->first);
+
+        double exectime = get_exectime_fc(network.get_primitive_event("reorder"));
+        double time_res0 = std::chrono::duration_cast<std::chrono::microseconds>(time1 - time0).count();
+
+        output_data_mem = output_prim_mem;
+
+        auto kernel_name = network.get_primitive("reorder")->get_implementation_name();
+
+        if (network.get_primitive("reorder")->get_impl()->is_dynamic())
+            kernel_name += ", dynamic";
+        else
+            kernel_name += ", static";
+
+        for (int iter = 0; iter < iters - 1; ++iter) {
+            // if (iter % 2 == 0) {
+            //     network.set_input_data("input", input_data_mem2);
+            //     network.get_primitive("reorder")->set_output_memory(output_data_mem2);
+            // } else {
+            //     network.set_input_data("input", input_data_mem);
+            //     network.get_primitive("reorder")->set_output_memory(output_data_mem);
+            // }
+
+            auto time0 = std::chrono::high_resolution_clock::now();
+            auto outputs = network.execute();
+            network.get_stream().finish();
+            auto time1 = std::chrono::high_resolution_clock::now();
+            time_res0 += std::chrono::duration_cast<std::chrono::microseconds>(time1 - time0).count();
+        }
+
+        float e2e_bandwidth = ((1000000 / (time_res0 / (float)iters)) * (batch_size * 4096 * 4096 * 4 * 2)) / 1024 / 1024 / 1024;
+
+        std::stringstream time_str;
+        time_str << "Time for reorder " << batch_size << "x*4096*4096 (" << ((batch_size * 4096 * 4096 * 4) / 1024 / 1024) << "MB -> "
+                 << ((batch_size * 4096 * 4096 * 4) / 1024 / 1024) << "MB) f32->i32 " << (exectime / (float)iters) << "us"
+                 << " " << (time_res0 / (float)iters) << "us (" << kernel_name << ") => " << e2e_bandwidth << " GB/s";
+
+        times.push_back(time_str.str());
+
+        std::cout << time_str.str() << std::endl;
+        exectime_total += exectime;
+    }
+
+    std::cout << std::endl;
+
+    std::cout << "Average time for " << iters << " iters\n";
+    for (auto& t : times)
+        std::cout << t << std::endl;
+
+    std::cout << "Total time for: " << exectime_total << "us" << std::endl;
+}
+
