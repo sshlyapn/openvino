@@ -104,7 +104,11 @@ KERNEL(fc)(
     , FUSED_OPS_DECLS
 #endif
 ) {
-    uint gid = (uint)get_group_id(0);
+    // TODO: check old HW to allocate less than 4K restiction for SLM
+
+    uint gid = (uint)get_group_id(0) * 8;
+    uint local_id = (uint)get_local_id(2);
+    gid += local_id;
     uint sglid = (uint)get_sub_group_local_id();
 
     // Dispatch as bs_fs_bsv_fsv, where bsv = DISPATCH_BSV and fsv = DISPATCH_FSV.
@@ -123,7 +127,7 @@ KERNEL(fc)(
     ACCUMULATOR_VEC_TYPE acc[TILE_B] = { };
     INPUT_VEC_TYPE       in_0[TILE_B] = { };
 
-    FILTER_VEC_TYPE wei = 0;
+    __local ACCUMULATOR_TYPE wei_local[512];
     uint input_offset = out_b * TILE_IN_B_PITCH + INPUT0_OFFSET;
 #if COMPRESSED_WEIGHTS_INT4
     uint weights_offset = out_f * (INPUT_ELEMENTS_COUNT / 2);
@@ -168,6 +172,7 @@ KERNEL(fc)(
     // For fp16 we need to ensure that all block reads are aligned to 4 byte (2 words) boundary.
     // To do this solve first input feature separately.
     {
+        #error "REALLIGN NEEDED"
         INPUT0_TYPE tmp_input = input[input_offset + get_sub_group_local_id() % TILE_B * TILE_IN_B_PITCH];
         ACCUMULATOR_VEC_TYPE tmp_wei = TO_ACCUMULATOR_VEC_TYPE(BLOCK_READN(FILTER_TYPE, TILE_OFM, weights, weights_offset));
         #if COMPRESSED_WEIGHTS
@@ -202,12 +207,49 @@ KERNEL(fc)(
             ACCUMULATOR_VEC_TYPE acc_tmp[TILE_B] = { };
         #endif
 
+        FILTER_VEC_TYPE wei;
+        wei = TO_FILTER_VEC_TYPE(FILTER_BLOCK_READ(weights, weights_offset + local_id * (SIMD * TILE_K_OFM))); // 64 = SIMD * TILE_K_OFM
+
+        #if TILE_K_OFM != 4
+        #error "Can not re-arrange weights"
+        #endif
+
+        // __local wei layout: os_iyx_osv16_osv2
+
+        uint wei_local_idx = (local_id * (SIMD * TILE_OFM)) + sglid;
+
+        #define FILTER_VEC2    MAKE_VECTOR_TYPE(ACCUMULATOR_TYPE, 2)
+        __local FILTER_VEC2* wei2_local = (__local FILTER_VEC2*)&wei_local;
+        #undef FILTER_VEC2
+
+        // if ((sglid == 0 || sglid == 15 || sglid == 14) && ni == 0) {
+        //     printf("gid=%d; sglid=%d, out_b=%d, out_f=%d, weights_offset=%d, iterations=%d, wei_local_idx=%d, wei(%f,%f), weigths_read_from=%d\n", gid, sglid, out_b, out_f, weights_offset, iterations, wei_local_idx, wei.s0, wei.s1, weights_offset + local_id * (SIMD * TILE_K_OFM));
+        // }
+
+        wei2_local[wei_local_idx] = wei.s01;
+        wei_local_idx += SIMD;
+        wei2_local[wei_local_idx] = wei.s23;
+        wei_local_idx -= SIMD;
+
+        wei_local_idx = sglid;
+
+        barrier(CLK_LOCAL_MEM_FENCE);
+
         unroll_for(uint ki = 0; ki < (TILE_IFM * SIMD) / TILE_K; ++ki) {
             #if COMPRESSED_WEIGHTS_INT4
                 FILTER_PACKED_VEC_TYPE wei_packed = FILTER_BLOCK_READ(weights, weights_offset);
                 wei = UNPACK_INT4x2(ACCUMULATOR_TYPE, *((INT4_PACKED_TYPE*)&wei_packed));
+                #error "Unexpected here"
             #else
-                wei = TO_FILTER_VEC_TYPE(FILTER_BLOCK_READ(weights, weights_offset));
+                // wei = TO_FILTER_VEC_TYPE(FILTER_BLOCK_READ(weights, weights_offset));
+                // try to load from SLM
+                wei.s01 = wei2_local[wei_local_idx];
+                wei_local_idx += SIMD;
+                wei.s23 = wei2_local[wei_local_idx];
+                wei_local_idx += SIMD;
+                // wei_local_idx -= SIMD;
+
+                // wei_local_idx += 2 * SIMD;
             #endif
 
             #if COMPRESSED_WEIGHTS

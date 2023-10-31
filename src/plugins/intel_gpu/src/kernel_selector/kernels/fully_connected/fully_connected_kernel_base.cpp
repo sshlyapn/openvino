@@ -112,6 +112,7 @@ KernelsData FullyConnectedKernelBase::GetCommonKernelsData(const Params &params,
                                        GetSupportedKey());
 
     if (!succeed) {
+        std::cout << "Not a succeeded\n";
         return {};
     }
 

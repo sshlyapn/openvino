@@ -92,6 +92,8 @@ bool FullyConnected_bf_tiled::Validate(const Params& params, const optional_para
             return false;
     }
 
+    std::cout << "FC tiled " << static_cast<int>(input.GetLayout()) << " " << static_cast<int>(output.GetLayout()) << "\n";
+
     if (input.GetLayout() == DataLayout::bfyx) {
         // Padding on input is not supported.
         // TODO: Enable by mirroring the padding in weights.
@@ -112,6 +114,7 @@ bool FullyConnected_bf_tiled::Validate(const Params& params, const optional_para
         return false;
     }
 
+    std::cout << "FC tiled - OK" << "\n";
     return true;
 }
 
@@ -126,6 +129,7 @@ struct TuneParamsSelector {
     TuneParamsSelector& Case(const tune_params& tparams) {
         if (!selected && VerifyTuneParams(params, tparams)) {
             result = tparams;
+            std::cout << "Selected\n";
             selected = true;
         }
         return *this;
@@ -241,7 +245,7 @@ FullyConnected_bf_tiled::GetAutoTuneParams(const fully_connected_params& params,
             // tune_params(tile_b, tile_ofm, tile_ifm, tile_k, dispatch_bsv, dispatch_fsv, exec_options)
             selector.Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 16, 2, EXE_MODE_AGE_BASED))
                     .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 16, 1, EXE_MODE_AGE_BASED))
-                    .Case(tune_params(16, std::min(max_tile_ofm, 2u), 1, 2, 4,  2, EXE_MODE_AGE_BASED))
+                    // .Case(tune_params(16, std::min(max_tile_ofm, 2u), 1, 2, 4,  2, EXE_MODE_AGE_BASED))
                     .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 8,  1, EXE_MODE_AGE_BASED))
                     .Case(tune_params(16, std::min(max_tile_ofm, 2u), 1, 2, 2,  2, EXE_MODE_AGE_BASED))
                     .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 4,  1, EXE_MODE_AGE_BASED))
@@ -277,7 +281,11 @@ FullyConnected_bf_tiled::GetAutoTuneParams(const fully_connected_params& params,
         });
     }
 
-    return selector.Default(tune_params(1, 1, 1, 1, 1, 1, EXE_MODE_DEFAULT));
+    auto tuning_res = selector.Default(tune_params(1, 1, 1, 1, 1, 1, EXE_MODE_DEFAULT));
+
+    std::cout << "Tuning params:" << " tile_b=" << tuning_res.tile_b << " tile_ofm=" << tuning_res.tile_ofm << " tile_ifm=" << tuning_res.tile_ifm << " tile_k=" << tuning_res.tile_k << " dispatch_bsv=" << tuning_res.dispatch_bsv << " dispatch_fsv=" << tuning_res.dispatch_fsv << "\n";
+
+    return tuning_res;
 }
 
 FullyConnected_bf_tiled::DispatchData
@@ -294,13 +302,15 @@ FullyConnected_bf_tiled::SetDefault(const fully_connected_params& params, int au
 
     batch_threads = CeilDiv(batch_threads, tparams.tile_b);
 
-    dispatchData.gws[0] = feature_threads * batch_threads * simd;
+    std::cout << "Kernel params:" << " feature_threads=" << feature_threads << " batch_threads=" << batch_threads << " simd=" << simd << "\n";
+
+    dispatchData.gws[0] = feature_threads * simd;
     dispatchData.gws[1] = 1;
-    dispatchData.gws[2] = 1;
+    dispatchData.gws[2] = 8; // 8
 
     dispatchData.lws[0] = simd;
     dispatchData.lws[1] = 1;
-    dispatchData.lws[2] = 1;
+    dispatchData.lws[2] = 8; // = batch / batch_threads = 64 / 8 = 8
 
     dispatchData.tile_m = tparams.tile_b;
     dispatchData.tile_n = tparams.tile_ofm;
@@ -358,6 +368,7 @@ JitConstants FullyConnected_bf_tiled::GetJitConstants(const fully_connected_para
 
     auto activation_dt = GetActivationType(params);
     auto accumulator_dt = GetAccumulatorType(params);
+    std::cout << "accumulator_dt= " << static_cast<int>(accumulator_dt) << "\n";
     jit.Merge(MakeTypeJitConstants(activation_dt, "ACTIVATION"));
     jit.Merge(MakeActivationJitConstants(params.activations, activation_dt, "_TYPED"));
     jit.Merge(MakeTypeJitConstants(accumulator_dt, "ACCUMULATOR"));
@@ -439,6 +450,7 @@ KernelsData FullyConnected_bf_tiled::GetKernelsDataForAutoTune(const Params& par
         }
     }
 
+    std::cout << "Res2 " << res.size() << '\n';
     return res;
 }
 
@@ -451,6 +463,8 @@ KernelsData FullyConnected_bf_tiled::GetKernelsData(const Params& params, const 
     if (!kds.empty()) {
         res.emplace_back(kds[0]);
     }
+
+    std::cout << "Res " << res.size() << '\n';
 
     return res;
 }
