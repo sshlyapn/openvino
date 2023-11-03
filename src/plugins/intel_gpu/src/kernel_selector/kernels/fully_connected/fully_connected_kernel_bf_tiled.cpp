@@ -27,7 +27,7 @@ FullyConnected_bf_tiled::FullyConnected_bf_tiled() : FullyConnectedKernelBase("f
         if (dispatch_bsv == 1 && dispatch_fsv != 1)
             continue;
 
-        auto_tune_params.emplace_back(tile_b, tile_ofm, tile_ifm, tile_k, dispatch_bsv, dispatch_fsv, exec);
+        auto_tune_params.emplace_back(tile_b, tile_ofm, tile_ifm, tile_k, dispatch_bsv, dispatch_fsv, false, exec);
     }
 }
 
@@ -92,6 +92,8 @@ bool FullyConnected_bf_tiled::Validate(const Params& params, const optional_para
             return false;
     }
 
+    std::cout << "FC tiled " << static_cast<int>(input.GetLayout()) << " " << static_cast<int>(output.GetLayout()) << "\n";
+
     if (input.GetLayout() == DataLayout::bfyx) {
         // Padding on input is not supported.
         // TODO: Enable by mirroring the padding in weights.
@@ -112,6 +114,7 @@ bool FullyConnected_bf_tiled::Validate(const Params& params, const optional_para
         return false;
     }
 
+    std::cout << "FC tiled - OK" << "\n";
     return true;
 }
 
@@ -126,6 +129,7 @@ struct TuneParamsSelector {
     TuneParamsSelector& Case(const tune_params& tparams) {
         if (!selected && VerifyTuneParams(params, tparams)) {
             result = tparams;
+            std::cout << "Selected\n";
             selected = true;
         }
         return *this;
@@ -167,6 +171,12 @@ bool TuneParamsSelector::VerifyTuneParams(const fully_connected_params& params, 
     auto batch_size = params.is_shape_agnostic ? Align(output_b, tparams.tile_b) : output_b;
     if (batch_size % (tparams.tile_b * tparams.dispatch_bsv) != 0)
         return false;
+
+    // // allow only even cases
+    // if (tparams.can_use_slm && (batch_size / tparams.tile_b) % 2 != 0) {
+    //     return false;
+    // }
+
     if (CeilDiv(output_f, tparams.tile_ofm * simd) % tparams.dispatch_fsv != 0)
         return false;
 
@@ -193,6 +203,15 @@ bool TuneParamsSelector::VerifyTuneParams(const fully_connected_params& params, 
 
 }  // namespace
 
+
+template <typename T>
+T convert_to(const std::string &str) {
+    std::istringstream ss(str);
+    T res;
+    ss >> res;
+    return res;
+}
+
 FullyConnected_bf_tiled::tune_params
 FullyConnected_bf_tiled::GetAutoTuneParams(const fully_connected_params& params, int idx) const {
     if (idx >= 0 && idx < static_cast<int>(auto_tune_params.size())
@@ -215,10 +234,22 @@ FullyConnected_bf_tiled::GetAutoTuneParams(const fully_connected_params& params,
     while (max_tile_ofm * 2 * simd <= output_f && max_tile_ofm < 4)
         max_tile_ofm *= 2;
 
+    // auto can_use_slm = [&]() {
+    //     size_t batch_size = params.outputs[0].Batch().v;
+    //     if (params.outputs[0].GetLayout() == DataLayout::bfyx) {
+    //         batch_size *= params.outputs[0].Feature().v;
+    //         output_f = params.outputs[0].Y().v;
+    //     }
+
+    //     return (batch_size % 8) == 0 || (batch_size % 16) == 0;
+    // };
+
+    const bool can_use_usm = true;
+
     if (params.weights.GetDType() == WeightsType::UINT4 || params.weights.GetDType() == WeightsType::INT4) {
-        return selector.Default(tune_params(1, 2, 1, 4, 1, 1, EXE_MODE_DEFAULT));
+        return selector.Default(tune_params(1, 2, 1, 4, 1, 1, false, EXE_MODE_DEFAULT));
     } else if (params.compressed && params.engineInfo.supports_immad) {
-        return selector.Default(tune_params(1, 1, 1, 4, 1, 1, EXE_MODE_DEFAULT));
+        return selector.Default(tune_params(1, 1, 1, 4, 1, 1, false, EXE_MODE_DEFAULT));
     } else if (params.is_shape_agnostic) {
         // Use special tuning params for Gen12HP dGPUs, since these parameters demonstrate higher performance
         // due to better HW utilization (reduced TILE_OFM parameter) and better assembler kernel's code
@@ -226,42 +257,58 @@ FullyConnected_bf_tiled::GetAutoTuneParams(const fully_connected_params& params,
         if (dtype == Datatype::F16) {
             // tune_params(tile_b, tile_ofm, tile_ifm, tile_k, dispatch_bsv, dispatch_fsv, exec_options)
             if (params.engineInfo.supports_immad)
-                selector.Case(tune_params(8, 1, 1, 4, 1, 1, EXE_MODE_AGE_BASED));
+                selector.Case(tune_params(8, 1, 1, 4, 1, 1, false, EXE_MODE_AGE_BASED));
             else
-                selector.Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 1,  1, EXE_MODE_AGE_BASED));
+                selector.Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 1,  1, false, EXE_MODE_AGE_BASED));
         } else if (dtype == Datatype::F32) {
             // tune_params(tile_b, tile_ofm, tile_ifm, tile_k, dispatch_bsv, dispatch_fsv, exec_options)
             if (params.engineInfo.supports_immad)
-                selector.Case(tune_params(8, 1, 1, 4, 1, 1, EXE_MODE_AGE_BASED));
+                selector.Case(tune_params(8, 1, 1, 4, 1, 1, false, EXE_MODE_AGE_BASED));
             else
-                selector.Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 1, 1,  1, EXE_MODE_AGE_BASED));
+                selector.Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 1, 1,  1, false, EXE_MODE_AGE_BASED));
         }
     } else {
         if (dtype == Datatype::F16) {
-            // tune_params(tile_b, tile_ofm, tile_ifm, tile_k, dispatch_bsv, dispatch_fsv, exec_options)
-            selector.Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 16, 2, EXE_MODE_AGE_BASED))
-                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 16, 1, EXE_MODE_AGE_BASED))
-                    .Case(tune_params(16, std::min(max_tile_ofm, 2u), 1, 2, 4,  2, EXE_MODE_AGE_BASED))
-                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 8,  1, EXE_MODE_AGE_BASED))
-                    .Case(tune_params(16, std::min(max_tile_ofm, 2u), 1, 2, 2,  2, EXE_MODE_AGE_BASED))
-                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 4,  1, EXE_MODE_AGE_BASED))
-                    .Case(tune_params(16, std::min(max_tile_ofm, 2u), 1, 2, 1,  1, EXE_MODE_AGE_BASED))
-                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 1,  1, EXE_MODE_AGE_BASED));
+            // if (can_use_slm()) {
+            //     if ()
+            // }
+
+            if (can_use_usm) {
+                selector.Case(tune_params(16,  std::min(max_tile_ofm, 2u), 2, 2, 1, 1, false, EXE_MODE_AGE_BASED))
+                        .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 4, 2, 1, 1, false, EXE_MODE_AGE_BASED))
+                        .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 2, 2, 1, 1, false, EXE_MODE_AGE_BASED))
+                        .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 16, 1, false, EXE_MODE_AGE_BASED))
+                        // .Case(tune_params(16, std::min(max_tile_ofm, 2u), 1, 2, 4,  2, false, EXE_MODE_AGE_BASED))
+                        .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 8,  1, false, EXE_MODE_AGE_BASED))
+                        .Case(tune_params(16, std::min(max_tile_ofm, 2u), 1, 2, 2,  2, false, EXE_MODE_AGE_BASED))
+                        .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 4,  1, false, EXE_MODE_AGE_BASED))
+                        .Case(tune_params(16, std::min(max_tile_ofm, 2u), 1, 2, 1,  1, false, EXE_MODE_AGE_BASED))
+                        .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 1,  1, false, EXE_MODE_AGE_BASED));
+            } else {
+                selector.Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 16, 2, false, EXE_MODE_AGE_BASED))
+                        .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 16, 1, false, EXE_MODE_AGE_BASED))
+                        .Case(tune_params(16, std::min(max_tile_ofm, 2u), 1, 2, 4,  2, false, EXE_MODE_AGE_BASED))
+                        .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 8,  1, false, EXE_MODE_AGE_BASED))
+                        .Case(tune_params(16, std::min(max_tile_ofm, 2u), 1, 2, 2,  2, false, EXE_MODE_AGE_BASED))
+                        .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 4,  1, false, EXE_MODE_AGE_BASED))
+                        .Case(tune_params(16, std::min(max_tile_ofm, 2u), 1, 2, 1,  1, false, EXE_MODE_AGE_BASED))
+                        .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 1,  1, false, EXE_MODE_AGE_BASED));
+            }
         } else if (dtype == Datatype::F32) {
             // tune_params(tile_b, tile_ofm, tile_ifm, tile_k, dispatch_bsv, dispatch_fsv, exec_options)
-            selector.Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 1, 16, 2, EXE_MODE_AGE_BASED))
-                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 1, 16, 1, EXE_MODE_AGE_BASED))
-                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 1, 8,  1, EXE_MODE_AGE_BASED))
-                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 1, 4,  1, EXE_MODE_AGE_BASED))
-                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 1, 2,  1, EXE_MODE_AGE_BASED))
-                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 1, 1,  1, EXE_MODE_AGE_BASED));
+            selector.Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 1, 16, 2, false, EXE_MODE_AGE_BASED))
+                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 1, 16, 1, false, EXE_MODE_AGE_BASED))
+                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 1, 8,  1, false, EXE_MODE_AGE_BASED))
+                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 1, 4,  1, false, EXE_MODE_AGE_BASED))
+                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 1, 2,  1, false, EXE_MODE_AGE_BASED))
+                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 1, 1,  1, false, EXE_MODE_AGE_BASED));
         }
 
         if (params.compressed && batch == 1)
-            selector.Case(tune_params(1,  std::min(max_tile_ofm, 2u), 4, 2, 1, 1, EXE_MODE_AGE_BASED));
+            selector.Case(tune_params(1,  std::min(max_tile_ofm, 2u), 4, 2, 1, 1, false, EXE_MODE_AGE_BASED));
 
         selector.Case([&](const fully_connected_params&) -> tune_params {
-            tune_params result(8, std::min(max_tile_ofm, 2u), 1, 2, 1, 1, EXE_MODE_DEFAULT);
+            tune_params result(8, std::min(max_tile_ofm, 2u), 1, 2, 1, 1, false, EXE_MODE_DEFAULT);
 
             while (batch % result.tile_b != 0)
                 result.tile_b--;
@@ -277,7 +324,45 @@ FullyConnected_bf_tiled::GetAutoTuneParams(const fully_connected_params& params,
         });
     }
 
-    return selector.Default(tune_params(1, 1, 1, 1, 1, 1, EXE_MODE_DEFAULT));
+    auto tuning_res = selector.Default(tune_params(1, 1, 1, 1, 1, 1, false, EXE_MODE_DEFAULT));
+
+    tuning_res.can_use_slm = can_use_usm;
+
+    std::cout << "Tuning params:" << " tile_b=" << tuning_res.tile_b << " tile_ofm=" << tuning_res.tile_ofm << " tile_ifm=" << tuning_res.tile_ifm << " tile_k=" << tuning_res.tile_k << " dispatch_bsv=" << tuning_res.dispatch_bsv << " dispatch_fsv=" << tuning_res.dispatch_fsv << "\n";
+
+    size_t tile_b_val = tuning_res.tile_b;
+    size_t tile_ofm_val = tuning_res.tile_ofm;
+    size_t tile_ifm_val = tuning_res.tile_ifm;
+    size_t tile_k_val = tuning_res.tile_k;
+    bool forced = false;
+    if (const auto env_var = std::getenv("TILE_B")) {
+        tile_b_val = convert_to<size_t>(env_var);
+        forced = true;
+    }
+    if (const auto env_var = std::getenv("TILE_OFM")) {
+        tile_ofm_val = convert_to<size_t>(env_var);
+        forced = true;
+    }
+    if (const auto env_var = std::getenv("TILE_IFM")) {
+        tile_ifm_val = convert_to<size_t>(env_var);
+        forced = true;
+    }
+    if (const auto env_var = std::getenv("TILE_K")) {
+        tile_k_val = convert_to<size_t>(env_var);
+        forced = true;
+    }
+
+    if (forced) {
+        tuning_res.tile_b = tile_b_val;
+        tuning_res.tile_ofm = tile_ofm_val;
+        tuning_res.tile_ifm = tile_ifm_val;
+        tuning_res.tile_k = tile_k_val;
+
+        std::cout << "Foreced KERNEL PARAMS\n";
+        std::cout << "New tuning params:" << " tile_b=" << tuning_res.tile_b << " tile_ofm=" << tuning_res.tile_ofm << " tile_ifm=" << tuning_res.tile_ifm << " tile_k=" << tuning_res.tile_k << " dispatch_bsv=" << tuning_res.dispatch_bsv << " dispatch_fsv=" << tuning_res.dispatch_fsv << "\n";
+    }
+
+    return tuning_res;
 }
 
 FullyConnected_bf_tiled::DispatchData
@@ -294,13 +379,48 @@ FullyConnected_bf_tiled::SetDefault(const fully_connected_params& params, int au
 
     batch_threads = CeilDiv(batch_threads, tparams.tile_b);
 
-    dispatchData.gws[0] = feature_threads * batch_threads * simd;
+    std::cout << "Kernel params:" << " feature_threads=" << feature_threads << " batch_threads=" << batch_threads << " simd=" << simd << "\n";
+
+    std::vector<size_t> supported_batches = { 8 };
+    auto selected_slm_batch = 1;
+    bool can_use_slm = false;
+
+    if (const auto env_var = std::getenv("SUPPORTED_BATCH")) {
+        auto val = convert_to<size_t>(env_var);
+        std::cout << "Supported batch forced to use " << val << "\n";
+        supported_batches = { val };
+    }
+
+    // Preffered split: equal load-pressure on all SG
+    for (auto b : supported_batches) {
+        if (batch_threads % b == 0) {
+            selected_slm_batch = b;
+            break;
+        }
+    }
+
+    can_use_slm = selected_slm_batch != 1;
+
+    // If not possible to use the most optimal loading, try to balance loading between SG as much as possible
+
+
+    if (can_use_slm)
+        std::cout << "FC tiled: can use slm for " << selected_slm_batch << " batches\n";
+    else
+        std::cout << "FC tiled: can't use slm for " << batch_threads << " batch_threads\n";
+
+    const bool use_slm = tparams.can_use_slm;
+
+    can_use_slm &= use_slm;
+    dispatchData.use_slm = can_use_slm;
+
+    dispatchData.gws[0] = can_use_slm ? feature_threads * simd : feature_threads * batch_threads * simd;
     dispatchData.gws[1] = 1;
-    dispatchData.gws[2] = 1;
+    dispatchData.gws[2] = can_use_slm ? batch_threads : 1; // 8
 
     dispatchData.lws[0] = simd;
     dispatchData.lws[1] = 1;
-    dispatchData.lws[2] = 1;
+    dispatchData.lws[2] = can_use_slm ? selected_slm_batch : 1; // = batch / batch_threads = 64 / 8 = 8;
 
     dispatchData.tile_m = tparams.tile_b;
     dispatchData.tile_n = tparams.tile_ofm;
@@ -336,9 +456,49 @@ JitConstants FullyConnected_bf_tiled::GetJitConstants(const fully_connected_para
         tile_k_ofm_packed /= 2;
 
         jit.Merge(make_int4_packed_type_jit_constant("INT4_PACKED_TYPE", params.weights.GetDType(), tile_k_ofm));
+        std::cout << "> JIT: INT4_PACKED_TYPE=1\n";
         const size_t scale_group_size = params.weights.IFM().v / params.decompression_scale.Feature().v;
-        if (scale_group_size % simd == 0)
+        if (scale_group_size % simd == 0) {
+            std::cout << "> JIT: DECOMPRESSION_SCALE_POST_OP=1\n";
             jit.AddConstant(MakeJitConstant("DECOMPRESSION_SCALE_POST_OP", 1));
+        }
+    }
+
+    const bool use_slm = dispatchData.use_slm;
+    if (use_slm) {
+        OPENVINO_ASSERT(params.weights.GetDType() != WeightsType::INT4 && params.weights.GetDType() != WeightsType::UINT4);
+        OPENVINO_ASSERT(dispatchData.tile_n == 2, "Unsupported OFM");
+
+        // auto batches_blocks_per_wg = dispatchData.lws[2];
+
+        const bool uncompress_before = false;
+        jit.AddConstant(MakeJitConstant("USE_SLM", 1));
+        jit.AddConstant(MakeJitConstant("BATCH_GROUPS", dispatchData.lws[2]));
+        std::cout << "> JIT: BATCH_GROUPS=" << dispatchData.lws[2] << "\n";
+        std::cout << "> JIT: USE_SLM=1\n";
+        jit.AddConstant(MakeJitConstant("UNCOMPRESS_BEFORE_STORE", uncompress_before));
+        std::cout << "> JIT: UNCOMPRESS_BEFORE_STORE=" << uncompress_before << "\n";
+
+        auto weights_elem_count = simd * dispatchData.tile_n * simd * dispatchData.tile_mk;
+        auto weights_elem_size = (params.weights.GetDType() == WeightsType::UINT8 || params.weights.GetDType() == WeightsType::INT8) ? 1 :
+                                 (params.weights.GetDType() == WeightsType::F16) ? 2 : 4;
+
+        const auto& input = params.inputs[0];
+        auto iterations_count = (input.LogicalSize() / input.Batch().v) / (dispatchData.tile_mk * simd);
+
+        std::cout << "Total elements count " << weights_elem_count << ", iterations count " << iterations_count << "\n";
+
+        auto loads_per_sg = weights_elem_count / dispatchData.lws[2];
+        auto weights_load_block_size = loads_per_sg / simd;
+        std::vector<size_t> acceptable_bs = { 1, 2, 4, 8 };
+
+        if (std::find(acceptable_bs.begin(), acceptable_bs.end(), weights_load_block_size) == acceptable_bs.end())
+            std::cout << "FC: Unsupported block size for weights loading\n";
+        OPENVINO_ASSERT(std::find(acceptable_bs.begin(), acceptable_bs.end(), weights_load_block_size) != acceptable_bs.end(), "FC: Unsupported block size for weights loading");
+
+        jit.AddConstant(MakeJitConstant("WEIGHTS_LOAD_BS", weights_load_block_size));
+        std::cout << "> JIT: WEIGHTS_LOAD_BS=" << weights_load_block_size << "\n";
+        std::cout << "Need to load " << loads_per_sg << " (" << weights_elem_size << " bytes each, " << static_cast<int>(params.weights.GetDType()) << " )" << " weights elements in each sg\n";
     }
 
     jit.AddConstant(MakeJitConstant("SIMD", simd));
@@ -355,9 +515,12 @@ JitConstants FullyConnected_bf_tiled::GetJitConstants(const fully_connected_para
 
     bool realign_fp16_offset = params.inputs[0].GetDType() == Datatype::F16 && params.inputs[0].GetFirstElementOffset() % 2 != 0;
     jit.AddConstant(MakeJitConstant("REALIGN_FP16_OFFSET", realign_fp16_offset));
+    if (realign_fp16_offset)
+        std::cout << "> JIT: REALIGN_FP16_OFFSET=1\n";
 
     auto activation_dt = GetActivationType(params);
     auto accumulator_dt = GetAccumulatorType(params);
+    std::cout << "accumulator_dt= " << static_cast<int>(accumulator_dt) << "\n";
     jit.Merge(MakeTypeJitConstants(activation_dt, "ACTIVATION"));
     jit.Merge(MakeActivationJitConstants(params.activations, activation_dt, "_TYPED"));
     jit.Merge(MakeTypeJitConstants(accumulator_dt, "ACCUMULATOR"));
@@ -439,6 +602,7 @@ KernelsData FullyConnected_bf_tiled::GetKernelsDataForAutoTune(const Params& par
         }
     }
 
+    std::cout << "Res2 " << res.size() << '\n';
     return res;
 }
 
@@ -451,6 +615,8 @@ KernelsData FullyConnected_bf_tiled::GetKernelsData(const Params& params, const 
     if (!kds.empty()) {
         res.emplace_back(kds[0]);
     }
+
+    std::cout << "Res " << res.size() << '\n';
 
     return res;
 }

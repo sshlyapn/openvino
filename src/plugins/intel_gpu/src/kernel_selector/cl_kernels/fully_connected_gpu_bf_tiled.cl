@@ -104,7 +104,13 @@ KERNEL(fc)(
     , FUSED_OPS_DECLS
 #endif
 ) {
+    // TODO: check old HW to allocate less than 4K restiction for SLM
+#if USE_SLM
     uint gid = (uint)get_group_id(0);
+    uint local_id = (uint)get_local_id(2);
+#else
+    uint gid = (uint)get_group_id(0);
+#endif
     uint sglid = (uint)get_sub_group_local_id();
 
     // Dispatch as bs_fs_bsv_fsv, where bsv = DISPATCH_BSV and fsv = DISPATCH_FSV.
@@ -117,13 +123,22 @@ KERNEL(fc)(
     uint feature_mega_block = gid / (DISPATCH_FSV * DISPATCH_BSV) % (CEIL_DIV(TILE_OUT_F_NUM, TILE_OFM * SIMD) / DISPATCH_FSV);
     uint batch_mega_block = gid / (DISPATCH_FSV * DISPATCH_BSV * CEIL_DIV(TILE_OUT_F_NUM, TILE_OFM * SIMD) / DISPATCH_FSV);
 
+#if USE_SLM
+    uint out_f = gid * (TILE_OFM * SIMD);
+    uint out_b = BATCH_GROUPS * TILE_B * (uint)get_group_id(2) + local_id * TILE_B;
+#else
     uint out_f = (feature_mega_block * DISPATCH_FSV + feature_mini_block) * (TILE_OFM * SIMD);
     uint out_b = ((batch_mega_block * DISPATCH_BSV + batch_mini_block) * TILE_B);
+#endif
 
     ACCUMULATOR_VEC_TYPE acc[TILE_B] = { };
     INPUT_VEC_TYPE       in_0[TILE_B] = { };
 
+#if USE_SLM
+    __local ACCUMULATOR_TYPE wei_local[TILE_IFM * SIMD * TILE_OFM * SIMD];
+#else
     FILTER_VEC_TYPE wei = 0;
+#endif
     uint input_offset = out_b * TILE_IN_B_PITCH + INPUT0_OFFSET;
 #if COMPRESSED_WEIGHTS_INT4
     uint weights_offset = out_f * (INPUT_ELEMENTS_COUNT / 2);
@@ -168,6 +183,7 @@ KERNEL(fc)(
     // For fp16 we need to ensure that all block reads are aligned to 4 byte (2 words) boundary.
     // To do this solve first input feature separately.
     {
+        #error "REALLIGN NEEDED"
         INPUT0_TYPE tmp_input = input[input_offset + get_sub_group_local_id() % TILE_B * TILE_IN_B_PITCH];
         ACCUMULATOR_VEC_TYPE tmp_wei = TO_ACCUMULATOR_VEC_TYPE(BLOCK_READN(FILTER_TYPE, TILE_OFM, weights, weights_offset));
         #if COMPRESSED_WEIGHTS
@@ -202,15 +218,312 @@ KERNEL(fc)(
             ACCUMULATOR_VEC_TYPE acc_tmp[TILE_B] = { };
         #endif
 
+        #if USE_SLM
+
+            // Skip first barrier synchronization if there is only single outer loop iteration
+            #if MAIN_LOOP_ELEMENTS_COUNT / (TILE_IFM * SIMD) > 1
+            barrier(CLK_LOCAL_MEM_FENCE);
+            #endif
+
+            #define LOCAL_FILTER_VEC_TYPE MAKE_VECTOR_TYPE(ACCUMULATOR_TYPE, WEIGHTS_LOAD_BS)
+            #define TO_LOCAL_FILTER_VEC_TYPE(x) CAT(convert_, LOCAL_FILTER_VEC_TYPE)(x)
+            #define LOCAL_FILTER_BLOCK_READ(ptr, offset)       BLOCK_READN(FILTER_TYPE, WEIGHTS_LOAD_BS, ptr, offset)
+            LOCAL_FILTER_VEC_TYPE wei_tmp;
+
+            const weights_idx = weights_offset + local_id * SIMD * WEIGHTS_LOAD_BS;
+            wei_tmp = TO_LOCAL_FILTER_VEC_TYPE(LOCAL_FILTER_BLOCK_READ(weights, weights_idx));
+
+            #if TILE_OFM != 2
+            #error "Can not use slm"
+            #endif
+
+            uint wei_local_idx = (local_id * (SIMD * WEIGHTS_LOAD_BS / TILE_OFM)) + sglid; // store by two fp16 values
+
+            #define LOCAL_FILTER_VEC2    MAKE_VECTOR_TYPE(ACCUMULATOR_TYPE, 2)
+            __local LOCAL_FILTER_VEC2* wei2_local = (__local LOCAL_FILTER_VEC2*)&wei_local;
+
+            // if ((sglid == 0 || sglid == 15 || sglid == 14) && ni == 0) {
+            //     printf("gid=%d; local_id=%d, sglid=%d, out_b=%d, out_f=%d, weights_offset=%d, iterations=%d, wei_local_idx=%d, wei_tmp(%f,%f), weigths_read_from=%d, gid=%d\n", gid, local_id, sglid, out_b, out_f, weights_offset, iterations, wei_local_idx, wei_tmp.s0, wei_tmp.s1, weights_idx, get_group_id(0));
+            // }
+
+            #if COMPRESSED_WEIGHTS && UNCOMPRESS_BEFORE_STORE
+                const uint ki = local_id; // TODO: Need to calculate it
+                ACCUMULATOR_TYPE* w = (ACCUMULATOR_TYPE*)(&wei_tmp);
+                unroll_for(uint fi = 0; fi < WEIGHTS_LOAD_BS; ++fi) {
+                    // const uint w_idx = kii * TILE_OFM + fi;
+                    const uint offset_ofm = out_f + fi*SIMD + sglid; // TODO: Need to recalculate
+                    #if !DECOMPRESSION_SCALE_POST_OP
+                        // Apply scales before FMA to avoid FP16 overflow in case of INT8
+                        #if DECOMPRESSION_SCALE_GROUPS_NUM > 1
+                            const uint scale_offset = (offset_ofm % DECOMPRESSION_SCALE_BATCH_NUM) * DECOMPRESSION_SCALE_BATCH_PITCH  +
+                                                    ((kii + ki*TILE_K + ni*TILE_IFM*SIMD) / DECOMPRESSION_SCALE_GROUP_SIZE)*DECOMPRESSION_SCALE_FEATURE_PITCH;
+                            ACCUMULATOR_TYPE ds = decompression_scale[scale_offset];
+                        #else
+                            ACCUMULATOR_TYPE ds = d_scales[fi % TILE_OFM]; // TODO: need to use constant instead of TILE_OFM, which defines number of loaded sclaes (1 for scalar, TILE_OFM for others), current approach will not work with SCALARS
+                        #endif
+                    #else
+                        ACCUMULATOR_TYPE ds = ACCUMULATOR_VAL_ONE;
+                    #endif
+
+                    #if DECOMPRESSION_ZP_TERM
+                        #if DECOMPRESSION_ZP_SCALAR
+                            ACCUMULATOR_TYPE dzp = DECOMPRESSION_ZP_VALUE;
+                        #elif DECOMPRESSION_ZP_GROUPS_NUM > 1
+                            const uint zp_offset = (offset_ofm % DECOMPRESSION_ZP_BATCH_NUM) * DECOMPRESSION_ZP_BATCH_PITCH +
+                                                ((kii + ki*TILE_K + ni*TILE_IFM*SIMD) / DECOMPRESSION_ZP_GROUP_SIZE) * DECOMPRESSION_ZP_FEATURE_PITCH;
+                            ACCUMULATOR_TYPE dzp = decompression_zp[zp_offset];
+                        #else
+                            ACCUMULATOR_TYPE dzp = d_zps[fi % DECOMPRESSION_ZP_LENGTH];
+                        #endif
+                    #else
+                        ACCUMULATOR_TYPE dzp = ACCUMULATOR_VAL_ZERO;
+                    #endif
+                    w[fi] = (w[fi] - dzp) * ds;
+                }
+            #endif
+
+            #if (WEIGHTS_LOAD_BS / TILE_OFM) == 1
+                wei2_local[wei_local_idx] = wei_tmp.s01;
+            #elif (WEIGHTS_LOAD_BS / TILE_OFM) == 2
+                wei2_local[wei_local_idx] = wei_tmp.s01;
+                wei_local_idx += SIMD;
+                wei2_local[wei_local_idx] = wei_tmp.s23;
+            #elif (WEIGHTS_LOAD_BS / TILE_OFM) == 4
+                wei2_local[wei_local_idx] = wei_tmp.s01;
+                wei_local_idx += SIMD;
+                wei2_local[wei_local_idx] = wei_tmp.s23;
+                wei_local_idx += SIMD;
+
+                wei2_local[wei_local_idx] = wei_tmp.s45;
+                wei_local_idx += SIMD;
+                wei2_local[wei_local_idx] = wei_tmp.s67;
+            #else
+            #error "Unsupported TILE_K size for slm"
+            #endif
+
+            wei_local_idx = sglid;
+
+            barrier(CLK_LOCAL_MEM_FENCE);
+
+            #undef LOCAL_FILTER_VEC2
+            #undef LOCAL_FILTER_VEC_TYPE
+            #undef TO_LOCAL_FILTER_VEC_TYPE
+            #undef LOCAL_FILTER_BLOCK_READ
+        #endif
+
+        #if USE_SLM && 0
+
+            #if MAIN_LOOP_ELEMENTS_COUNT / (TILE_IFM * SIMD) > 1
+            barrier(CLK_LOCAL_MEM_FENCE);
+            #endif
+
+
+            // Try barrier here for proper outer loop synchronization
+
+            #define LOCAL_FILTER_VEC_TYPE MAKE_VECTOR_TYPE(ACCUMULATOR_TYPE, WEIGHTS_LOAD_BS)
+            #define TO_LOCAL_FILTER_VEC_TYPE(x) CAT(convert_, LOCAL_FILTER_VEC_TYPE)(x)
+            #define LOCAL_FILTER_BLOCK_READ(ptr, offset)       BLOCK_READN(FILTER_TYPE, WEIGHTS_LOAD_BS, ptr, offset)
+            LOCAL_FILTER_VEC_TYPE wei_tmp;
+
+            const weights_idx = weights_offset + local_id * SIMD * WEIGHTS_LOAD_BS;
+            wei_tmp = TO_LOCAL_FILTER_VEC_TYPE(LOCAL_FILTER_BLOCK_READ(weights, weights_idx));
+
+            #if TILE_OFM != 2
+            #error "Can not use slm"
+            #endif
+
+            uint wei_local_idx = (local_id * (SIMD * WEIGHTS_LOAD_BS / TILE_OFM)) + sglid; // store by two fp16 values
+
+            #define LOCAL_FILTER_VEC2    MAKE_VECTOR_TYPE(ACCUMULATOR_TYPE, 2)
+            __local LOCAL_FILTER_VEC2* wei2_local = (__local LOCAL_FILTER_VEC2*)&wei_local;
+
+            // if ((sglid == 0 || sglid == 15 || sglid == 14) && ni == 0) {
+            //     printf("gid=%d; local_id=%d, sglid=%d, out_b=%d, out_f=%d, weights_offset=%d, iterations=%d, wei_local_idx=%d, wei_tmp(%f,%f), weigths_read_from=%d, gid=%d\n", gid, local_id, sglid, out_b, out_f, weights_offset, iterations, wei_local_idx, wei_tmp.s0, wei_tmp.s1, weights_idx, get_group_id(0));
+            // }
+
+            #if COMPRESSED_WEIGHTS && UNCOMPRESS_BEFORE_STORE
+                const uint ki = local_id; // TODO: Need to calculate it
+                ACCUMULATOR_TYPE* w = (ACCUMULATOR_TYPE*)(&wei_tmp);
+                unroll_for(uint fi = 0; fi < WEIGHTS_LOAD_BS; ++fi) {
+                    // const uint w_idx = kii * TILE_OFM + fi;
+                    const uint offset_ofm = out_f + fi*SIMD + sglid; // TODO: Need to recalculate
+                    #if !DECOMPRESSION_SCALE_POST_OP
+                        // Apply scales before FMA to avoid FP16 overflow in case of INT8
+                        #if DECOMPRESSION_SCALE_GROUPS_NUM > 1
+                            const uint scale_offset = (offset_ofm % DECOMPRESSION_SCALE_BATCH_NUM) * DECOMPRESSION_SCALE_BATCH_PITCH  +
+                                                    ((kii + ki*TILE_K + ni*TILE_IFM*SIMD) / DECOMPRESSION_SCALE_GROUP_SIZE)*DECOMPRESSION_SCALE_FEATURE_PITCH;
+                            ACCUMULATOR_TYPE ds = decompression_scale[scale_offset];
+                        #else
+                            ACCUMULATOR_TYPE ds = d_scales[fi % TILE_OFM]; // TODO: need to use constant instead of TILE_OFM, which defines number of loaded sclaes (1 for scalar, TILE_OFM for others), current approach will not work with SCALARS
+                        #endif
+                    #else
+                        ACCUMULATOR_TYPE ds = ACCUMULATOR_VAL_ONE;
+                    #endif
+
+                    #if DECOMPRESSION_ZP_TERM
+                        #if DECOMPRESSION_ZP_SCALAR
+                            ACCUMULATOR_TYPE dzp = DECOMPRESSION_ZP_VALUE;
+                        #elif DECOMPRESSION_ZP_GROUPS_NUM > 1
+                            const uint zp_offset = (offset_ofm % DECOMPRESSION_ZP_BATCH_NUM) * DECOMPRESSION_ZP_BATCH_PITCH +
+                                                ((kii + ki*TILE_K + ni*TILE_IFM*SIMD) / DECOMPRESSION_ZP_GROUP_SIZE) * DECOMPRESSION_ZP_FEATURE_PITCH;
+                            ACCUMULATOR_TYPE dzp = decompression_zp[zp_offset];
+                        #else
+                            ACCUMULATOR_TYPE dzp = d_zps[fi % DECOMPRESSION_ZP_LENGTH];
+                        #endif
+                    #else
+                        ACCUMULATOR_TYPE dzp = ACCUMULATOR_VAL_ZERO;
+                    #endif
+                    w[fi] = (w[fi] - dzp) * ds;
+                }
+            #endif
+
+            #if (WEIGHTS_LOAD_BS / TILE_OFM) == 1
+                wei2_local[wei_local_idx] = wei_tmp.s01;
+            #elif (WEIGHTS_LOAD_BS / TILE_OFM) == 2
+                wei2_local[wei_local_idx] = wei_tmp.s01;
+                wei_local_idx += SIMD;
+                wei2_local[wei_local_idx] = wei_tmp.s23;
+            #elif (WEIGHTS_LOAD_BS / TILE_OFM) == 4
+                wei2_local[wei_local_idx] = wei_tmp.s01;
+                wei_local_idx += SIMD;
+                wei2_local[wei_local_idx] = wei_tmp.s23;
+                wei_local_idx += SIMD;
+
+                wei2_local[wei_local_idx] = wei_tmp.s45;
+                wei_local_idx += SIMD;
+                wei2_local[wei_local_idx] = wei_tmp.s67;
+            #else
+            #error "Unsupported TILE_K size for slm"
+            #endif
+
+            wei_local_idx = sglid;
+
+            barrier(CLK_LOCAL_MEM_FENCE);
+
+            #undef LOCAL_FILTER_VEC2
+            #undef LOCAL_FILTER_VEC_TYPE
+            #undef TO_LOCAL_FILTER_VEC_TYPE
+            #undef LOCAL_FILTER_BLOCK_READ
+        #endif
+
+        #if USE_SLM && 0
+            FILTER_VEC_TYPE wei;
+            const weights_idx = weights_offset + local_id * (SIMD * TILE_K_OFM);
+            wei = TO_FILTER_VEC_TYPE(FILTER_BLOCK_READ(weights, weights_idx)); // 64 = SIMD * TILE_K_OFM
+
+            #if TILE_OFM != 2
+            #error "Can not use slm"
+            #endif
+
+            // __local wei layout: os_iyx_osv16_osv2
+
+            uint wei_local_idx = (local_id * (SIMD * TILE_K)) + sglid;
+
+            #define FILTER_VEC2    MAKE_VECTOR_TYPE(ACCUMULATOR_TYPE, 2)
+            __local FILTER_VEC2* wei2_local = (__local FILTER_VEC2*)&wei_local;
+            #undef FILTER_VEC2
+
+            if ((sglid == 0 || sglid == 15 || sglid == 14) && ni == 0) {
+                printf("gid=%d; local_id=%d, sglid=%d, out_b=%d, out_f=%d, weights_offset=%d, iterations=%d, wei_local_idx=%d, wei(%f,%f), weigths_read_from=%d, SLM=%d\n", gid, local_id, sglid, out_b, out_f, weights_offset, iterations, wei_local_idx, wei.s0, wei.s1, weights_idx, TILE_K_OFM * SIMD * BATCH_GROUPS);
+            }
+
+            #if COMPRESSED_WEIGHTS && UNCOMPRESS_BEFORE_STORE
+                const uint ki = local_id; // TODO: Need to calculate it
+                ACCUMULATOR_TYPE* w = (ACCUMULATOR_TYPE*)(&wei);
+                unroll_for(uint kii = 0; kii < TILE_K; ++kii) {
+                    unroll_for(uint fi = 0; fi < TILE_OFM; ++fi) {
+                        const uint w_idx = kii * TILE_OFM + fi;
+                        const uint offset_ofm = out_f + fi*SIMD + sglid;
+                        #if !DECOMPRESSION_SCALE_POST_OP
+                            // Apply scales before FMA to avoid FP16 overflow in case of INT8
+                            #if DECOMPRESSION_SCALE_GROUPS_NUM > 1
+                                const uint scale_offset = (offset_ofm % DECOMPRESSION_SCALE_BATCH_NUM) * DECOMPRESSION_SCALE_BATCH_PITCH  +
+                                                        ((kii + ki*TILE_K + ni*TILE_IFM*SIMD) / DECOMPRESSION_SCALE_GROUP_SIZE)*DECOMPRESSION_SCALE_FEATURE_PITCH;
+                                ACCUMULATOR_TYPE ds = decompression_scale[scale_offset];
+                            #else
+                                ACCUMULATOR_TYPE ds = d_scales[fi % DECOMPRESSION_SCALE_LENGTH];
+                            #endif
+                        #else
+                            ACCUMULATOR_TYPE ds = ACCUMULATOR_VAL_ONE;
+                        #endif
+
+                        #if DECOMPRESSION_ZP_TERM
+                            #if DECOMPRESSION_ZP_SCALAR
+                                ACCUMULATOR_TYPE dzp = DECOMPRESSION_ZP_VALUE;
+                            #elif DECOMPRESSION_ZP_GROUPS_NUM > 1
+                                const uint zp_offset = (offset_ofm % DECOMPRESSION_ZP_BATCH_NUM) * DECOMPRESSION_ZP_BATCH_PITCH +
+                                                    ((kii + ki*TILE_K + ni*TILE_IFM*SIMD) / DECOMPRESSION_ZP_GROUP_SIZE) * DECOMPRESSION_ZP_FEATURE_PITCH;
+                                ACCUMULATOR_TYPE dzp = decompression_zp[zp_offset];
+                            #else
+                                ACCUMULATOR_TYPE dzp = d_zps[fi % DECOMPRESSION_ZP_LENGTH];
+                            #endif
+                        #else
+                            ACCUMULATOR_TYPE dzp = ACCUMULATOR_VAL_ZERO;
+                        #endif
+                        w[w_idx] = (w[w_idx] - dzp) * ds;
+                    }
+                }
+            #endif
+
+            #if (WEIGHTS_LOAD_BS / TILE_OFM) == 1
+                wei2_local[wei_local_idx] = wei.s01;
+            #elif (WEIGHTS_LOAD_BS / TILE_OFM) == 2
+                wei2_local[wei_local_idx] = wei.s01;
+                wei_local_idx += SIMD;
+                wei2_local[wei_local_idx] = wei.s23;
+            #elif (WEIGHTS_LOAD_BS / TILE_OFM) == 4
+                wei2_local[wei_local_idx] = wei.s01;
+                wei_local_idx += SIMD;
+                wei2_local[wei_local_idx] = wei.s23;
+                wei_local_idx += SIMD;
+
+                wei2_local[wei_local_idx] = wei.s45;
+                wei_local_idx += SIMD;
+                wei2_local[wei_local_idx] = wei.s67;
+            #else
+            #error "Unsupported TILE_K size for slm"
+            #endif
+
+            wei_local_idx = sglid;
+
+            barrier(CLK_LOCAL_MEM_FENCE);
+        #endif
+
         unroll_for(uint ki = 0; ki < (TILE_IFM * SIMD) / TILE_K; ++ki) {
             #if COMPRESSED_WEIGHTS_INT4
                 FILTER_PACKED_VEC_TYPE wei_packed = FILTER_BLOCK_READ(weights, weights_offset);
                 wei = UNPACK_INT4x2(ACCUMULATOR_TYPE, *((INT4_PACKED_TYPE*)&wei_packed));
+                #error "Unexpected here"
             #else
-                wei = TO_FILTER_VEC_TYPE(FILTER_BLOCK_READ(weights, weights_offset));
+                #if USE_SLM
+                    FILTER_VEC_TYPE wei = 0;
+                    #if TILE_K == 1
+                        wei.s01 = wei2_local[wei_local_idx];
+                        wei_local_idx += SIMD;
+                    #elif TILE_K == 2
+                        wei.s01 = wei2_local[wei_local_idx];
+                        wei_local_idx += SIMD;
+                        wei.s23 = wei2_local[wei_local_idx];
+                        wei_local_idx += SIMD;
+                    #elif TILE_K == 4
+                        wei.s01 = wei2_local[wei_local_idx];
+                        wei_local_idx += SIMD;
+                        wei.s23 = wei2_local[wei_local_idx];
+                        wei_local_idx += SIMD;
+
+                        wei.s45 = wei2_local[wei_local_idx];
+                        wei_local_idx += SIMD;
+                        wei.s67 = wei2_local[wei_local_idx];
+                        wei_local_idx += SIMD;
+                    #else
+                    #error "Unsupported TILE_K size for slm[2]"
+                    #endif
+                #else
+                    wei = TO_FILTER_VEC_TYPE(FILTER_BLOCK_READ(weights, weights_offset));
+                #endif
             #endif
 
-            #if COMPRESSED_WEIGHTS
+            #if COMPRESSED_WEIGHTS && !UNCOMPRESS_BEFORE_STORE
                 ACCUMULATOR_TYPE* w = (ACCUMULATOR_TYPE*)(&wei);
                 unroll_for(uint kii = 0; kii < TILE_K; ++kii) {
                     unroll_for(uint fi = 0; fi < TILE_OFM; ++fi) {
@@ -294,6 +607,15 @@ KERNEL(fc)(
         #undef LOAD_IN_0
         input_offset += TILE_IFM * SIMD - TILE_IN_B_PITCH * TILE_B;
         unroll_for(uint ki = 0; ki < CEIL_DIV(LEFTOVER_IFM, TILE_K); ++ki) {
+            // TODO: Try to optimize this part
+            #if USE_SLM
+                FILTER_VEC_TYPE wei = 0;
+            #endif
+
+            if (sglid == 0) {
+                printf("Leftovers processing!\n");
+            }
+
             #if COMPRESSED_WEIGHTS_INT4
                 FILTER_PACKED_VEC_TYPE wei_packed = FILTER_BLOCK_READ(weights, weights_offset);
                 wei = UNPACK_INT4x2(ACCUMULATOR_TYPE, *((INT4_PACKED_TYPE*)&wei_packed));
