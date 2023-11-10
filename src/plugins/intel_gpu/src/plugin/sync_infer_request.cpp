@@ -576,10 +576,17 @@ TensorWrapper SyncInferRequest::create_or_share_device_tensor(const TensorWrappe
     bool is_dynamic = port_pshape.is_dynamic();
     OPENVINO_ASSERT(std::dynamic_pointer_cast<RemoteTensorImpl>(user_tensor) == nullptr, "[GPU] Unexpected remote tensor");
     auto usm_host_tensor = std::dynamic_pointer_cast<USMHostTensor>(user_tensor);
-    bool can_share = usm_host_tensor != nullptr && !is_convert_required(user_tensor->get_element_type(), element_type) &&
+    auto user_tensor_mem_type = m_context->get_engine().detect_usm_allocation_type(user_tensor->data());
+    bool can_share = (usm_host_tensor != nullptr || user_tensor_mem_type == cldnn::allocation_type::usm_host) && !is_convert_required(user_tensor->get_element_type(), element_type) &&
                      can_use_usm_host(m_graph->get_engine());
 
-    if (can_share) {
+    if (can_share && !usm_host_tensor) {
+        return { std::make_shared<RemoteTensorImpl>(m_context,
+                                                    user_tensor->get_shape(),
+                                                    element_type,
+                                                    TensorType::BT_USM_SHARED,
+                                                    user_tensor->data()), TensorOwner::USER };
+    } else if (can_share) {
         return { usm_host_tensor->get_impl(), user_tensor_wrapper.owner };
     }
 
@@ -751,7 +758,12 @@ std::vector<cldnn::event::ptr> SyncInferRequest::prepare_input(const std::string
         is_remote = true;
     }
 
-    bool update_device_tensor = m_plugin_inputs.count(name) == 0 || (m_plugin_inputs[name].owner == TensorOwner::USER && !is_remote);
+    auto user_tensor_mem_type = m_context->get_engine().detect_usm_allocation_type(user_tensor_wrapper.ptr->data());
+    auto plugin_tensor_mem_type = m_plugin_inputs.count(name) ? std::dynamic_pointer_cast<RemoteTensorImpl>(m_plugin_inputs[name].ptr)->get_original_memory()->get_allocation_type()
+                                                              : cldnn::allocation_type::unknown;
+
+    bool update_device_tensor = m_plugin_inputs.count(name) == 0 || (m_plugin_inputs[name].owner == TensorOwner::USER && !is_remote) ||
+                                (user_tensor_mem_type == cldnn::allocation_type::usm_host && plugin_tensor_mem_type != cldnn::allocation_type::usm_host);
 
     if (update_device_tensor) {
         // If device input hasn't been created, then try to use user memory if it's usm_host, or allocate new device buffer
