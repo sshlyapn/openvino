@@ -577,7 +577,8 @@ TensorWrapper SyncInferRequest::create_or_share_device_tensor(const TensorWrappe
     OPENVINO_ASSERT(std::dynamic_pointer_cast<RemoteTensorImpl>(user_tensor) == nullptr, "[GPU] Unexpected remote tensor");
     auto usm_host_tensor = std::dynamic_pointer_cast<USMHostTensor>(user_tensor);
     auto user_tensor_mem_type = m_context->get_engine().detect_usm_allocation_type(user_tensor->data());
-    bool can_share = (usm_host_tensor != nullptr || user_tensor_mem_type == cldnn::allocation_type::usm_host) && !is_convert_required(user_tensor->get_element_type(), element_type) &&
+    bool can_share = (usm_host_tensor != nullptr || user_tensor_mem_type == cldnn::allocation_type::usm_host) &&
+                     !is_convert_required(user_tensor->get_element_type(), element_type) &&
                      can_use_usm_host(m_graph->get_engine());
 
     if (can_share && !usm_host_tensor) {
