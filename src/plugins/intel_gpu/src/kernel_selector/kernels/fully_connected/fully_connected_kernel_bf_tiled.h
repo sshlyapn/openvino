@@ -33,6 +33,7 @@ public:
                     unsigned tile_k,
                     unsigned dispatch_bsv,
                     unsigned dispatch_fsv,
+                    bool can_use_slm,
                     std::string exec_options)
             : tile_b(tile_b)
             , tile_ofm(tile_ofm)
@@ -40,6 +41,7 @@ public:
             , tile_k(tile_k)
             , dispatch_bsv(dispatch_bsv)
             , dispatch_fsv(dispatch_fsv)
+            , can_use_slm(can_use_slm)
             , exec_options(exec_options)
         {}
 
@@ -51,6 +53,7 @@ public:
         unsigned tile_k;
         unsigned dispatch_bsv;
         unsigned dispatch_fsv;
+        bool can_use_slm;
         std::string exec_options;
     };
 

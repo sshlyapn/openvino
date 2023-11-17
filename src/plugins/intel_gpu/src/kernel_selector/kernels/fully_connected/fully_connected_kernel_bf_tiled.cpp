@@ -27,7 +27,7 @@ FullyConnected_bf_tiled::FullyConnected_bf_tiled() : FullyConnectedKernelBase("f
         if (dispatch_bsv == 1 && dispatch_fsv != 1)
             continue;
 
-        auto_tune_params.emplace_back(tile_b, tile_ofm, tile_ifm, tile_k, dispatch_bsv, dispatch_fsv, exec);
+        auto_tune_params.emplace_back(tile_b, tile_ofm, tile_ifm, tile_k, dispatch_bsv, dispatch_fsv, false, exec);
     }
 }
 
@@ -193,6 +193,14 @@ bool TuneParamsSelector::VerifyTuneParams(const fully_connected_params& params, 
 
 }  // namespace
 
+template <typename T>
+T convert_to(const std::string &str) {
+    std::istringstream ss(str);
+    T res;
+    ss >> res;
+    return res;
+}
+
 FullyConnected_bf_tiled::tune_params
 FullyConnected_bf_tiled::GetAutoTuneParams(const fully_connected_params& params, int idx) const {
     if (idx >= 0 && idx < static_cast<int>(auto_tune_params.size())
@@ -216,9 +224,9 @@ FullyConnected_bf_tiled::GetAutoTuneParams(const fully_connected_params& params,
         max_tile_ofm *= 2;
 
     if (params.weights.GetDType() == WeightsType::UINT4 || params.weights.GetDType() == WeightsType::INT4) {
-        return selector.Default(tune_params(1, 2, 1, 4, 1, 1, EXE_MODE_DEFAULT));
+        return selector.Default(tune_params(1, 2, 1, 4, 1, 1, false, EXE_MODE_DEFAULT));
     } else if (params.compressed && params.engineInfo.supports_immad) {
-        return selector.Default(tune_params(1, 1, 1, 4, 1, 1, EXE_MODE_DEFAULT));
+        return selector.Default(tune_params(1, 1, 1, 4, 1, 1, false, EXE_MODE_DEFAULT));
     } else if (params.is_shape_agnostic) {
         // Use special tuning params for Gen12HP dGPUs, since these parameters demonstrate higher performance
         // due to better HW utilization (reduced TILE_OFM parameter) and better assembler kernel's code
@@ -226,42 +234,42 @@ FullyConnected_bf_tiled::GetAutoTuneParams(const fully_connected_params& params,
         if (dtype == Datatype::F16) {
             // tune_params(tile_b, tile_ofm, tile_ifm, tile_k, dispatch_bsv, dispatch_fsv, exec_options)
             if (params.engineInfo.supports_immad)
-                selector.Case(tune_params(8, 1, 1, 4, 1, 1, EXE_MODE_AGE_BASED));
+                selector.Case(tune_params(8, 1, 1, 4, 1, 1, false, EXE_MODE_AGE_BASED));
             else
-                selector.Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 1,  1, EXE_MODE_AGE_BASED));
+                selector.Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 1,  1, false, EXE_MODE_AGE_BASED));
         } else if (dtype == Datatype::F32) {
             // tune_params(tile_b, tile_ofm, tile_ifm, tile_k, dispatch_bsv, dispatch_fsv, exec_options)
             if (params.engineInfo.supports_immad)
-                selector.Case(tune_params(8, 1, 1, 4, 1, 1, EXE_MODE_AGE_BASED));
+                selector.Case(tune_params(8, 1, 1, 4, 1, 1, false, EXE_MODE_AGE_BASED));
             else
-                selector.Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 1, 1,  1, EXE_MODE_AGE_BASED));
+                selector.Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 1, 1,  1, false, EXE_MODE_AGE_BASED));
         }
     } else {
         if (dtype == Datatype::F16) {
             // tune_params(tile_b, tile_ofm, tile_ifm, tile_k, dispatch_bsv, dispatch_fsv, exec_options)
-            selector.Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 16, 2, EXE_MODE_AGE_BASED))
-                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 16, 1, EXE_MODE_AGE_BASED))
-                    .Case(tune_params(16, std::min(max_tile_ofm, 2u), 1, 2, 4,  2, EXE_MODE_AGE_BASED))
-                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 8,  1, EXE_MODE_AGE_BASED))
-                    .Case(tune_params(16, std::min(max_tile_ofm, 2u), 1, 2, 2,  2, EXE_MODE_AGE_BASED))
-                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 4,  1, EXE_MODE_AGE_BASED))
-                    .Case(tune_params(16, std::min(max_tile_ofm, 2u), 1, 2, 1,  1, EXE_MODE_AGE_BASED))
-                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 1,  1, EXE_MODE_AGE_BASED));
+            selector.Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 16, 2, false, EXE_MODE_AGE_BASED))
+                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 16, 1, false, EXE_MODE_AGE_BASED))
+                    .Case(tune_params(16, std::min(max_tile_ofm, 2u), 1, 2, 4,  2, false, EXE_MODE_AGE_BASED))
+                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 8,  1, false, EXE_MODE_AGE_BASED))
+                    .Case(tune_params(16, std::min(max_tile_ofm, 2u), 1, 2, 2,  2, false, EXE_MODE_AGE_BASED))
+                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 4,  1, false, EXE_MODE_AGE_BASED))
+                    .Case(tune_params(16, std::min(max_tile_ofm, 2u), 1, 2, 1,  1, false, EXE_MODE_AGE_BASED))
+                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 2, 1,  1, false, EXE_MODE_AGE_BASED));
         } else if (dtype == Datatype::F32) {
             // tune_params(tile_b, tile_ofm, tile_ifm, tile_k, dispatch_bsv, dispatch_fsv, exec_options)
-            selector.Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 1, 16, 2, EXE_MODE_AGE_BASED))
-                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 1, 16, 1, EXE_MODE_AGE_BASED))
-                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 1, 8,  1, EXE_MODE_AGE_BASED))
-                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 1, 4,  1, EXE_MODE_AGE_BASED))
-                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 1, 2,  1, EXE_MODE_AGE_BASED))
-                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 1, 1,  1, EXE_MODE_AGE_BASED));
+            selector.Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 1, 16, 2, false, EXE_MODE_AGE_BASED))
+                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 1, 16, 1, false, EXE_MODE_AGE_BASED))
+                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 1, 8,  1, false, EXE_MODE_AGE_BASED))
+                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 1, 4,  1, false, EXE_MODE_AGE_BASED))
+                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 1, 2,  1, false, EXE_MODE_AGE_BASED))
+                    .Case(tune_params(8,  std::min(max_tile_ofm, 2u), 1, 1, 1,  1, false, EXE_MODE_AGE_BASED));
         }
 
         if (params.compressed && batch == 1)
-            selector.Case(tune_params(1,  std::min(max_tile_ofm, 2u), 4, 2, 1, 1, EXE_MODE_AGE_BASED));
+            selector.Case(tune_params(1,  std::min(max_tile_ofm, 2u), 4, 2, 1, 1, false, EXE_MODE_AGE_BASED));
 
         selector.Case([&](const fully_connected_params&) -> tune_params {
-            tune_params result(8, std::min(max_tile_ofm, 2u), 1, 2, 1, 1, EXE_MODE_DEFAULT);
+            tune_params result(8, std::min(max_tile_ofm, 2u), 1, 2, 1, 1, false, EXE_MODE_DEFAULT);
 
             while (batch % result.tile_b != 0)
                 result.tile_b--;
@@ -277,7 +285,54 @@ FullyConnected_bf_tiled::GetAutoTuneParams(const fully_connected_params& params,
         });
     }
 
-    return selector.Default(tune_params(1, 1, 1, 1, 1, 1, EXE_MODE_DEFAULT));
+    bool can_use_slm = false;
+    if (const auto env_var = std::getenv("SLM")) {
+        can_use_slm = convert_to<bool>(env_var);
+    }
+
+    auto tuning_res = selector.Default(tune_params(1, 1, 1, 1, 1, 1, false, EXE_MODE_DEFAULT));
+    tuning_res.can_use_slm = can_use_slm;
+
+    if (!can_use_slm) {
+        return tuning_res;
+    }
+
+    std::cout << "Tuning params:" << " tile_b=" << tuning_res.tile_b << " tile_ofm=" << tuning_res.tile_ofm << " tile_ifm=" << tuning_res.tile_ifm << " tile_k=" << tuning_res.tile_k << " dispatch_bsv=" << tuning_res.dispatch_bsv << " dispatch_fsv=" << tuning_res.dispatch_fsv << "\n";
+
+    size_t tile_b_val = tuning_res.tile_b;
+    size_t tile_ofm_val = tuning_res.tile_ofm;
+    size_t tile_ifm_val = tuning_res.tile_ifm;
+    size_t tile_k_val = tuning_res.tile_k;
+
+    bool forced = false;
+    if (const auto env_var = std::getenv("TILE_B")) {
+        tile_b_val = convert_to<size_t>(env_var);
+        forced = true;
+    }
+    if (const auto env_var = std::getenv("TILE_OFM")) {
+        tile_ofm_val = convert_to<size_t>(env_var);
+        forced = true;
+    }
+    if (const auto env_var = std::getenv("TILE_IFM")) {
+        tile_ifm_val = convert_to<size_t>(env_var);
+        forced = true;
+    }
+    if (const auto env_var = std::getenv("TILE_K")) {
+        tile_k_val = convert_to<size_t>(env_var);
+        forced = true;
+    }
+
+    if (forced) {
+        tuning_res.tile_b = tile_b_val;
+        tuning_res.tile_ofm = tile_ofm_val;
+        tuning_res.tile_ifm = tile_ifm_val;
+        tuning_res.tile_k = tile_k_val;
+
+        std::cout << "Foreced KERNEL PARAMS\n";
+        std::cout << "New tuning params:" << " tile_b=" << tuning_res.tile_b << " tile_ofm=" << tuning_res.tile_ofm << " tile_ifm=" << tuning_res.tile_ifm << " tile_k=" << tuning_res.tile_k << " dispatch_bsv=" << tuning_res.dispatch_bsv << " dispatch_fsv=" << tuning_res.dispatch_fsv << "\n";
+    }
+
+    return tuning_res;
 }
 
 FullyConnected_bf_tiled::DispatchData
@@ -294,13 +349,33 @@ FullyConnected_bf_tiled::SetDefault(const fully_connected_params& params, int au
 
     batch_threads = CeilDiv(batch_threads, tparams.tile_b);
 
-    dispatchData.gws[0] = feature_threads * batch_threads * simd;
+    size_t lws_batches = 8;
+    if (const auto env_var = std::getenv("LWS_BATCHES")) {
+        auto val = convert_to<size_t>(env_var);
+        lws_batches = val;
+    }
+
+    auto aligned_batch = Align(batch_threads, lws_batches);
+
+    std::cout << "Kernel params: feature_threads=" << feature_threads << " batch_threads=" << batch_threads
+              << " (aligned=" << aligned_batch << ") simd=" << simd << " lws_batches=" << lws_batches << "\n";
+
+    if (aligned_batch != batch_threads)
+        std::cout << "Batch threads number was aligned: " << batch_threads << " -> " << aligned_batch << "\n";
+
+    const bool use_slm = tparams.can_use_slm;
+    dispatchData.use_slm = use_slm;
+
+    if (use_slm)
+        std::cout << "FC tiled: use slm version\n";
+
+    dispatchData.gws[0] = use_slm ? feature_threads * simd : feature_threads * batch_threads * simd;
     dispatchData.gws[1] = 1;
-    dispatchData.gws[2] = 1;
+    dispatchData.gws[2] = use_slm ? aligned_batch : 1;
 
     dispatchData.lws[0] = simd;
     dispatchData.lws[1] = 1;
-    dispatchData.lws[2] = 1;
+    dispatchData.lws[2] = use_slm ? lws_batches : 1;
 
     dispatchData.tile_m = tparams.tile_b;
     dispatchData.tile_n = tparams.tile_ofm;
@@ -336,9 +411,79 @@ JitConstants FullyConnected_bf_tiled::GetJitConstants(const fully_connected_para
         tile_k_ofm_packed /= 2;
 
         jit.Merge(make_int4_packed_type_jit_constant("INT4_PACKED_TYPE", params.weights.GetDType(), tile_k_ofm));
+        std::cout << "> JIT: INT4_PACKED_TYPE=1\n";
         const size_t scale_group_size = params.weights.IFM().v / params.decompression_scale.Feature().v;
-        if (scale_group_size % simd == 0)
+        if (scale_group_size % simd == 0) {
+            std::cout << "> JIT: DECOMPRESSION_SCALE_POST_OP=1\n";
             jit.AddConstant(MakeJitConstant("DECOMPRESSION_SCALE_POST_OP", 1));
+        }
+    }
+
+    if (dispatchData.use_slm) {
+        if (params.weights.GetDType() != WeightsType::INT8 && params.weights.GetDType() != WeightsType::UINT8 && params.weights.GetDType() != WeightsType::F16) {
+            std::cout << "FC error: unsupported weights type\n";
+            OPENVINO_ASSERT(false);
+        }
+
+        if (dispatchData.tile_n != 2) {
+            std::cout << "FC error: unsupported OFM size\n";
+            OPENVINO_ASSERT(false);
+        }
+
+        bool uncompress_before_store = false;
+
+        if (const auto env_var = std::getenv("UNCOMP")) {
+            auto val = convert_to<bool>(env_var);
+            std::cout << "Uncompress before store forced to " << val << "\n";
+            uncompress_before_store = val;
+        }
+
+        auto lws_batches = dispatchData.lws[2];
+
+        jit.AddConstant(MakeJitConstant("USE_SLM", 1));
+        jit.AddConstant(MakeJitConstant("LWS_BATCHES", lws_batches));
+        jit.AddConstant(MakeJitConstant("UNCOMPRESS_BEFORE_STORE", uncompress_before_store));
+
+        std::cout << "> JIT: USE_SLM=1\n";
+        std::cout << "> JIT: LWS_BATCHES=" << lws_batches << "\n";
+        std::cout << "> JIT: UNCOMPRESS_BEFORE_STORE=" << uncompress_before_store << "\n";
+
+        auto weights_val_num = simd * dispatchData.tile_n * simd * dispatchData.tile_mk;
+        // auto weights_val_size = (params.weights.GetDType() == WeightsType::UINT8 || params.weights.GetDType() == WeightsType::INT8) ? 1 :
+        //                         (params.weights.GetDType() == WeightsType::F16) ? 2 : 4;
+
+        auto loads_per_sg = weights_val_num / lws_batches;
+        auto weights_load_iters = loads_per_sg / simd;
+
+        if (weights_load_iters % 2 != 0) {
+            std::cout << "FC error: block size for weights loading\n";
+            OPENVINO_ASSERT(false);
+        }
+
+        // Load by 2 values in each WI per load iteration
+        weights_load_iters /= 2;
+
+        jit.AddConstant(MakeJitConstant("WEIGHTS_PRELOAD_ITERS", weights_load_iters));
+        std::cout << "> JIT: WEIGHTS_PRELOAD_ITERS=" << weights_load_iters << "\n";
+
+        size_t batch_threads = params.outputs[0].Batch().v;
+        if (params.outputs[0].GetLayout() == DataLayout::bfyx)
+            batch_threads = params.outputs[0].Batch().v * params.outputs[0].Feature().v;
+
+        batch_threads = CeilDiv(batch_threads, dispatchData.tile_m);
+
+        if (batch_threads != Align(batch_threads, lws_batches)) {
+            auto skip_batches_after = batch_threads;
+            jit.AddConstant(MakeJitConstant("BATCH_LEFTOVERS", skip_batches_after));
+            std::cout << "> JIT: BATCH_LEFTOVERS=" << skip_batches_after << "\n";
+        }
+
+        {
+            const auto& input = params.inputs[0];
+            auto iterations_count = (input.LogicalSize() / input.Batch().v) / (dispatchData.tile_mk * simd);
+
+            std::cout << "Total weights values stored in SLM=" << weights_val_num << ", outer loop iterations count=" << iterations_count << "\n";
+        }
     }
 
     jit.AddConstant(MakeJitConstant("SIMD", simd));
@@ -355,6 +500,8 @@ JitConstants FullyConnected_bf_tiled::GetJitConstants(const fully_connected_para
 
     bool realign_fp16_offset = params.inputs[0].GetDType() == Datatype::F16 && params.inputs[0].GetFirstElementOffset() % 2 != 0;
     jit.AddConstant(MakeJitConstant("REALIGN_FP16_OFFSET", realign_fp16_offset));
+    if (realign_fp16_offset)
+        std::cout << "> JIT: REALIGN_FP16_OFFSET=1\n";
 
     auto activation_dt = GetActivationType(params);
     auto accumulator_dt = GetAccumulatorType(params);

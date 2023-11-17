@@ -33,6 +33,8 @@ public:
         uint32_t last_rg_size = 0;
         uint32_t rg_count = 0;
 
+        bool use_slm = false;
+
         // Gemm style params
         uint32_t tile_m = 0;
         uint32_t tile_n = 0;
