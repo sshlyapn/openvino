@@ -5,6 +5,7 @@
 #pragma once
 
 #include "intel_gpu/primitives/primitive.hpp"
+#include "intel_gpu/primitives/shape_of.hpp"
 #include "intel_gpu/primitives/implementation_desc.hpp"
 #include "intel_gpu/graph/program.hpp"
 
@@ -85,6 +86,8 @@ public:
         if (!myprog.get_config().get_property(ov::intel_gpu::allow_new_shape_infer))
             return false;
         for (auto u : users) {
+            if (u->is_type<shape_of>())
+                continue;
             for (auto dep_idx : u->get_shape_infer_dependencies()) {
                 if (u->get_dependencies().size() <= dep_idx) {
                     continue;

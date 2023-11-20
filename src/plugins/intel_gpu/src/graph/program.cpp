@@ -482,8 +482,8 @@ void program::build_program(bool is_internal) {
 
     if (!is_internal) {
         prim_info = get_current_stage_info();
-        if (get_engine().get_device_info().dev_type == device_type::discrete_gpu)
-            transfer_memory_to_device();
+        // if (get_engine().get_device_info().dev_type == device_type::discrete_gpu)
+        transfer_memory_to_device();
     }
 }
 
@@ -681,6 +681,7 @@ void program::transfer_memory_to_device() {
                 GPU_DEBUG_LOG << "[" << data_node.id() << ": constant]" << std::endl;
                 // Allocate and transfer memory
                 auto device_mem = mem.get_engine()->allocate_memory(data_node_layout, allocation_type::usm_device, false);
+                GPU_DEBUG_LOG << "Transfer to device " << data_node.id() << " constant" << std::endl;
                 device_mem->copy_from(get_stream(), mem);
                 data_node.attach_memory(device_mem);
                 GPU_DEBUG_LOG << "[" << data_node.id() << ": constant]" << std::endl;

@@ -1578,6 +1578,10 @@ void network::allocate_primitive_instance(program_node const& node) {
 
     auto inst = node.type()->create_instance(*this, node);
 
+    try {
+    GPU_DEBUG_LOG << node.type()->to_string(node) << std::endl;
+    } catch (...) {}
+
     std::function<bool(const program_node&)> is_mutable_input = [&is_mutable_input](const program_node& node) {
         for (auto& dep : node.get_dependencies()) {
                 if (dep.first->is_type<input_layout>() || dep.first->is_type<mutable_data>()) {
@@ -1646,16 +1650,19 @@ void network::transfer_memory_to_device(std::shared_ptr<primitive_inst> instance
     if (!get_engine().supports_allocation(allocation_type::usm_device))
         return;
 
-    if (get_engine().get_device_info().dev_type != device_type::discrete_gpu)
-        return;
+    // if (get_engine().get_device_info().dev_type != device_type::discrete_gpu)
+    //     return;
 
     if (alloc_type == allocation_type::usm_host || alloc_type == allocation_type::usm_shared) {
         // Allocate and transfer memory
+        GPU_DEBUG_LOG << "Transfer to device " << node.id() << " constant" << std::endl;
         auto device_mem = inst_mem.get_engine()->allocate_memory(inst_mem.get_layout(), allocation_type::usm_device, false);
         device_mem->copy_from(get_stream(), inst_mem);
         GPU_DEBUG_LOG << "[" << node.id() << ": constant]" << std::endl;
         _memory_pool->release_memory(&inst_mem, node.id(), get_id());
-        instance->set_output_memory(device_mem);
+        GPU_DEBUG_LOG << "[" << node.id() << ": set_output_mem]" << std::endl;
+        auto ev = instance->set_output_memory(device_mem);
+        ev->wait();
     }
 }
 
