@@ -193,6 +193,14 @@ bool TuneParamsSelector::VerifyTuneParams(const fully_connected_params& params, 
 
 }  // namespace
 
+template <typename T>
+T convert_to(const std::string &str) {
+    std::istringstream ss(str);
+    T res;
+    ss >> res;
+    return res;
+}
+
 FullyConnected_bf_tiled::tune_params
 FullyConnected_bf_tiled::GetAutoTuneParams(const fully_connected_params& params, int idx) const {
     if (idx >= 0 && idx < static_cast<int>(auto_tune_params.size())
@@ -216,7 +224,15 @@ FullyConnected_bf_tiled::GetAutoTuneParams(const fully_connected_params& params,
         max_tile_ofm *= 2;
 
     if (params.weights.GetDType() == WeightsType::UINT4 || params.weights.GetDType() == WeightsType::INT4) {
-        return selector.Default(tune_params(1, 2, 1, 4, 1, 1, EXE_MODE_DEFAULT));
+        if (!params.is_shape_agnostic) {
+            if (batch == 1) {
+                return selector.Default(tune_params(1, 2, 1, 4, 1, 1, EXE_MODE_DEFAULT));
+            } else {
+                return selector.Default(tune_params(8, 2, 1, 4, 1, 1, EXE_MODE_DEFAULT));
+            }
+        } else {
+            return selector.Default(tune_params(8, 2, 1, 4, 1, 1, EXE_MODE_DEFAULT));
+        }
     } else if (params.compressed && params.engineInfo.supports_immad) {
         return selector.Default(tune_params(1, 1, 1, 4, 1, 1, EXE_MODE_DEFAULT));
     } else if (params.is_shape_agnostic) {
@@ -277,7 +293,79 @@ FullyConnected_bf_tiled::GetAutoTuneParams(const fully_connected_params& params,
         });
     }
 
-    return selector.Default(tune_params(1, 1, 1, 1, 1, 1, EXE_MODE_DEFAULT));
+    auto tuning_res = selector.Default(tune_params(1, 1, 1, 1, 1, 1, EXE_MODE_DEFAULT));
+
+    auto calc_reg_pressure = [&](tune_params& tparams) {
+        unsigned acc_register_bytes = tparams.tile_b * tparams.tile_ofm * simd * BytesPerElement(params.inputs[0].GetDType());
+        unsigned in_register_bytes = tparams.tile_b * tparams.tile_ifm * simd * BytesPerElement(params.inputs[0].GetDType());
+        unsigned wei_register_bytes = tparams.tile_ofm * tparams.tile_k * simd * BytesPerElement(params.weights.GetDType());
+
+        unsigned total_register_bytes = acc_register_bytes + in_register_bytes + wei_register_bytes;
+        // unsigned max_register_bytes = 128 * 32;
+
+        return total_register_bytes;
+    };
+
+    GPU_DEBUG_TRACE_DETAIL << "Tuning params:" << " tile_b=" << tuning_res.tile_b << " tile_ofm=" << tuning_res.tile_ofm << " tile_ifm=" << tuning_res.tile_ifm
+              << " tile_k=" << tuning_res.tile_k << " dispatch_bsv=" << tuning_res.dispatch_bsv << " dispatch_fsv=" << tuning_res.dispatch_fsv
+              << " reg_pressure=" << calc_reg_pressure(tuning_res) << " bytes\n";
+
+    bool force = false;
+    bool need_update = false;
+    if (const auto env_var = std::getenv("FORCE")) {
+        force = convert_to<size_t>(env_var);
+        need_update = true;
+    }
+
+    if (force) {
+        size_t tile_b_val = tuning_res.tile_b;
+        size_t tile_ofm_val = tuning_res.tile_ofm;
+        size_t tile_ifm_val = tuning_res.tile_ifm;
+        size_t tile_k_val = tuning_res.tile_k;
+        size_t bsv = tuning_res.dispatch_bsv;
+        size_t fsv = tuning_res.dispatch_fsv;
+
+        if (const auto env_var = std::getenv("TILE_B")) {
+            tile_b_val = convert_to<size_t>(env_var);
+            need_update = true;
+        }
+        if (const auto env_var = std::getenv("TILE_OFM")) {
+            tile_ofm_val = convert_to<size_t>(env_var);
+            need_update = true;
+        }
+        if (const auto env_var = std::getenv("TILE_IFM")) {
+            tile_ifm_val = convert_to<size_t>(env_var);
+            need_update = true;
+        }
+        if (const auto env_var = std::getenv("TILE_K")) {
+            tile_k_val = convert_to<size_t>(env_var);
+            need_update = true;
+        }
+        if (const auto env_var = std::getenv("BSV")) {
+            bsv = convert_to<size_t>(env_var);
+            need_update = true;
+        }
+        if (const auto env_var = std::getenv("FSV")) {
+            fsv = convert_to<size_t>(env_var);
+            need_update = true;
+        }
+
+        if (need_update) {
+            tuning_res.tile_b = tile_b_val;
+            tuning_res.tile_ofm = tile_ofm_val;
+            tuning_res.tile_ifm = tile_ifm_val;
+            tuning_res.tile_k = tile_k_val;
+            tuning_res.dispatch_bsv = bsv;
+            tuning_res.dispatch_fsv = fsv;
+
+            std::cout << "Foreced KERNEL PARAMS\n";
+            std::cout << "New tuning params:" << " tile_b=" << tuning_res.tile_b << " tile_ofm=" << tuning_res.tile_ofm << " tile_ifm=" << tuning_res.tile_ifm
+                      << " tile_k=" << tuning_res.tile_k << " dispatch_bsv=" << tuning_res.dispatch_bsv << " dispatch_fsv=" << tuning_res.dispatch_fsv
+                      << " reg_pressure=" << calc_reg_pressure(tuning_res) << " bytes\n";
+        }
+    }
+
+    return tuning_res;
 }
 
 FullyConnected_bf_tiled::DispatchData
