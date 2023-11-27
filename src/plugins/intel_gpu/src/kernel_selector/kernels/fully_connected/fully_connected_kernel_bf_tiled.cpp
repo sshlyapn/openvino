@@ -224,7 +224,7 @@ FullyConnected_bf_tiled::GetAutoTuneParams(const fully_connected_params& params,
         max_tile_ofm *= 2;
 
     if (params.weights.GetDType() == WeightsType::UINT4 || params.weights.GetDType() == WeightsType::INT4) {
-        return selector.Default(tune_params(1, 2, 1, 4, 1, 1, false, EXE_MODE_DEFAULT));
+        selector.Default(tune_params(8, 2, 1, 4, 1, 1, false, EXE_MODE_DEFAULT));
     } else if (params.compressed && params.engineInfo.supports_immad) {
         return selector.Default(tune_params(1, 1, 1, 4, 1, 1, false, EXE_MODE_DEFAULT));
     } else if (params.is_shape_agnostic) {
@@ -285,9 +285,11 @@ FullyConnected_bf_tiled::GetAutoTuneParams(const fully_connected_params& params,
         });
     }
 
+
     bool can_use_slm = false;
     if (const auto env_var = std::getenv("SLM")) {
         can_use_slm = convert_to<bool>(env_var);
+        std::cout << "Set use SLM\n";
     }
 
     auto tuning_res = selector.Default(tune_params(1, 1, 1, 1, 1, 1, false, EXE_MODE_DEFAULT));
@@ -411,19 +413,22 @@ JitConstants FullyConnected_bf_tiled::GetJitConstants(const fully_connected_para
         tile_k_ofm_packed /= 2;
 
         jit.Merge(make_int4_packed_type_jit_constant("INT4_PACKED_TYPE", params.weights.GetDType(), tile_k_ofm));
+        jit.Merge(make_int4_packed_type_jit_constant("INT4_PACKED_TYPE_PRELOAD", params.weights.GetDType(), 4));
         std::cout << "> JIT: INT4_PACKED_TYPE=1\n";
         const size_t scale_group_size = params.weights.IFM().v / params.decompression_scale.Feature().v;
-        if (scale_group_size % simd == 0) {
+        if (scale_group_size % simd == 0 && !dispatchData.use_slm) {
             std::cout << "> JIT: DECOMPRESSION_SCALE_POST_OP=1\n";
             jit.AddConstant(MakeJitConstant("DECOMPRESSION_SCALE_POST_OP", 1));
+        } else if (scale_group_size % simd == 0) {
+            std::cout << "> IGNORE JIT: DECOMPRESSION_SCALE_POST_OP=1 because of SLM\n";
         }
     }
 
     if (dispatchData.use_slm) {
-        if (params.weights.GetDType() != WeightsType::INT8 && params.weights.GetDType() != WeightsType::UINT8 && params.weights.GetDType() != WeightsType::F16) {
-            std::cout << "FC error: unsupported weights type\n";
-            OPENVINO_ASSERT(false);
-        }
+        // if (params.weights.GetDType() != WeightsType::INT8 && params.weights.GetDType() != WeightsType::UINT8 && params.weights.GetDType() != WeightsType::F16) {
+        //     std::cout << "FC error: unsupported weights type\n";
+        //     OPENVINO_ASSERT(false);
+        // }
 
         if (dispatchData.tile_n != 2) {
             std::cout << "FC error: unsupported OFM size\n";
@@ -455,13 +460,25 @@ JitConstants FullyConnected_bf_tiled::GetJitConstants(const fully_connected_para
         auto loads_per_sg = weights_val_num / lws_batches;
         auto weights_load_iters = loads_per_sg / simd;
 
-        if (weights_load_iters % 2 != 0) {
-            std::cout << "FC error: block size for weights loading\n";
-            OPENVINO_ASSERT(false);
+        if (params.weights.GetDType() == WeightsType::INT4 || params.weights.GetDType() == WeightsType::UINT4) {
+            if (weights_load_iters % 4 != 0) {
+                std::cout << "FC error: block size for weights loading\n";
+                OPENVINO_ASSERT(false);
+            }
+            // Load by 4 values in each WI per load iteration
+            weights_load_iters /= 4;
         }
 
-        // Load by 2 values in each WI per load iteration
-        weights_load_iters /= 2;
+        if (params.weights.GetDType() == WeightsType::INT8 || params.weights.GetDType() == WeightsType::UINT8 || params.weights.GetDType() == WeightsType::F16) {
+            if (weights_load_iters % 2 != 0) {
+                std::cout << "FC error: block size for weights loading\n";
+                OPENVINO_ASSERT(false);
+            }
+            // Load by 2 values in each WI per load iteration
+            weights_load_iters /= 2;
+        }
+
+
 
         jit.AddConstant(MakeJitConstant("WEIGHTS_PRELOAD_ITERS", weights_load_iters));
         std::cout << "> JIT: WEIGHTS_PRELOAD_ITERS=" << weights_load_iters << "\n";
@@ -502,6 +519,9 @@ JitConstants FullyConnected_bf_tiled::GetJitConstants(const fully_connected_para
     jit.AddConstant(MakeJitConstant("REALIGN_FP16_OFFSET", realign_fp16_offset));
     if (realign_fp16_offset)
         std::cout << "> JIT: REALIGN_FP16_OFFSET=1\n";
+
+    jit.AddConstant(MakeJitConstant("TILE_K_OFM_PACKED", tile_k_ofm_packed));
+    std::cout << "> JIT: TILE_K_OFM_PACKED=" << tile_k_ofm_packed << "\n";
 
     auto activation_dt = GetActivationType(params);
     auto accumulator_dt = GetAccumulatorType(params);
