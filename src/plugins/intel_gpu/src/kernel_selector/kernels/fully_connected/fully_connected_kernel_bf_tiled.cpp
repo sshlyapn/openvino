@@ -436,6 +436,7 @@ JitConstants FullyConnected_bf_tiled::GetJitConstants(const fully_connected_para
         }
 
         bool uncompress_before_store = false;
+        bool weights_prefetch = false;
 
         if (const auto env_var = std::getenv("UNCOMP")) {
             auto val = convert_to<bool>(env_var);
@@ -443,11 +444,19 @@ JitConstants FullyConnected_bf_tiled::GetJitConstants(const fully_connected_para
             uncompress_before_store = val;
         }
 
+
+        if (const auto env_var = std::getenv("WEIGHTS_PREFETCH")) {
+            auto val = convert_to<bool>(env_var);
+            std::cout << "Weights prefetch forced to " << val << "\n";
+            weights_prefetch = val;
+        }
+
         auto lws_batches = dispatchData.lws[2];
 
         jit.AddConstant(MakeJitConstant("USE_SLM", 1));
         jit.AddConstant(MakeJitConstant("LWS_BATCHES", lws_batches));
         jit.AddConstant(MakeJitConstant("UNCOMPRESS_BEFORE_STORE", uncompress_before_store));
+        jit.AddConstant(MakeJitConstant("USE_WEIGHTS_PREFETCH", weights_prefetch));
 
         std::cout << "> JIT: USE_SLM=1\n";
         std::cout << "> JIT: LWS_BATCHES=" << lws_batches << "\n";

@@ -910,8 +910,9 @@ TEST(fully_connected_gpu, compressed_scale_fp16_vs_ref_w_int4_scale) {
     auto& engine = get_test_engine();
 
     long int batch_num = 256;
-    long int ifm_num = 16;
-    long int ofm_num = 128;
+    long int ifm_num = 4096;
+    long int ofm_num = 4096;
+    long int scales_group_size = 128;
 
     if (const auto env_var = std::getenv("BATCH")) {
         batch_num = convert_to<long int>(env_var);
@@ -927,7 +928,7 @@ TEST(fully_connected_gpu, compressed_scale_fp16_vs_ref_w_int4_scale) {
 
     auto input_mem = engine.allocate_memory({ { batch_num, ifm_num}, data_types::f16, format::bfyx });
     auto weights_mem = engine.allocate_memory({ {ofm_num, ifm_num}, data_types::u4, format::bfyx });
-    auto scale_mem = engine.allocate_memory({ {ofm_num, 1}, data_types::f16, format::bfyx });
+    auto scale_mem = engine.allocate_memory({ {ofm_num, ifm_num / scales_group_size}, data_types::f16, format::bfyx });
 
     {
         std::vector<float> in_values = { -0.5f, 2.0f, 0.5f, 1.0f, 0.5f, -2.0f, -0.5f, -1.0f };
@@ -953,11 +954,14 @@ TEST(fully_connected_gpu, compressed_scale_fp16_vs_ref_w_int4_scale) {
     }
 
     auto get_ref_results = [&]() {
+        auto fc_prim = fully_connected("fc_prim", input_info("input"), "weights", "", "scale", "", data_types::f16, padding(), 2, 2);
+        fc_prim.decompression_zero_point_scalar = 8;
+
         topology topology(
             input_layout("input", input_mem->get_layout()),
             data("weights", weights_mem),
             data("scale", scale_mem),
-            fully_connected("fc_prim", input_info("input"), "weights", "", "scale", "", data_types::f16, padding(), 2, 2)
+            fc_prim
         );
 
         auto config = get_test_default_config(engine);
@@ -973,16 +977,20 @@ TEST(fully_connected_gpu, compressed_scale_fp16_vs_ref_w_int4_scale) {
         return outputs.begin()->second.get_memory();
     };
 
+    auto fc_prim = fully_connected("fc_prim", input_info("input"), "weights", "", "scale", "", data_types::f16, padding(), 2, 2);
+    fc_prim.decompression_zero_point_scalar = 8;
+
     topology topology(
         input_layout("input", input_mem->get_layout()),
         data("weights", weights_mem),
         data("scale", scale_mem),
-        fully_connected("fc_prim", input_info("input"), "weights", "", "scale", "", data_types::f16, padding(), 2, 2)
+        fc_prim
     );
 
     auto config = get_test_default_config(engine);
     config.set_property(ov::intel_gpu::allow_new_shape_infer(true));
     config.set_property(ov::intel_gpu::optimize_data(true));
+    config.set_property(ov::enable_profiling(true));
 
     network network(engine, topology, config);
     network.set_input_data("input", input_mem);
@@ -996,6 +1004,8 @@ TEST(fully_connected_gpu, compressed_scale_fp16_vs_ref_w_int4_scale) {
 
     auto ref_output_mem = get_ref_results();
     cldnn::mem_lock<ov::float16> output_ptr_ref (ref_output_mem, get_test_stream());
+
+    print_all_perf(outputs);
 
     ASSERT_EQ(outputs.size(), size_t(1));
 
