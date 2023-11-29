@@ -32,18 +32,26 @@ JitConstants FullyConnectedKernelBase::GetJitConstants(const fully_connected_par
 
         const size_t scale_groups_num = params.decompression_scale.Feature().v;
         const size_t scale_group_size = params.weights.IFM().v / params.decompression_scale.Feature().v;
+        std::cout << "> JIT: DECOMPRESSION_SCALE_TERM=1\n";
+        std::cout << "> JIT: DECOMPRESSION_SCALE_GROUPS_NUM=" << scale_groups_num << "\n";
+        std::cout << "> JIT: DECOMPRESSION_SCALE_GROUP_SIZE=" << scale_group_size << "\n";
         jit.AddConstants({MakeJitConstant("DECOMPRESSION_SCALE_TERM", 1)});
         jit.AddConstants({MakeJitConstant("DECOMPRESSION_SCALE", params.decompression_scale)});
         jit.AddConstants({MakeJitConstant("DECOMPRESSION_SCALE_GROUPS_NUM", scale_groups_num)});
         jit.AddConstants({MakeJitConstant("DECOMPRESSION_SCALE_GROUP_SIZE", scale_group_size)});
         if (params.has_decompression_zp) {
+            std::cout << "> JIT: DECOMPRESSION_ZP_TERM=1\n";
             jit.AddConstants({MakeJitConstant("DECOMPRESSION_ZP_TERM", 1)});
             if (params.scalar_zp) {
+                std::cout << "> JIT: DECOMPRESSION_ZP_VALUE=?\n";
+                std::cout << "> JIT: DECOMPRESSION_ZP_SCALAR=1\n";
                 jit.AddConstants({MakeJitConstant("DECOMPRESSION_ZP_VALUE", params.zp_value)});
                 jit.AddConstants({MakeJitConstant("DECOMPRESSION_ZP_SCALAR", 1)});
             } else {
                 const size_t zp_groups_num = params.decompression_zero_point.Feature().v;
                 const size_t zp_group_size = params.weights.IFM().v / params.decompression_zero_point.Feature().v;
+                std::cout << "> JIT: DECOMPRESSION_ZP_GROUPS_NUM=" << zp_groups_num << "\n";
+                std::cout << "> JIT: DECOMPRESSION_ZP_GROUP_SIZE=" << zp_group_size << "\n";
                 jit.AddConstants({MakeJitConstant("DECOMPRESSION_ZP", params.decompression_zero_point)});
                 jit.AddConstants({MakeJitConstant("DECOMPRESSION_ZP_GROUPS_NUM", zp_groups_num)});
                 jit.AddConstants({MakeJitConstant("DECOMPRESSION_ZP_GROUP_SIZE", zp_group_size)});
@@ -76,7 +84,8 @@ KernelsData FullyConnectedKernelBase::GetCommonKernelsData(const Params &params,
                                                            DataLayout dl,
                                                            WeightsLayout wl,
                                                            const std::string exeMode,
-                                                           int autoTuneIndex) const {
+                                                           int autoTuneIndex,
+                                                           std::string entry_point_suffix) const {
     if (!Validate(params, options)) {
         return KernelsData();
     }
@@ -117,7 +126,7 @@ KernelsData FullyConnectedKernelBase::GetCommonKernelsData(const Params &params,
 
     kd.kernels.resize(1);
 
-    auto entry_point = GetEntryPoint(kernelName, orgParams.layerID, params, options);
+    auto entry_point = GetEntryPoint(kernelName, orgParams.layerID, params, options) + entry_point_suffix;
 
     const DispatchData dispatchData = SetDefault(newParams, autoTuneIndex);
     auto cldnn_jit = GetJitConstants(newParams, dispatchData);

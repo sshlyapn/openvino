@@ -33,6 +33,8 @@ public:
         uint32_t last_rg_size = 0;
         uint32_t rg_count = 0;
 
+        bool use_slm = false;
+
         // Gemm style params
         uint32_t tile_m = 0;
         uint32_t tile_n = 0;
@@ -60,7 +62,8 @@ protected:
                                      DataLayout dl,
                                      WeightsLayout wl,
                                      const std::string exeMode = EXE_MODE_DEFAULT,
-                                     int autoTuneIndex = -1) const;
+                                     int autoTuneIndex = -1,
+                                     std::string entry_point_suffix = "") const;
 
     // Fused ops
     virtual JitConstants GetFusedPrimitivesJitConstants(const fully_connected_params& params, const DispatchData& dispatchData) const;

@@ -187,7 +187,8 @@ kernel_impl_params fully_connected_inst::get_fake_aligned_params(kernel_impl_par
             return std::move(orig_impl_param);
         }
 
-        size_t fake_align_base = (orig_impl_param.dev_type == cldnn::device_type::integrated_gpu) ? 16 : 8;
+        size_t fake_align_base = (orig_impl_param.dev_type == cldnn::device_type::integrated_gpu) ? 64 : 8;
+        std::cout << "Apply fake aligment " << fake_align_base << "\n";
         input_shape[input_row_idx] = align_to(input_shape[input_row_idx], fake_align_base);
         output_shape[output_row_idx] = align_to(output_shape[output_row_idx], fake_align_base);
 

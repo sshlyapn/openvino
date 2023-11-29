@@ -635,7 +635,12 @@ bool primitive_inst::update_impl() {
                 }
                 if (!can_be_optimized())  {
                     _impl = _dynamic_impl->clone();
-                    auto new_impl_params = _impl->canonicalize_shapes(*_impl_params);
+                    auto params = *_impl_params;
+                    if (_node->is_type<fully_connected>()) {
+                        params = updated_params;
+                        std::cout << "\n\nForce fake aligment for FC\n";
+                    }
+                    auto new_impl_params = _impl->canonicalize_shapes(params);
                     _impl->update_dispatch_data(new_impl_params);
                     update_shape_info(new_impl_params);
                 }
@@ -1057,6 +1062,14 @@ primitive_inst::primitive_inst(network& network, program_node const& node, bool 
             const int64_t shape_elements = buffers_count * layout::max_rank() + num_dynamic_pads * 2 /*pad_before + pad_after*/;
             _shape_info_memory = _network.get_engine().allocate_memory(layout{{shape_elements}, data_types::i32, format::bfyx});
         }
+    }
+    if (_node) {
+        std::stringstream ss;
+        try {
+            ss << _node->type()->to_string(*_node);
+        } catch(const std::exception& e) {
+        }
+        GPU_DEBUG_TRACE_DETAIL << id() << ": node's parameters:\n" << ss.str() << std::endl;
     }
     _impl_params->strm = _network.get_stream_ptr();
     if (_outputs[0])
