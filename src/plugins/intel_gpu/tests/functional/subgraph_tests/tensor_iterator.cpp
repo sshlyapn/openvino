@@ -9,6 +9,8 @@
 #include "openvino/op/constant.hpp"
 #include "openvino/op/result.hpp"
 #include "openvino/op/tensor_iterator.hpp"
+#include "openvino/pass/constant_folding.hpp"
+#include "transformations/rt_info/dequantization_node.hpp"
 
 namespace {
 using ov::test::InputShape;
@@ -304,4 +306,130 @@ INSTANTIATE_TEST_SUITE_P(smoke_DynamicTensorIterator_LSTMSequence, DynamicTensor
                         /* device */ testing::Values<std::string>(ov::test::utils::DEVICE_GPU),
                         /* model_type */ testing::ValuesIn(model_types)),
                         DynamicTensorIteratorTest::getTestCaseName);
+} // namespace
+
+
+namespace test {
+using ov::test::InputShape;
+
+using DynamicTensorIteratorParams = typename std::tuple<
+        InputShape,                             // input shapes (N[batch], L[seq_length], I[input_size])
+        std::string,                            // device name
+        ov::element::Type>;                     // type
+
+/**
+ * Test case with Dynamic SHAPE version of loop operation.
+ * Total iteration count is dynamic.
+ */
+class DynamicTensorIteratorTestMark : public testing::WithParamInterface<DynamicTensorIteratorParams>,
+                                  virtual public ov::test::SubgraphBaseTest {
+public:
+    static std::string getTestCaseName(const testing::TestParamInfo<DynamicTensorIteratorParams> &obj) {
+        InputShape data_shapes;
+        std::string target_device;
+        ov::element::Type model_type;
+        std::tie(data_shapes,
+                    target_device,
+                    model_type) = obj.param;
+        std::ostringstream result;
+        result << "IS=(";
+        result << ov::test::utils::partialShape2str({data_shapes.first}) << "_";
+        result << ov::test::utils::vec2str(data_shapes.second) << "_";
+        result << ")_";
+        result << "netPRC=" << model_type << "_";
+        result << "targetDevice=" << target_device << "_";
+        return result.str();
+    }
+
+private:
+    InputShape data_shapes;
+    ov::element::Type model_type;
+    size_t input_size;
+
+protected:
+    void SetUp() override {
+        std::tie(data_shapes,
+                    targetDevice,
+                    model_type) = GetParam();
+
+        auto init_shape = data_shapes.first;
+        init_input_shapes({data_shapes});
+        input_size = static_cast<size_t>(init_shape[init_shape.size()-1].get_length());
+
+        // Input graph:           After transformation:
+        //
+        // Constant    Constant               Constant
+        //    |U8         |U8                    |U8
+        //    |           |                      |
+        // Convert     Convert                Convert(DCF)  Constant
+        //    |FP32   /F32                       |FP32      /FP32
+        //    |      /                            \        /
+        //   Subtract  Constant                    Subtract   Constant
+        //    |FP32    /FP32                          |FP32     /FP32
+        //    |       /                                \        /
+        //   Multiply                                   Multiply
+        //
+        // After MarkDequantizationSubgraph all Subtract and Multiply nodes from above graph
+        // are marked with 'DequantizationNode' attribute.
+        // Also all 'Convert(DCF)' node before weights is marked with 'DisableConstantFolding' attribute
+        // but Convert before Dequantization Sub const isn't because fold_subtract_const is set to true
+        // Weights node is marked with 'KeepConstPrecision' attribute
+
+        using namespace ov;
+        auto parameter = std::make_shared<opset10::Parameter>(element::f32, Shape{1, 16});
+        auto weights = opset10::Constant::create(element::u8, Shape{16, 4}, {3});
+        auto convert = std::make_shared<opset10::Convert>(weights, element::f32);
+        auto zero_point = opset10::Constant::create(element::u8, Shape{}, {127});
+        auto convert_on_zero_point = std::make_shared<opset10::Convert>(zero_point, element::f32);
+        auto subtract = std::make_shared<opset10::Subtract>(convert, convert_on_zero_point);
+        auto scale = opset10::Constant::create(element::f32, Shape{}, {0.2});
+        auto multiply = std::make_shared<opset10::Multiply>(subtract, scale);
+        auto fc = std::make_shared<opset10::MatMul>(parameter, multiply);
+        function = std::make_shared<ov::Model>(ov::OutputVector{fc});
+    }
+
+    void TearDown() override {
+        auto ops = function->get_ops();
+
+        for (auto& op : ops) {
+            if (ov::is_type<ov::opset10::Convert>(op)) {
+                ASSERT_FALSE(ov::pass::constant_folding_is_disabled(op));
+            }
+        }
+
+        for (auto& op : ops) {
+            if (ov::is_type<ov::opset10::Multiply>(op)) {
+                ASSERT_FALSE(ov::is_dequantization_node(op));
+            }
+        }
+
+        for (auto& op : ops) {
+            if (ov::is_type<ov::opset10::Subtract>(op)) {
+                ASSERT_FALSE(ov::is_dequantization_node(op));
+            }
+        }
+
+        ov::test::SubgraphBaseTest::TearDown();
+    }
+
+};
+
+TEST_P(DynamicTensorIteratorTestMark, Inference) {
+    run();
+}
+
+std::vector<InputShape> input_shapes = {
+    InputShape(ov::PartialShape({1, -1, 512}), {{1, 30, 512}, {1, 10, 512}, {1, 5, 512}})
+};
+
+std::vector<ov::element::Type> model_types = {
+    ov::element::f32,
+};
+
+INSTANTIATE_TEST_SUITE_P(smoke_DynamicTensorIterator_LSTMSequence, DynamicTensorIteratorTestMark,
+                        testing::Combine(
+                        /* data_shape */ testing::ValuesIn(input_shapes),
+                        /* device */ testing::Values<std::string>(ov::test::utils::DEVICE_GPU),
+                        /* model_type */ testing::ValuesIn(model_types)),
+                        DynamicTensorIteratorTestMark::getTestCaseName);
 } // namespace
