@@ -59,11 +59,11 @@ std::map<program_node*, format::type> get_preferred_formats(program& p, layout_o
             onednn_impls_counter++;
     }
 
-    if (onednn_impls_counter < 1 && lo.get_optimization_attributes().use_onednn_impls) {
-        should_update_fmt_map = true;
-        lo.set_optimization_attribute(layout_optimizer::optimization_attributes_type::use_onednn_impls, 0);
-        GPU_DEBUG_LOG << "Disable oneDNN implementations globally" << std::endl;
-    }
+    // if (onednn_impls_counter < 1 && lo.get_optimization_attributes().use_onednn_impls) {
+    //     should_update_fmt_map = true;
+    //     lo.set_optimization_attribute(layout_optimizer::optimization_attributes_type::use_onednn_impls, 0);
+    //     GPU_DEBUG_LOG << "Disable oneDNN implementations globally: " << onednn_impls_counter << std::endl;
+    // }
 
     if (should_update_fmt_map)
 #endif // ENABLE_ONEDNN_FOR_GPU

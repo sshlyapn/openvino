@@ -1217,6 +1217,7 @@ public:
 
         auto config = get_test_default_config(engine);
         config.set_property(ov::intel_gpu::allow_new_shape_infer(true));
+        config.set_property(ov::intel_gpu::optimize_data(true));
 
         network::ptr network = get_network(engine, topology, config, get_test_stream_ptr(), is_caching_test);
         network->set_input_data("input", input_mem);
@@ -1235,6 +1236,10 @@ public:
     std::vector<ov::float16> expected_result = {
         ov::float16(18), ov::float16(84), ov::float16(-66), ov::float16(-116), ov::float16(19.5), ov::float16(-13.5), ov::float16(30), ov::float16(6),
         ov::float16(-18), ov::float16(-84), ov::float16(66), ov::float16(116), ov::float16(-19.5), ov::float16(13.5), ov::float16(-30), ov::float16(-6) };
+
+        for (size_t i = 0; i < output_ptr.size(); i++) {
+            std::cout << "output_ptr[" << i << "] = " << output_ptr[i] << "\n";
+        }
 
         for (size_t i = 0; i < expected_result.size(); i++) {
             ASSERT_FLOAT_EQ(expected_result[i], output_ptr[i]) << "i = " << i;
