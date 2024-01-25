@@ -889,6 +889,16 @@ static bool is_node_for_onednn(deconvolution_node const& node) {
 static bool is_node_for_onednn(fully_connected_node const& node) {
     auto fc_prim = node.get_primitive();
     // onednn impl doesn't support compressed weights for now
+    std::vector<std::string> allowed_nodes = {
+                                            //   "fullyconnectedcompressed:/model/layers.0/self_attn/v_proj/MatMul",
+                                            //   "fullyconnectedcompressed:/model/layers.0/self_attn/q_proj/MatMul",
+                                            //   "fullyconnectedcompressed:/model/layers.0/self_attn/k_proj/MatMul",
+                                              "fullyconnectedcompressed:/model/layers.0/self_attn/o_proj/MatMul",
+                                            //   "fullyconnectedcompressed:/model/layers.0/mlp/up_proj/MatMul"
+                                              };
+
+    // if (std::find(allowed_nodes.begin(), allowed_nodes.end(), node.id()) == allowed_nodes.end())
+    //     return false;
     if (fc_prim->compressed_weights && ov::element::Type(node.weights().get_output_layout().data_type).bitwidth() == 8) {
         std::cout << "OneDNN is sutable for " << fc_prim->id << "\n";
         return true;

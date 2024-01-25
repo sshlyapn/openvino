@@ -22,6 +22,19 @@
 using namespace cldnn;
 using namespace ::tests;
 
+template <typename T>
+T convert_to(const std::string &str) {
+    std::istringstream ss(str);
+    T res;
+    ss >> res;
+    return res;
+}
+
+template <>
+std::string convert_to(const std::string &str) {
+    return str;
+}
+
 namespace {
 cldnn::format::type layout_4d(cldnn::format f) {
     switch (f.value) {
@@ -1116,6 +1129,112 @@ public:
             auto impl = inst->get_impl();
             ASSERT_EQ(impl->get_kernels().size(), size_t(2)); // Two shape-agnostic kernels
         }
+
+        network->set_input_data("input", input_mem);
+
+        auto outputs = network->execute();
+        ASSERT_EQ(outputs.size(), size_t(1));
+        ASSERT_EQ(outputs.begin()->first, "fc_prim");
+
+        auto output_mem = outputs.begin()->second.get_memory();
+        cldnn::mem_lock<ov::float16> output_ptr (output_mem, get_test_stream());
+
+        auto ref_output_mem = get_ref_results();
+        cldnn::mem_lock<ov::float16> output_ptr_ref (ref_output_mem, get_test_stream());
+
+        for (size_t i = 0; i < output_ptr_ref.size(); i++) {
+            ASSERT_FLOAT_EQ(output_ptr_ref[i], output_ptr[i]) << "i = " << i;
+        }
+    }
+
+    void test_compressed_int8_scale(bool is_caching_test, bool is_dynamic) {
+        tests::random_generator rg(GET_SUITE_NAME);
+        auto& engine = get_test_engine();
+
+        long int batch_num = is_dynamic ? 260 : 256;
+        long int ifm_num = 256;
+        long int ofm_num = 256;
+
+        bool use_zp = false;
+
+        if (const auto env_var = std::getenv("BATCH")) {
+            batch_num = convert_to<long int>(env_var);
+        }
+
+        if (const auto env_var = std::getenv("IFM")) {
+            ifm_num = convert_to<long int>(env_var);
+        }
+
+        if (const auto env_var = std::getenv("OFM")) {
+            ofm_num = convert_to<long int>(env_var);
+        }
+
+        if (const auto env_var = std::getenv("ZP")) {
+            use_zp = convert_to<bool>(env_var);
+        }
+
+        auto input_mem = engine.allocate_memory({ { batch_num, ifm_num}, data_types::f16, format::bfyx });
+        auto weights_mem = engine.allocate_memory({ {ofm_num, ifm_num}, data_types::u8, format::bfyx });
+        auto scale_mem = engine.allocate_memory({ {ofm_num, 1}, data_types::f16, format::bfyx });
+        auto zp_mem = engine.allocate_memory({ {ofm_num, 1}, data_types::f16, format::bfyx });
+
+        auto input_data = rg.generate_random_1d<ov::float16>(batch_num * ifm_num, -2.0f, 2.0f);
+        set_values(input_mem, input_data);
+
+        auto weigths_data = rg.generate_random_1d<uint8_t>(ofm_num * ifm_num, 0, 10);
+        set_values(weights_mem, weigths_data);
+
+        auto scale_data = rg.generate_random_1d<ov::float16>(ofm_num, -4.0f, 4.0f);
+        set_values(scale_mem, scale_data);
+
+        auto zp_data = rg.generate_random_1d<ov::float16>(ofm_num, 0.0f, 16.0f, 1);
+        set_values(zp_mem, zp_data);
+
+        auto in_layout = is_dynamic ? layout{ {-1, ifm_num}, data_types::f16, format::bfyx }
+                                    : layout{ {batch_num, ifm_num}, data_types::f16, format::bfyx };
+
+        auto fc_prim = use_zp ? fully_connected("fc_prim", input_info("input"), "weights", "", "scale", "zp", data_types::f16, padding(), 2, 2)
+                              : fully_connected("fc_prim", input_info("input"), "weights", "", "scale", "", data_types::f16, padding(), 2, 2);
+
+        auto get_ref_results = [&]() {
+            topology topology(
+                input_layout("input", in_layout),
+                data("weights", weights_mem),
+                data("scale", scale_mem),
+                data("zp", zp_mem),
+                fc_prim
+            );
+
+            auto config = get_test_default_config(engine);
+            config.set_property(ov::intel_gpu::allow_new_shape_infer(true));
+
+            network network(engine, topology, config);
+            network.set_input_data("input", input_mem);
+
+            auto outputs = network.execute();
+            OPENVINO_ASSERT(outputs.size() == 1);
+            OPENVINO_ASSERT(outputs.begin()->first == "fc_prim");
+
+            auto output_layout = outputs.begin()->second.get_layout();
+            auto output_mem = outputs.begin()->second.get_memory();
+
+            return engine.reinterpret_buffer(*output_mem, output_layout);
+        };
+
+        topology topology(
+            input_layout("input", in_layout),
+            data("weights", weights_mem),
+            data("scale", scale_mem),
+            data("zp", zp_mem),
+            fc_prim
+        );
+
+        auto config = get_test_default_config(engine);
+        config.set_property(ov::intel_gpu::allow_new_shape_infer(true));
+        config.set_property(ov::intel_gpu::optimize_data(true));
+
+        network::ptr network = get_network(engine, topology, config, get_test_stream_ptr(), is_caching_test);
+
 
         network->set_input_data("input", input_mem);
 
@@ -2673,6 +2792,10 @@ TEST_F(fully_connected_gpu_tests, compressed_scale_fp16) {
 
 TEST_F(fully_connected_gpu_tests, compressed_scale_fp16_cached) {
     this->test_compressed_scale_fp16(false);
+}
+
+TEST_F(fully_connected_gpu_tests, test_compressed_int8_scale) {
+    this->test_compressed_int8_scale(false, false);
 }
 
 TEST_F(fully_connected_gpu_tests, dynamic) {
