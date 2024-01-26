@@ -25,14 +25,6 @@ using ov::pass::pattern::op::Or;
 namespace ov {
 namespace intel_gpu {
 
-namespace {
-std::vector<int64_t> default_order(size_t rank) {
-    std::vector<int64_t> order(rank);
-    std::iota(order.begin(), order.end(), 0);
-    return order;
-}
-}  // namespace
-
 class TransposeMatMulMatcher : public ov::pass::MatcherPass {
 public:
     OPENVINO_RTTI("TransposeMatMulMatcher", "0");
@@ -88,9 +80,9 @@ TransposeMatMulMatcher::TransposeMatMulMatcher() {
             return false;
         }
 
-        auto order_a = default_order(matmul->get_input_partial_shape(0).size());
-        auto order_b = default_order(matmul->get_input_partial_shape(1).size());
-        auto order_c = default_order(matmul->get_output_partial_shape(0).size());
+        auto order_a = op::Gemm::default_order(matmul->get_input_partial_shape(0).size());
+        auto order_b = op::Gemm::default_order(matmul->get_input_partial_shape(1).size());
+        auto order_c = op::Gemm::default_order(matmul->get_output_partial_shape(0).size());
 
         if (pattern_map.count(transpose_a_m) > 0) {
             auto tranpose_a_order = std::dynamic_pointer_cast<ov::op::v0::Constant>(pattern_map.at(transpose_a_order_m).get_node_shared_ptr());
@@ -156,8 +148,8 @@ TransposeMatMulTransposeMatcher::TransposeMatMulTransposeMatcher() {
         }
 
         auto tranpose_c_order = std::dynamic_pointer_cast<ov::op::v0::Constant>(pattern_map.at(transpose_c_order_m).get_node_shared_ptr());
-        auto order_a = default_order(matmul->get_input_partial_shape(0).size());
-        auto order_b = default_order(matmul->get_input_partial_shape(1).size());
+        auto order_a = op::Gemm::default_order(matmul->get_input_partial_shape(0).size());
+        auto order_b = op::Gemm::default_order(matmul->get_input_partial_shape(1).size());
         auto order_c = tranpose_c_order->cast_vector<int64_t>();
 
         if (pattern_map.count(transpose_a_m) > 0) {
