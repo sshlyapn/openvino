@@ -42,7 +42,7 @@ void compile_graph::run(program& p) {
         auto& node = *(std::next(proc_order.begin(), idx));
         const bool use_shape_agnostic_impl = !p.get_config().get_property(ov::intel_gpu::use_only_static_kernels_for_dynamic_shape);
         const impl_types original_impl_type = node->get_preferred_impl_type();
-        const bool change_initial_impl = node->is_dynamic() && original_impl_type == impl_types::onednn;
+        const bool change_initial_impl = node->is_dynamic() && original_impl_type == impl_types::onednn && !node->is_type<fully_connected>();
 
         if (change_initial_impl)
             node->set_preferred_impl_type(impl_types::ocl);
