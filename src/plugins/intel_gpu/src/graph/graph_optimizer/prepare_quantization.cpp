@@ -798,10 +798,13 @@ static void optimize_weights_decompression_parameters(fully_connected_node& fc_n
     if (!fc_prim->compressed_weights)
         return;
 
-    auto reorder_bfyx_to_fbyx = [&](size_t dep_id) {
+    auto reorder_bfyx_to_fbyx = [&](size_t dep_id, bool change_format, optional_data_type data_type = optional_data_type()) {
         auto& dep = fc_node.get_dependency(dep_id);
         auto target_layout = dep.get_output_layout();
-        target_layout.format = format::fbyx;
+        if (change_format)
+            target_layout.format = format::fbyx;
+        target_layout.data_type = data_type.value_or(target_layout.data_type);
+        std::cout << "Add reorder: change_format=" << change_format << ", change_dt=" << data_type.has_value() << "\n";
         auto reorder_prim = std::make_shared<reorder>(dep.id() + "_reorder", dep.id(), target_layout);
         p.add_intermediate(reorder_prim, fc_node, dep_id, true);
         fc_node.get_dependency(dep_id).recalc_output_layout(false);
@@ -818,14 +821,37 @@ static void optimize_weights_decompression_parameters(fully_connected_node& fc_n
 
     auto decompression_scale_idx = !fc_node.bias_term() ? 2 : 3;
     if (need_reorder(decompression_scale_idx)) {
-        reorder_bfyx_to_fbyx(decompression_scale_idx);
+        reorder_bfyx_to_fbyx(decompression_scale_idx, true);
     }
 
     if (!fc_prim->decompression_zero_point.empty()) {
         auto decompression_zp_idx = decompression_scale_idx + 1;
-        if (need_reorder(decompression_zp_idx)) {
-            reorder_bfyx_to_fbyx(decompression_zp_idx);
+        std::cout << fc_prim->id << " has zp tensor w/ shape " << fc_node.get_input_layout(decompression_zp_idx).to_short_string() << "\n";
+        if (fc_node.get_dependency(decompression_zp_idx).is_type<permute>()) {
+            if (fc_node.get_dependency(decompression_zp_idx).get_dependency(0).is_type<data>()) {
+                auto& data_prim = fc_node.get_dependency(decompression_zp_idx).get_dependency(0).as<data>();
+                auto mem = data_prim.get_attached_memory_ptr();
+
+                auto mem_dt = mem->get_layout().data_type;
+                if (mem_dt == cldnn::data_types::f32) {
+                    mem_lock<float> lock(mem, mem->get_engine()->get_service_stream());
+                    std::cout << "Content (FP32): ";
+                    for (size_t i = 0; i < lock.size() && i < 10; i++)
+                        std::cout << lock[i] << ", ";
+                    std::cout << "\n";
+                } else if (mem_dt == cldnn::data_types::f16) {
+                    mem_lock<ov::float16> lock(mem, mem->get_engine()->get_service_stream());
+                    std::cout << "Content (FP16): ";
+                    for (size_t i = 0; i < lock.size() && i < 10; i++)
+                        std::cout << lock[i] << ", ";
+                    std::cout << "\n";
+                } else {
+                    std::cout << "Error\n";
+                }
+            }
         }
+        bool change_format = need_reorder(decompression_zp_idx);
+        reorder_bfyx_to_fbyx(decompression_zp_idx, change_format, fc_node.weights().get_output_layout().data_type);
     }
 }
 

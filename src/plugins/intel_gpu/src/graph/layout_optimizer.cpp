@@ -895,12 +895,32 @@ static bool is_node_for_onednn(deconvolution_node const& node) {
 
 
 static bool is_node_for_onednn(fully_connected_node const& node) {
-    if (!layout_optimizer::are_data_types_suitable_for_onednn((program_node&)node))
-        return false;
-
     auto fc_prim = node.get_primitive();
     // onednn impl doesn't support compressed weights for now
-    if (fc_prim->compressed_weights)
+    std::vector<std::string> allowed_nodes = {
+                                            //   "fullyconnectedcompressed:/model/layers.0/self_attn/v_proj/MatMul",
+                                            //   "fullyconnectedcompressed:/model/layers.0/self_attn/q_proj/MatMul",
+                                            //   "fullyconnectedcompressed:/model/layers.0/self_attn/k_proj/MatMul",
+                                              "fullyconnectedcompressed:/model/layers.0/self_attn/o_proj/MatMul",
+                                            //   "fullyconnectedcompressed:/model/layers.0/mlp/up_proj/MatMul"
+                                              };
+    std::vector<std::string> unallowed_nodes = {
+                        "fullyconnectedcompressed:__module.model.lm_head/aten::linear/MatMul"
+    };
+
+    if (std::find(unallowed_nodes.begin(), unallowed_nodes.end(), node.id()) != unallowed_nodes.end()) {
+        std::cout << "OneDNN is prohibited for " << fc_prim->id << "\n";
+        return false;
+    }
+
+    // if (std::find(allowed_nodes.begin(), allowed_nodes.end(), node.id()) == allowed_nodes.end())
+    //     return false;
+    if (fc_prim->compressed_weights && ov::element::Type(node.weights().get_output_layout().data_type).bitwidth() == 8) {
+        std::cout << "OneDNN is sutable for " << fc_prim->id << "\n";
+        return true;
+    }
+
+    if (!layout_optimizer::are_data_types_suitable_for_onednn((program_node&)node))
         return false;
 
     auto output_layout = node.get_output_layout();
@@ -1313,6 +1333,8 @@ bool layout_optimizer::is_node_suitable_for_onednn(program_node& node) {
 bool layout_optimizer::are_data_types_suitable_for_onednn(program_node& node) {
     auto in_dt = node.get_input_layout(0).data_type;
     auto out_dt = node.get_output_layout(false).data_type;
+
+    return true;
 
     // Generally, fp32 input does NOT use oneDNN
     if (in_dt == data_types::f32 &&
