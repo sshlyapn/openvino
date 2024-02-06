@@ -687,11 +687,20 @@ void prepare_buffer_fusing::run(program& p) {
                     dep->can_share_buffer(false);
                 };
 
+                auto update_user_impl = [](program_node* user) {
+                    // Fallback to ocl impl since oneDNN doesn't support dynamic padding
+                    if (user->get_preferred_impl_type() == impl_types::onednn)
+                        user->set_preferred_impl_type(impl_types::ocl);
+                };
+
                 if (rv_prim) {
                     update_dep(rv_prim);
                 }
                 if (gather_prim) {
                     update_dep(gather_prim);
+                }
+                for (auto user : node.get_users()) {
+                    update_user_impl(user);
                 }
             }
         });

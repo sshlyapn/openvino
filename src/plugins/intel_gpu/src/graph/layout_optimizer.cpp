@@ -34,6 +34,7 @@
 #include "scatter_nd_update_inst.h"
 #include "gather_inst.h"
 #include "loop_inst.h"
+#include "kv_cache_inst.h"
 #include "to_string_utils.h"
 #include <vector>
 #include <memory>
@@ -1483,6 +1484,24 @@ impl_types layout_optimizer::get_preferred_impl_type(program_node& node, format 
 
     if (node.is_in_shape_of_subgraph() && !node.is_type<reshape>())
         return impl_types::cpu;
+
+    bool has_kv_cache_dep = false;
+    for (auto& dep : node.get_dependencies()) {
+        if (dep.first->is_type<kv_cache>())
+            has_kv_cache_dep = true;
+    }
+
+    bool has_dynamic_paddings = false;
+    for (auto in_layout : node.get_input_layouts())
+        if (in_layout.data_padding.get_dynamic_pad_dims() != cldnn::tensor(0))
+            has_dynamic_paddings = true;
+
+    if (node.get_output_layout().data_padding.get_dynamic_pad_dims() != cldnn::tensor(0))
+        has_dynamic_paddings = true;
+
+    if (has_dynamic_paddings || has_kv_cache_dep) {
+        return impl_types::ocl;
+    }
 
     if (!_forcing_map.empty() && _forcing_map.count(node.id()) != 0) {
         preferred_impl = _forcing_map.at(node.id()).second;
