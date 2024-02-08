@@ -283,7 +283,8 @@ void TransformationsPipeline::apply(std::shared_ptr<ov::Model> func) {
                 return !is_type<ov::op::v0::MatMul>(next_node);
             });
 
-        manager.register_pass<ov::pass::MarkDequantizationSubgraph>(ov::element::TypeVector{ov::element::u8, ov::element::u4, ov::element::i4}, true);
+        manager.register_pass<ov::pass::MarkDequantizationSubgraph>(ov::element::TypeVector{ov::element::u8}, false);
+        manager.register_pass<ov::pass::MarkDequantizationSubgraph>(ov::element::TypeVector{ov::element::u4, ov::element::i4}, true);
         // Need to check if transfomrations work correctly for mixed models with both compression and quantization at the same time.
         if (!is_model_quantized)
             pass_config->set_callback<ov::pass::MarkDequantizationSubgraph>(is_non_supported_decompression_op);
