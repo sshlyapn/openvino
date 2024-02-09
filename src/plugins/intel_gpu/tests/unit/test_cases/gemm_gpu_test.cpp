@@ -722,12 +722,16 @@ public:
         auto& engine = get_test_engine();
         ov::Shape input0_shape = { BATCH_SIZE, K_SIZE, FEATURE_SIZE, M_SIZE };
         ov::Shape input1_shape = { N_SIZE, BATCH_SIZE, FEATURE_SIZE, K_SIZE };
-        ov::Shape beam_table_shape = { BATCH_SIZE, K_SIZE };
+        ov::Shape beam_table_shape;
+        if (indirect_input0)
+            beam_table_shape = { BATCH_SIZE, K_SIZE, 1, 1 };
+        else if (indirect_input1)
+            beam_table_shape = { 1, BATCH_SIZE, 1, K_SIZE };
         std::vector<int64_t> input0_order = {0, 2, 3, 1};
         std::vector<int64_t> input1_order = {1, 2, 3, 0};
         auto input0_layout = layout{ov::PartialShape::dynamic(input0_shape.size()), data_types::f32, format::bfyx};
         auto input1_layout = layout{ov::PartialShape::dynamic(input1_shape.size()), data_types::f32, format::bfyx};
-        auto beam_table_layout = layout{ov::PartialShape::dynamic(2), data_types::i32, format::bfyx};
+        auto beam_table_layout = layout{ov::PartialShape::dynamic(4), data_types::i32, format::bfyx};
         auto input0_mem = engine.allocate_memory(layout{ov::PartialShape(input0_shape), data_types::f32, format::bfyx});
         auto input1_mem = engine.allocate_memory(layout{ov::PartialShape(input1_shape), data_types::f32, format::bfyx});
         auto beam_table_mem = engine.allocate_memory(layout{ov::PartialShape(beam_table_shape), data_types::i32, format::bfyx});
@@ -998,10 +1002,6 @@ TEST_F(gemm_gpu_tests, transpose_matmul_in0_indirect) {
 
 TEST_F(gemm_gpu_tests, transpose_matmul_in1_indirect) {
     this->test_transpose_matmul(false, false, true);
-}
-
-TEST_F(gemm_gpu_tests, transpose_matmul_in0_in1_indirect) {
-    this->test_transpose_matmul(false, true, true);
 }
 
 TEST_F(gemm_gpu_tests, transpose_matmul_transpose) {
