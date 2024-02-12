@@ -183,28 +183,30 @@ JitConstants GemmKernelBase::GetJitConstants(const gemm_params& params) const {
         MakeJitConstant("BEAM_TABLE_TERM", params.indirect_input0 || params.indirect_input1),
     });
 
-    auto get_output_size = [this](const std::vector<int64_t>& output_order_idx, const int target_idx) {
-        auto output_dims_order = GetDimsOrder(output_order_idx);
+    auto get_tensor_size = [this](const std::vector<int64_t>& order_idx, const int target_idx, std::string name) {
+        auto output_dims_order = GetDimsOrder(order_idx);
 
         switch (output_dims_order.at(target_idx)) {
             case 'b':
-                return "OUTPUT_BATCH_NUM";
+                return name + "_BATCH_NUM";
             case 'f':
-                return "OUTPUT_FEATURE_NUM";
+                return name + "_FEATURE_NUM";
             case 'w':
-                return "OUTPUT_SIZE_W";
+                return name + "_SIZE_W";
             case 'z':
-                return "OUTPUT_SIZE_Z";
+                return name + "_SIZE_Z";
             case 'y':
-                return "OUTPUT_SIZE_Y";
+                return name + "_SIZE_Y";
             case 'x':
-                return "OUTPUT_SIZE_X";
+                return name + "_SIZE_X";
             default:
-                return "";
+                return std::string("");
         }
     };
     if (params.indirect_input0 || params.indirect_input1) {
+        auto beam_table_batch = get_tensor_size(params.indirect_input0 ? params.input0_order : params.input1_order, 0, "BEAM_TABLE");
         jit.AddConstant(MakeJitConstant("BEAM_TABLE", params.inputs[params.inputs.size() - 1]));
+        jit.AddConstant(MakeJitConstant("TR_BEAM_TABLE_BATCH_NUM", beam_table_batch));
     }
 
     if (params.inputs.size() == 4 || (!params.indirect_input0 && !params.indirect_input1 && params.inputs.size() == 3)) {
@@ -217,10 +219,10 @@ JitConstants GemmKernelBase::GetJitConstants(const gemm_params& params) const {
         MakeJitConstant("TRANSPOSE_OTHER", 2),
         MakeJitConstant("INPUT0_DIMS_ORDER", GetDimsOrder(params.input0_order)),
         MakeJitConstant("INPUT1_DIMS_ORDER", GetDimsOrder(params.input1_order)),
-        MakeJitConstant("TR_OUTPUT_SIZE_Z", get_output_size(params.output_order, 6)),
-        MakeJitConstant("TR_OUTPUT_SIZE_W", get_output_size(params.output_order, 4)),
-        MakeJitConstant("TR_OUTPUT_FEATURE_NUM", get_output_size(params.output_order, 2)),
-        MakeJitConstant("TR_OUTPUT_BATCH_NUM", get_output_size(params.output_order, 0)),
+        MakeJitConstant("TR_OUTPUT_SIZE_Z", get_tensor_size(params.output_order, 6, "OUTPUT")),
+        MakeJitConstant("TR_OUTPUT_SIZE_W", get_tensor_size(params.output_order, 4, "OUTPUT")),
+        MakeJitConstant("TR_OUTPUT_FEATURE_NUM", get_tensor_size(params.output_order, 2, "OUTPUT")),
+        MakeJitConstant("TR_OUTPUT_BATCH_NUM", get_tensor_size(params.output_order, 0, "OUTPUT")),
     });
 
     return jit;

@@ -73,14 +73,14 @@ inline uint FUNC(get_bt_index)(OPTIONAL_SHAPE_INFO_ARG uint b, uint f, uint w, u
 
 #if INDIRECT_INPUT0
 inline uint FUNC(get_input0_indirect_index)(OPTIONAL_SHAPE_INFO_ARG uint b, uint f, uint w, uint z, uint y, uint x, __global BEAM_TABLE_TYPE* beam_table) {
-    int b_index = BEAM_TABLE_BATCH_NUM > 1 ? beam_table[FUNC_CALL(get_bt_index)(OPTIONAL_SHAPE_INFO_TENSOR b, f, w, z, y, x)] : b;
+    int b_index = TR_BEAM_TABLE_BATCH_NUM > 1 ? beam_table[FUNC_CALL(get_bt_index)(OPTIONAL_SHAPE_INFO_TENSOR b, f, w, z, y, x)] : b;
     return FUNC_CALL(get_input0_index)(OPTIONAL_SHAPE_INFO_TENSOR b_index, f, w, z, y, x);
 }
 #endif
 
 #if INDIRECT_INPUT1
 inline uint FUNC(get_input1_indirect_index)(OPTIONAL_SHAPE_INFO_ARG uint b, uint f, uint w, uint z, uint y, uint x, __global BEAM_TABLE_TYPE* beam_table) {
-    int b_index = BEAM_TABLE_BATCH_NUM > 1 ? beam_table[FUNC_CALL(get_bt_index)(OPTIONAL_SHAPE_INFO_TENSOR b, f, w, z, y, x)] : b;
+    int b_index = TR_BEAM_TABLE_BATCH_NUM > 1 ? beam_table[FUNC_CALL(get_bt_index)(OPTIONAL_SHAPE_INFO_TENSOR b, f, w, z, y, x)] : b;
     return FUNC_CALL(get_input1_index)(OPTIONAL_SHAPE_INFO_TENSOR b_index, f, w, z, y, x);
 }
 #endif
@@ -203,7 +203,7 @@ KERNEL(gemm_tiled_opt)(
     const uint b_raw_global_id = tile_n_offset + sglid;
 
 #if INDIRECT_INPUT0 || INDIRECT_INPUT1
-    const char do_indirect_load = BEAM_TABLE_BATCH_NUM > 1;
+    const char do_indirect_load = TR_BEAM_TABLE_BATCH_NUM > 1;
 #endif
 
 #if TRANSPOSE_INPUT0 != TRANSPOSE_X_LAST
