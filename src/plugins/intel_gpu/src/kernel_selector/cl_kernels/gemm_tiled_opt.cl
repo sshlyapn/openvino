@@ -306,11 +306,33 @@ KERNEL(gemm_tiled_opt)(
 #if INDIRECT_INPUT1
         if (do_indirect_load)
         {
+            #if INPUT1_SIZE_X == 128 && INPUT1_FEATURE_NUM == 32 && defined(INPUT2_TYPE) && 0
+                const __global INPUT1_TYPE* b_ptr_new = input1;
+                uint b_new = beam_table[FUNC_CALL(get_bt_index)(OPTIONAL_SHAPE_INFO_TENSOR b, f, w, z, (k * TILE_K), x)];
+                uint load_idx = FUNC_CALL(get_input1_index)(OPTIONAL_SHAPE_INFO_TENSOR b_new, f, w, z, (k * TILE_K), x);
+                b_ptr_new += load_idx;
+                b_tile = (N > b_raw_global_id) ? VLOAD(0, b_ptr_new) : 0;
+            #elif INPUT1_SIZE_X == 128 && INPUT1_FEATURE_NUM == 32 && defined(INPUT2_TYPE) && 2
+                const __global INPUT1_TYPE* b_ptr_new = input1;
+                unroll_for (uint tile_n_load_idx = 0; tile_n_load_idx < TILE_N; tile_n_load_idx++) {
+                    if (tile_n_offset + tile_n_load_idx >= N) {
+                        b_tile[tile_n_load_idx] = 0;
+                    } else {
+                        // uint b_new = beam_table[FUNC_CALL(get_bt_index)(OPTIONAL_SHAPE_INFO_TENSOR b, f, w, z, (k * TILE_K), tile_n_offset + tile_n_load_idx)];
+                        // uint load_idx = FUNC_CALL(get_input1_index)(OPTIONAL_SHAPE_INFO_TENSOR b_new, f, w, z, (k * TILE_K), tile_n_offset + tile_n_load_idx);
+                        uint load_idx = FUNC_CALL(get_input1_indirect_index)(OPTIONAL_SHAPE_INFO_TENSOR b, f, w, z, (k * TILE_K) + sglid, tile_n_offset + tile_n_load_idx, beam_table);
+                        // b_tile[tile_n_load_idx] = BLOCK_READ_B(b_ptr_new + load_idx, 0);
+                        b_tile[tile_n_load_idx] = b_ptr_new[load_idx];
+                        // b_tile[tile_n_load_idx] = b_ptr_new[load_idx + sglid];
+                    }
+                }
+            #else
             unroll_for (uint b_load_id = 0; b_load_id < TILE_K; b_load_id++) {
                 uint b_load_offset = (k * TILE_K) + b_load_id;
                 uint b_idx = FUNC_CALL(get_input1_indirect_index)(OPTIONAL_SHAPE_INFO_TENSOR b, f, w, z, b_load_offset, x, beam_table);
                 b_tile[b_load_id] = b_raw_global_id >= N ? 0 : input1[b_idx];
             }
+            #endif
         }
         else
 #endif
@@ -354,7 +376,14 @@ KERNEL(gemm_tiled_opt)(
                     c_tile[dot_id] = mad((INPUT0_TYPE)(sub_group_broadcast(a_read[subtile_k_id], simd_local_id)),
                                          b_tile[subtile_k_id * SIMD_WIDTH + simd_local_id], c_tile[dot_id]);
 #else // TILE_K > SIMD_WIDTH
+            #if INPUT1_SIZE_X == 128 && INPUT1_FEATURE_NUM == 32 && defined(INPUT2_TYPE) && 2
+                    INPUT0_TYPE tmp = a_read * b_tile[simd_local_id];
+                    INPUT0_TYPE res = sub_group_reduce_add(tmp);
+                    if (sglid == simd_local_id)
+                        c_tile[dot_id] = res + c_tile[dot_id];
+            #else
                     c_tile[dot_id] = mad((INPUT0_TYPE)(sub_group_broadcast(a_read, simd_local_id)), b_tile[simd_local_id], c_tile[dot_id]);
+            #endif
 #endif // TILE_K > SIMD_WIDTH
                 }
             }

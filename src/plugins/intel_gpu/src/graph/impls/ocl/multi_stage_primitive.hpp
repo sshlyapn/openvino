@@ -111,7 +111,15 @@ protected:
     void init_kernels(const kernels_cache& kernels_cache, const kernel_impl_params& params) override {
         _kernels.clear();
         if (!_kernels_data.empty() && !_kernels_data[0].kernels.empty()) {
+            auto expected = 0;
+            for (auto& kd : _kernels_data) {
+                for (auto& k : kd.kernels) {
+                    GPU_DEBUG_TRACE_DETAIL << k.code.kernelString->entry_point << "\n";
+                    expected++;
+                }
+            }
             auto compiled_kernels = kernels_cache.get_kernels(params);
+            GPU_DEBUG_TRACE_DETAIL << "Init kernels call, size: " << _kernels_data.size() << " compiled=" << compiled_kernels.size() << "\n";
             _kernels.insert(_kernels.begin(), compiled_kernels.begin(), compiled_kernels.end());
             // batch program hash and kernel entry point to find corresponding cl source code
             kernel_dump_info = std::make_pair(std::to_string(kernels_cache.get_kernel_batch_hash(params)),
