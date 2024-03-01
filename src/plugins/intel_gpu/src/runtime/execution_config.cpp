@@ -211,9 +211,9 @@ void ExecutionConfig::apply_user_properties(const cldnn::device_info& info) {
         set_property(ov::intel_gpu::enable_lp_transformations(info.supports_imad || info.supports_immad));
     }
 
-    if (info.supports_immad) {
-        set_property(ov::intel_gpu::queue_type(QueueTypes::in_order));
-    }
+    // if (info.supports_immad) {
+    //     set_property(ov::intel_gpu::queue_type(QueueTypes::in_order));
+    // }
 
     user_properties.clear();
 }

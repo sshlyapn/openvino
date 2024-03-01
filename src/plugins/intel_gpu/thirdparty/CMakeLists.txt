@@ -89,6 +89,7 @@ if(ENABLE_ONEDNN_FOR_GPU)
             SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/onednn_gpu"
             BINARY_DIR "${ONEDNN_BUILD_DIR}"
             INSTALL_DIR "${ONEDNN_INSTALL_DIR}"
+            BUILD_ALWAYS 1
             # Configure Step Options:
             CMAKE_ARGS
                 ${cmake_extra_args}
@@ -110,7 +111,7 @@ if(ENABLE_ONEDNN_FOR_GPU)
                 "-DDNNL_ENABLE_WORKLOAD=INFERENCE"
                 "-DDNNL_ENABLE_JIT_PROFILING=${BUILD_SHARED_LIBS}"
                 "-DDNNL_ENABLE_ITT_TASKS=${BUILD_SHARED_LIBS}"
-                "-DDNNL_BUILD_TESTS=OFF"
+                "-DDNNL_BUILD_TESTS=ON"
                 "-DDNNL_BUILD_EXAMPLES=OFF"
                 "-DDNNL_BLAS_VENDOR=NONE"
                 "-DDNNL_LIBRARY_TYPE=STATIC"
