@@ -10,6 +10,7 @@
 #include "intel_gpu/plugin/simple_math.hpp"
 #include "intel_gpu/primitives/custom_gpu_primitive.hpp"
 #include "intel_gpu/primitives/reorder.hpp"
+#include "intel_gpu/primitives/paged_attention.hpp"
 
 namespace ov {
 namespace intel_gpu {
@@ -99,6 +100,23 @@ public:
 protected:
     std::map<std::string, std::string> m_values;
 };
+
+void CreatePagedAttention(ProgramBuilder& p, const std::shared_ptr<ov::Node>& op) {
+    std::cout << "Create paged attention (id=" << op->get_friendly_name() << "), with " << op->get_input_size() << " inputs\n";
+
+    validate_inputs_count(op, {13});
+    auto inputs = p.GetInputInfo(op);
+    auto prim = cldnn::paged_attention(layer_type_name_ID(op), inputs);
+
+    prim.num_outputs = op->get_output_size();
+    prim.output_data_types = get_output_data_types(op);
+    prim.output_paddings = get_output_paddings(op);
+
+    OPENVINO_ASSERT(prim.num_outputs == 1, "[GPU] Unexpected outputs number");
+    OPENVINO_ASSERT(prim.output_paddings[0] == cldnn::padding(), "[GPU] Unexpected output padding");
+
+    p.add_primitive(*op, prim);
+}
 
 void CreateCustomOp(ProgramBuilder& p, const std::shared_ptr<ov::Node>& op, CustomLayerPtr customLayer) {
     auto inputs = p.GetInputInfo(op);

@@ -125,9 +125,11 @@ SyncInferRequest::SyncInferRequest(const std::shared_ptr<const CompiledModel>& c
     allocate_inputs();
     allocate_outputs();
     allocate_states();
+    std::cout << "Infer Requset created\n";
 }
 
 void SyncInferRequest::infer() {
+    GPU_DEBUG_TRACE_DETAIL << "Infer call()\n";
     OV_ITT_SCOPED_TASK(itt::domains::intel_gpu_plugin, "SyncInferRequest::infer");
     setup_stream_graph();
     std::lock_guard<std::mutex> lk(m_graph->get_mutex());
@@ -520,6 +522,7 @@ void SyncInferRequest::allocate_input(const ov::Output<const ov::Node>& port, co
     auto element_type = port.get_element_type();
 
     m_user_inputs[name] = { create_host_tensor(shape, element_type), TensorOwner::PLUGIN };
+    GPU_DEBUG_TRACE_DETAIL << "Shape=" << shape << ", et=" << element_type << "\n";
     ov::ISyncInferRequest::set_tensor(port, m_user_inputs.at(name).ptr);
 }
 
@@ -528,6 +531,7 @@ void SyncInferRequest::allocate_output(const ov::Output<const ov::Node>& port, c
     auto element_type = port.get_element_type();
 
     m_user_outputs[name] = { create_host_tensor(shape, element_type), TensorOwner::PLUGIN };
+    GPU_DEBUG_TRACE_DETAIL << "Shape=" << shape << ", et=" << element_type << "\n";
     ov::ISyncInferRequest::set_tensor(port, m_user_outputs.at(name).ptr);
 }
 

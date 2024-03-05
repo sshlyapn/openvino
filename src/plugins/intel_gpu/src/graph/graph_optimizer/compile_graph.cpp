@@ -34,10 +34,7 @@ void compile_graph::run(program& p) {
         }
     }
 
-    auto task_executor = p.get_task_executor();
     auto& proc_order = p.get_processing_order();
-    std::vector<ov::threading::Task> tasks;
-    std::exception_ptr exception;
     for (size_t idx = 0; idx < proc_order.size(); idx++) {
         auto& node = *(std::next(proc_order.begin(), idx));
         const bool use_shape_agnostic_impl = !p.get_config().get_property(ov::intel_gpu::use_only_static_kernels_for_dynamic_shape);
@@ -79,8 +76,8 @@ void compile_graph::run(program& p) {
             can_select_impl = true;
 
         if (can_select_impl) {
-            tasks.push_back([node, &exception, change_initial_impl, original_impl_type] {
                 try {
+                    std::exception_ptr curr_excp;
                     node->selected_impl = node->type()->choose_impl(*node);
                     if (change_initial_impl) {
                         GPU_DEBUG_TRACE_DETAIL << node->id() << ": use " << node->get_preferred_impl_type()
@@ -88,9 +85,16 @@ void compile_graph::run(program& p) {
                         node->set_preferred_impl_type(original_impl_type);
                     }
                 } catch(...) {
-                    exception = std::current_exception();
+                    try {
+                        std::exception_ptr curr_excp;
+                        if (curr_excp = std::current_exception())
+                        {
+                            std::rethrow_exception(curr_excp);
+                        }
+                    } catch (const std::exception& e) {
+                        std::cerr << "Can't compile " << node->id() << ", error " << e.what() << "\n";
+                    }
                 }
-            });
         } else {
             if (change_initial_impl) {
                 node->set_preferred_impl_type(original_impl_type);
@@ -98,10 +102,4 @@ void compile_graph::run(program& p) {
         }
     }
 
-    task_executor->run_and_wait(tasks);
-    tasks.clear();
-
-    if (exception) {
-        std::rethrow_exception(exception);
-    }
 }
