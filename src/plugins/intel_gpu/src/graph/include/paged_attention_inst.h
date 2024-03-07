@@ -42,11 +42,10 @@ public:
     typed_primitive_inst(network& network, const paged_attention_node& desc);
     typed_primitive_inst(network& network) : parent(network) {}
 
+    std::shared_ptr<network> prefill_network;
+
 protected:
     void update_shape_info_tensor(const kernel_impl_params& params) override;
-
-private:
-    size_t paged_attention_id = 0;
 };
 
 using paged_attention_inst = typed_primitive_inst<paged_attention>;

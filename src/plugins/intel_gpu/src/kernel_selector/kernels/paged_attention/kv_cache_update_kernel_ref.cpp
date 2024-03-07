@@ -13,7 +13,7 @@ static constexpr size_t kv_cache_block_size = 16;
 
 void KVCacheUpdateKernelRef::GetUpdateDispatchDataFunc(KernelData& kd) const {
     kd.update_dispatch_data_func = [](const Params& params, KernelData& kd) {
-        const auto& prim_params = dynamic_cast<const kv_cache_update_update_params&>(params);
+        const auto& prim_params = dynamic_cast<const kv_cache_update_params&>(params);
         auto dispatchData = SetDefault(prim_params);
         OPENVINO_ASSERT(kd.kernels.size() == 2, "[GPU] Invalid kernels size for update dispatch data func");
         kd.kernels[0].params.workGroups.global = dispatchData.gws;
@@ -40,11 +40,11 @@ KernelsData KVCacheUpdateKernelRef::GetKernelsData(const Params& params) const {
         return {};
     }
 
-    KernelData kd = KernelData::Default<kv_cache_update_update_params>(params, 2);
+    KernelData kd = KernelData::Default<kv_cache_update_params>(params, 2);
     kd.needs_sub_kernels_sync = false;
     GetUpdateDispatchDataFunc(kd);
 
-    const auto& kernel_params = static_cast<const kv_cache_update_update_params&>(params);
+    const auto& kernel_params = static_cast<const kv_cache_update_params&>(params);
     for (size_t i = 0; i < 2; i++) {
         const auto kernel_stage = i == 0 ? KernelMode::value_cache_update : KernelMode::key_cache_update;
         const auto dispatch_data = SetDefault(kernel_params);
@@ -101,7 +101,7 @@ bool KVCacheUpdateKernelRef::Validate(const Params& params) const {
         return false;
     }
 
-    const auto& kernel_params = dynamic_cast<const kv_cache_update_update_params&>(params);
+    const auto& kernel_params = dynamic_cast<const kv_cache_update_params&>(params);
     if (kernel_params.inputs.size() != 3)
         return false;
 
@@ -114,7 +114,7 @@ bool KVCacheUpdateKernelRef::Validate(const Params& params) const {
     return true;
 }
 
-JitConstants KVCacheUpdateKernelRef::GetJitConstants(const kv_cache_update_update_params& kernel_params, KernelMode mode) const {
+JitConstants KVCacheUpdateKernelRef::GetJitConstants(const kv_cache_update_params& kernel_params, KernelMode mode) const {
     JitConstants jit = MakeBaseParamsJitConstants(kernel_params);
 
     if (mode == KernelMode::key_cache_update)
@@ -127,7 +127,7 @@ JitConstants KVCacheUpdateKernelRef::GetJitConstants(const kv_cache_update_updat
     return jit;
 }
 
-CommonDispatchData KVCacheUpdateKernelRef::SetDefault(const kv_cache_update_update_params& kernel_params) {
+CommonDispatchData KVCacheUpdateKernelRef::SetDefault(const kv_cache_update_params& kernel_params) {
     CommonDispatchData dispatch_data;
 
     const auto& input = kernel_params.inputs[0];
@@ -139,8 +139,8 @@ CommonDispatchData KVCacheUpdateKernelRef::SetDefault(const kv_cache_update_upda
         const size_t batch_size = input.Batch().v;
         const size_t seq_len = input.Feature().v;
         const size_t tokens_num = batch_size * seq_len;
-        const size_t hidden_size = input.LogicalSize() / (tokens_num);
-        dispatch_data.gws = {batch_size, seq_len, Align(hidden_size, 16)};
+        const size_t head_size = input.LogicalSize() / (tokens_num);
+        dispatch_data.gws = {batch_size, seq_len, Align(head_size, 16)};
         dispatch_data.lws = {1, 1, 16};
     }
 

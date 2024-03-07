@@ -11,18 +11,41 @@
 #include "paged_attention_inst.h"
 #include "paged_attention/paged_attention_kernel_selector.hpp"
 #include "paged_attention/kv_cache_update_kernel_ref.hpp"
+#include "paged_attention/sdpa_kernel_ref.hpp"
 
 namespace cldnn {
 namespace ocl {
+
+static memory::ptr generate_attention_bias(size_t batch_size, size_t seq_len, size_t sliding_window, engine& engine) {
+    ov::Shape attention_mask_shape({batch_size, 1, 1, seq_len, seq_len});
+    layout bias_layout {attention_mask_shape, data_types::f16, format::bfzyx};
+    memory::ptr attention_mask = engine.allocate_memory(bias_layout, false);
+    mem_lock<ov::float16, mem_lock_type::read> attention_mask_lock(attention_mask, engine.get_service_stream());
+    int attention_mask_stride = seq_len * seq_len;
+
+    ov::float16 negative_inf = -std::numeric_limits<ov::float16>::infinity();
+
+    for (size_t batch_id = 0; batch_id < batch_size; ++batch_id) {
+        ov::float16* attention_mask_data = attention_mask_lock.data() + batch_id * attention_mask_stride;
+        size_t left_window = sliding_window, right_window = 1;
+        for (size_t y = 0; y < seq_len; ++y) {
+            for (size_t x = 0; x < seq_len; ++x) {
+                attention_mask_data[y * seq_len + x] = (x + right_window - 1) > y || (x + left_window - 1) < y ? negative_inf : ov::float16(0);
+            }
+        }
+    }
+
+    return attention_mask;
+}
 
 struct paged_attention_impl : multi_stage_primitive<paged_attention> {
     using parent = multi_stage_primitive<paged_attention>;
     using parent::parent;
     using kv_cache_update_kernel_selector_t = kernel_selector::kv_cache_update_kernel_selector;
-    using kv_cache_update_kernel_params_t = kernel_selector::kv_cache_update_update_params;
+    using kv_cache_update_kernel_params_t = kernel_selector::kv_cache_update_params;
 
     using sdpa_kernel_selector_t = kernel_selector::sdpa_kernel_selector;
-    using sdpa_kernel_params_t = kernel_selector::kv_cache_update_kernel_selector;
+    using sdpa_kernel_params_t = kernel_selector::sdpa_params;
 
     DECLARE_OBJECT_TYPE_SERIALIZATION(cldnn::ocl::paged_attention_impl)
 
@@ -31,12 +54,12 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
     }
 
     enum Stage {
-        concat,
-        sdpa
+        KV_CACHE_UPDATE,
+        SDPA
     };
 
-    cldnn::memory::ptr beam_table_prev = nullptr;
-    cldnn::memory::ptr beam_table_new = nullptr;
+    mutable cldnn::memory::ptr key_cache_mem = nullptr;
+    mutable cldnn::memory::ptr value_cache_mem = nullptr;
 
     void load(BinaryInputBuffer& ib) override {
         parent::load(ib);
@@ -55,16 +78,30 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
     void set_arguments_impl(paged_attention_inst& instance) override {}
 
     kernel_arguments_data get_arguments(const paged_attention_inst& instance, size_t stage) const override {
+        // WA due to lack of proper handling of key and value cache buffers. Keep them in impl for test purpose.
+        if (value_cache_mem == nullptr) {
+            const auto key_cache_layout = instance.get_impl_params()->get_input_layout(3);
+            const auto value_cache_layout = instance.get_impl_params()->get_input_layout(4);
+            key_cache_mem = instance.get_network().get_engine().allocate_memory(key_cache_layout, cldnn::allocation_type::usm_device, false);
+            value_cache_mem = instance.get_network().get_engine().allocate_memory(value_cache_layout, cldnn::allocation_type::usm_device, false);
+        }
+
         kernel_arguments_data args;
         args.shape_info = instance.shape_info_memory_ptr();
-        if (stage == Stage::concat) {
-            args.inputs = { instance.input_memory_ptr(1),
-                            instance.input_memory_ptr(2),
-                            instance.input_memory_ptr(6) };
-            args.outputs = { instance.input_memory_ptr(3), instance.input_memory_ptr(4) };
-        } else if (stage == Stage::sdpa) {
-            args.inputs = { beam_table_prev, instance.input_memory_ptr(2) };
-            args.outputs = { beam_table_new };
+        if (stage == Stage::KV_CACHE_UPDATE) {
+            args.inputs = { instance.input_memory_ptr(1),  /* key */
+                            instance.input_memory_ptr(2),  /* value */
+                            instance.input_memory_ptr(6)   /* slot_mapping */};
+            args.outputs = { key_cache_mem,                /* key_cache */
+                             value_cache_mem               /* value_cache */ };
+        } else if (stage == Stage::SDPA) {
+            args.inputs = { instance.input_memory_ptr(0), /* query */
+                            key_cache_mem,                /* key_cache */
+                            value_cache_mem,              /* value_cache */
+                            instance.input_memory_ptr(7), /* max_context_len */
+                            instance.input_memory_ptr(8), /* context_lens */
+                            instance.input_memory_ptr(9)  /* block_tables */ };
+            args.outputs = { instance.output_memory_ptr(0) };
         }
 
         return args;
@@ -112,29 +149,96 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
 
     event::ptr execute_impl(const std::vector<event::ptr>& events, paged_attention_inst& instance) override {
         auto& stream = instance.get_network().get_stream();
+        auto& service_stream = instance.get_network().get_engine().get_service_stream();
         std::vector<event::ptr> res_events;
 
-        execute_stage(events, instance, res_events, Stage::concat);
+        auto is_prefill_memory = instance.input_memory_ptr(5);
+        mem_lock<uint8_t, mem_lock_type::read> is_prefill_memory_lock(is_prefill_memory, service_stream);
+        bool is_prefill_stage = is_prefill_memory_lock[0];
 
-        return aggregate_events(res_events, stream, res_events.size() > 1);
+        GPU_DEBUG_TRACE_DETAIL << instance.id() << " stage is " << (is_prefill_stage ? "prefill" : "tokens generating") << "\n";
+
+        execute_stage(events, instance, res_events, Stage::KV_CACHE_UPDATE);
+
+        if (is_prefill_stage) {
+            auto sliding_window_memory = instance.input_memory_ptr(12);
+            auto new_sliding_window_layout = layout{{1}, sliding_window_memory->get_layout().data_type, format::bfyx};
+            auto reshaped_sliding_window_mem = instance.get_network().get_engine().reinterpret_buffer(*sliding_window_memory, new_sliding_window_layout);
+            mem_lock<int32_t, mem_lock_type::read> sliding_window_memory_lock(reshaped_sliding_window_mem, service_stream);
+            int32_t sliding_window = sliding_window_memory_lock[0];
+            if (sliding_window == 0) {
+                sliding_window = std::numeric_limits<std::int32_t>::max();
+            }
+
+            const auto query_layout = instance.get_impl_params()->get_input_layout(0);
+            const auto query_shape = query_layout.get_shape();
+            const auto key_cache_layout = instance.get_impl_params()->get_input_layout(3);
+            const auto value_cache_layout = instance.get_impl_params()->get_input_layout(4);
+            const auto key_cache_shape = key_cache_layout.get_shape();
+            const auto value_cache_shape = value_cache_layout.get_shape();
+
+            const int64_t batch_size = query_shape[0];
+            const int64_t seq_len = query_shape[1];
+            const int64_t hidden_size = query_shape[2];
+            const int64_t kv_heads_num = value_cache_shape[1];
+            const int64_t head_size = value_cache_shape[2];
+            const int64_t heads_num = hidden_size / head_size;
+            const int64_t num_queries_per_kv = heads_num / kv_heads_num;
+
+            auto attention_bias = generate_attention_bias(batch_size, seq_len, sliding_window, instance.get_network().get_engine());
+
+            auto query_mem = instance.input_memory_ptr(0);
+            auto query_layout_new = layout{{batch_size, seq_len, kv_heads_num, num_queries_per_kv, head_size}, query_mem->get_layout().data_type, format::bfzyx};
+            auto reshaped_query_mem = instance.get_network().get_engine().reinterpret_buffer(*query_mem, query_layout_new);
+
+            auto key_mem = instance.input_memory_ptr(1);
+            auto key_layout_new = layout{{batch_size, seq_len, kv_heads_num, 1, head_size}, key_mem->get_layout().data_type, format::bfzyx};
+            auto reshaped_key_mem = instance.get_network().get_engine().reinterpret_buffer(*key_mem, key_layout_new);
+
+            auto value_mem = instance.input_memory_ptr(2);
+            auto value_layout_new = layout{{batch_size, seq_len, kv_heads_num, 1, head_size}, value_mem->get_layout().data_type, format::bfzyx};
+            auto reshaped_value_mem = instance.get_network().get_engine().reinterpret_buffer(*value_mem, value_layout_new);
+
+            auto scale_mem = instance.input_memory_ptr(10);
+            auto scale_layout_new = layout{{1}, scale_mem->get_layout().data_type, format::bfyx};
+            auto reshaped_scale_mem = instance.get_network().get_engine().reinterpret_buffer(*scale_mem, scale_layout_new);
+
+            auto prefill_network = instance.prefill_network;
+            prefill_network->set_input_data("parameter:query", reshaped_query_mem);
+            prefill_network->set_input_data("parameter:key", reshaped_key_mem);
+            prefill_network->set_input_data("parameter:value", reshaped_value_mem);
+            prefill_network->set_input_data("parameter:mask", attention_bias);
+            prefill_network->set_input_data("parameter:scale", reshaped_scale_mem);
+
+            auto results = prefill_network->execute(events);
+
+            OPENVINO_ASSERT(results.size() == 1, "[GPU] Unexpected number of outputs of PagedAttention operation");
+
+            auto output_mem = results.begin()->second.get_memory();
+            auto output_layout_new = layout{query_shape, output_mem->get_layout().data_type, format::bfyx};
+            auto reshaped_output_mem = instance.get_network().get_engine().reinterpret_buffer(*output_mem, output_layout_new);
+
+            instance.set_output_memory(reshaped_output_mem);
+            instance.set_mem_changed(true);
+
+            return results.begin()->second.get_event();
+        } else {
+            // Add key/value cache update to dependencies
+            auto all_events = events;
+            for (auto& ev : res_events)
+                all_events.push_back(ev);
+
+            auto impl_param = *instance.get_impl_params();
+            auto sdpa_kernel_params = get_sdpa_kernel_params(impl_param, impl_param.is_dynamic());
+            (_kernels_data[Stage::SDPA].update_dispatch_data_func)(sdpa_kernel_params, _kernels_data[Stage::SDPA]);
+
+            execute_stage(all_events, instance, res_events, Stage::SDPA);
+
+            return aggregate_events(res_events, stream, res_events.size() > 1);
+        }
     }
 
-    static layout get_beam_table_layout(const kernel_impl_params& impl_param) {
-        const auto& primitive = impl_param.typed_desc<paged_attention>();
-        auto kv_layout = impl_param.get_input_layout(0);
-
-        // // expected to be normalized already on primitive creation
-        // auto concat_axis = primitive->concat_axis;
-        // auto gather_axis = primitive->gather_axis;
-
-        // auto kv_shape = kv_layout.get_partial_shape();
-        // auto beam_table_shape = ov::PartialShape(std::vector<size_t>(kv_shape.size(), 1));
-        // beam_table_shape[gather_axis] = kv_shape[gather_axis];
-        // beam_table_shape[concat_axis] = kv_shape[concat_axis];
-        return kv_layout;
-    }
-
-    static kv_cache_update_kernel_params_t get_kv_cache_update_kernel_params(const kernel_impl_params& impl_param, bool is_shape_agnostic = false) {
+    static kv_cache_update_kernel_params_t get_kv_cache_update_kernel_params(const kernel_impl_params& impl_param, bool is_dynamic = false) {
         kv_cache_update_kernel_params_t params;
         set_params(impl_param, params);
 
@@ -145,30 +249,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         auto value_cache = impl_param.get_input_layout(4);
         auto slot_mapping = impl_param.get_input_layout(6);
 
-        // query_shape = [batch_size, seq_len, num_heads * head_size]
-        // key_shape, value_shape = [batch_size, seq_len, num_kv_heads * head_size]
-        // key_cache_shape = [num_blocks, num_kv_heads, head_size/x, block_size, x]
-        // value_cache_shape = [num_blocks, num_kv_heads, head_size, block_size]
-        // const auto query_shape = query.get_shape();
-        // const auto key_shape = key.get_shape();
-        // const auto key_cache_shape = key_cache.get_shape();
-        // const auto value_cache_shape = value_cache.get_shape();
-        // const size_t batch_size = query_shape[0];
-        // const size_t seq_len = query_shape[1];
-        // const size_t hidden_size = query_shape[2];
-        // const size_t num_kv_heads = value_cache_shape[1];
-        // const size_t head_size = value_cache_shape[2];
-        // const size_t num_heads = hidden_size / head_size;
-        // const size_t block_size = value_cache_shape[3];
-        // const size_t x = key_cache_shape[4];
-        // const size_t num_tokens = key_shape[0];
-
-        // Reshape from [batch_size, seq_len, num_heads * head_size] to [batch_size, seq_len, num_heads, head_size]
-        // query.set_partial_shape({batch_size, seq_len, num_heads, head_size});
-        // key.set_partial_shape({batch_size, seq_len, num_kv_heads, head_size});
-        // value.set_partial_shape(key.get_shape());
-
-        params.is_shape_agnostic = is_shape_agnostic;
+        params.is_shape_agnostic = is_dynamic;
         params.stage_id = 0;
         params.inputs.resize(3);
         params.outputs.resize(2);
@@ -178,15 +259,6 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         params.outputs[0] = convert_data_tensor(key_cache);
         params.outputs[1] = convert_data_tensor(value_cache);
         params.layerID = impl_param.desc->id;
-
-        // const auto inputs_count = 2;
-        // params.inputs.resize(inputs_count);
-        // for (size_t i = 0; i < inputs_count; ++i) {
-        //     params.inputs[i] = convert_data_tensor(impl_param.input_layouts[i]);
-        // }
-
-        // params.axis = convert_axis(axis, impl_param.get_output_layout().get_rank());
-        // params.kernelPerInput = true;
 
         const auto& in_offsets_map = impl_param.in_port_to_shape_info_offset;
         std::map<size_t, size_t> in_tensor_to_offset_map = {
@@ -204,57 +276,84 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         return params;
     }
 
-    static sdpa_kernel_params_t get_bt_update_kernel_params(const kernel_impl_params& impl_param, bool is_state_set = false) {
-        // auto params = get_default_params<kernel_selector::beam_table_update_params>(impl_param, true);
+    static sdpa_kernel_params_t get_sdpa_kernel_params(const kernel_impl_params& impl_param, bool is_dynamic = false) {
+        auto params = get_default_params<kernel_selector::sdpa_params>(impl_param, is_dynamic);
 
-        // auto inputs_count = 2;
-        // auto bt_present_layout = impl_param.output_layouts[1];
-        // auto bt_shape = extend_shape_to_rank_from_end(bt_present_layout.get_partial_shape(), 1);
-        // bt_present_layout.set_partial_shape(bt_shape);
-        // layout bt_past_layout = get_beam_table_layout(impl_param);
+        const auto inputs_count = 6;
+        const auto query_layout = impl_param.get_input_layout(0);
+        const auto key_cache_layout = impl_param.get_input_layout(3);
+        const auto value_cache_layout = impl_param.get_input_layout(4);
+        const auto max_context_len_layout = impl_param.get_input_layout(7);
+        const auto context_lens_layout = impl_param.get_input_layout(8);
+        const auto block_tables_layout = impl_param.get_input_layout(9);
 
-        // auto beam_idx_l = impl_param.input_layouts[2];
-        // beam_idx_l.set_partial_shape(extend_shape_to_rank_from_end(beam_idx_l.get_partial_shape(), 4));
+        params.inputs.resize(inputs_count);
+        params.inputs[1] = convert_data_tensor(key_cache_layout);
+        params.inputs[2] = convert_data_tensor(value_cache_layout);
+        params.inputs[3] = convert_data_tensor(max_context_len_layout);
+        params.inputs[4] = convert_data_tensor(context_lens_layout);
+        params.inputs[5] = convert_data_tensor(block_tables_layout);
 
-        // params.inputs.resize(inputs_count);
-        // params.inputs[0] = convert_data_tensor(bt_past_layout);
-        // params.inputs[1] = convert_data_tensor(beam_idx_l);
-        // params.outputs[0] = convert_data_tensor(bt_present_layout);
-        // params.inputs.resize(inputs_count);
-        // params.is_state_set = is_state_set;
+        if (query_layout.is_static() && key_cache_layout.is_static() && value_cache_layout.is_static()) {
+            // query_shape = [batch_size, seq_len, heads_num * head_size]
+            const auto query_shape = query_layout.get_shape();
+            // key_cache_shape = [num_blocks, kv_heads_num, head_size / x_size, block_size, x_size]
+            const auto key_cache_shape = key_cache_layout.get_shape();
+            // value_cache_shape = [num_blocks, kv_heads_num, head_size, block_size]
+            const auto value_cache_shape = value_cache_layout.get_shape();
 
-        // const auto& in_offsets_map = impl_param.in_port_to_shape_info_offset; // [kv_past, kv_new_token, [beam_idx, beam_table_past]]
-        // const auto& out_offsets_map = impl_param.out_port_to_shape_info_offset; // [kv_present, beam_table_present]
-        // std::map<size_t, size_t> in_tensor_to_offset_map = {
-        //     {0, in_offsets_map.at(3)}, // beam_table_past
-        //     {1, in_offsets_map.at(2)}, // beam_idx
-        // };
-        // std::map<size_t, size_t> out_tensor_to_offset_map = {
-        //     {0, out_offsets_map.at(1)}, // beam_table_present
-        // };
+            const size_t hidden_size = query_shape[2];
+            const size_t kv_heads_num = value_cache_shape[1];
+            const size_t head_size = value_cache_shape[2];
+            const size_t heads_num = hidden_size / head_size;
+            const size_t block_size = value_cache_shape[3];
+            const size_t x_size = key_cache_shape[4];
 
-        // params.set_dynamic_shape_offsets(in_tensor_to_offset_map, out_tensor_to_offset_map);
+            const size_t simd_size = 16;
+            OPENVINO_ASSERT(head_size % simd_size == 0, "[GPU] Head size is expected to be divisible by 16");
 
-        return {};
+            params.configuration.head_size = head_size;
+            params.configuration.heads_num = heads_num;
+            params.configuration.kv_heads_num = kv_heads_num;
+            params.configuration.block_size = block_size;
+            params.configuration.x_size = x_size;
+        }
+
+        const auto& in_offsets_map = impl_param.in_port_to_shape_info_offset;
+        const auto& out_offsets_map = impl_param.out_port_to_shape_info_offset;
+        std::map<size_t, size_t> in_tensor_to_offset_map = {
+            {0, in_offsets_map.at(0)},
+            {1, in_offsets_map.at(3)},
+            {2, in_offsets_map.at(4)},
+            {3, in_offsets_map.at(7)},
+            {4, in_offsets_map.at(8)},
+            {5, in_offsets_map.at(9)},
+        };
+        std::map<size_t, size_t> out_tensor_to_offset_map = {
+            {0, out_offsets_map.at(0)},
+        };
+
+        params.set_dynamic_shape_offsets(in_tensor_to_offset_map, out_tensor_to_offset_map);
+
+        return params;
     }
 
     static std::unique_ptr<primitive_impl> create(const typed_program_node<paged_attention>& arg, const kernel_impl_params& impl_param) {
         std::vector<kernel_selector::kernel_data> kernels_data;
-        auto concat_kernel_params = get_kv_cache_update_kernel_params(impl_param, impl_param.is_dynamic());
-        auto& concat_kernel_selector = kv_cache_update_kernel_selector_t::Instance();
-        kernels_data.push_back(concat_kernel_selector.get_best_kernel(concat_kernel_params));
+        auto kv_cache_update_kernel_params = get_kv_cache_update_kernel_params(impl_param, impl_param.is_dynamic());
+        auto& kv_cache_update_kernel_selector = kv_cache_update_kernel_selector_t::Instance();
+        kernels_data.push_back(kv_cache_update_kernel_selector.get_best_kernel(kv_cache_update_kernel_params));
 
-        // SDPA
-            // auto& concat_kernel_selector = kv_cache_update_kernel_selector_t::Instance();
-            // kernels_data.push_back(bt_update_kernel_selector.get_best_kernel(bt_update_kernel_params));
-        //
+        auto sdpa_kernel_params = get_sdpa_kernel_params(impl_param, impl_param.is_dynamic());
+        auto& sdpa_kernel_selector = sdpa_kernel_selector_t::Instance();
+        kernels_data.push_back(sdpa_kernel_selector.get_best_kernel(sdpa_kernel_params));
+
         return cldnn::make_unique<paged_attention_impl>(kernels_data);
     }
 
     void update_dispatch_data(const kernel_impl_params& impl_param) override {
-        auto paged_attention_kernel_params = get_kv_cache_update_kernel_params(impl_param, impl_param.is_dynamic());
-        (_kernels_data[Stage::concat].update_dispatch_data_func)(paged_attention_kernel_params, _kernels_data[Stage::concat]);
-        // _kernels_data[concat_stage].kernels[0].skip_execution = impl_param._can_be_optimized || impl_param.get_input_layout(0).count() == 0;
+        auto kv_cache_update_kernel_params = get_kv_cache_update_kernel_params(impl_param, impl_param.is_dynamic());
+        (_kernels_data[Stage::KV_CACHE_UPDATE].update_dispatch_data_func)(kv_cache_update_kernel_params, _kernels_data[Stage::KV_CACHE_UPDATE]);
     }
 };
 
@@ -282,3 +381,30 @@ attach_paged_attention_impl::attach_paged_attention_impl() {
 
 BIND_BINARY_BUFFER_WITH_TYPE(cldnn::ocl::paged_attention_impl)
 BIND_BINARY_BUFFER_WITH_TYPE(cldnn::paged_attention)
+
+// const ov::Output<ov::Node>& query,
+// const ov::Output<ov::Node>& key,
+// const ov::Output<ov::Node>& value,
+// const ov::Output<ov::Node>& key_cache,
+// const ov::Output<ov::Node>& value_cache,
+// // start of arguments from InputMetadata
+// const ov::Output<ov::Node>& is_prompt,
+// const ov::Output<ov::Node>& slot_mapping,
+// //    const ov::Output<ov::Node>& prompt_lens,
+// //    const ov::Output<ov::Node>& max_seq_len,
+// //    const ov::Output<ov::Node>& start_loc,
+// const ov::Output<ov::Node>& max_context_len, // 7
+// const ov::Output<ov::Node>& context_lens, // 8
+// const ov::Output<ov::Node>& block_tables, // 9
+// //    const ov::Output<ov::Node>& use_cuda_graph,
+// //    const ov::Output<ov::Node>& attn_bias
+// // end of arguments from InputMetadata
+// const ov::Output<ov::Node>& scale,
+// const ov::Output<ov::Node>& alibi_slopes,
+// const ov::Output<ov::Node>& sliding_window
+
+// outputs[0],
+// query, key_cache, value_cache,
+// kv_heads_num, scale,
+// block_tables, context_lens,
+// block_size, max_context_len

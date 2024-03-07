@@ -4,6 +4,7 @@
 
 #pragma once
 #include "primitive.hpp"
+#include "intel_gpu/graph/program.hpp"
 
 #include <vector>
 
@@ -32,5 +33,7 @@ struct paged_attention : public primitive_base<paged_attention> {
     void load(BinaryInputBuffer& ib) override {
         primitive_base<paged_attention>::load(ib);
     }
+
+    std::shared_ptr<cldnn::program> prefill_stage;
 };
 }  // namespace cldnn

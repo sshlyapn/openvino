@@ -4,6 +4,7 @@
 
 #include "paged_attention_kernel_selector.hpp"
 #include "kv_cache_update_kernel_ref.hpp"
+#include "sdpa_kernel_ref.hpp"
 
 namespace kernel_selector {
 
@@ -21,7 +22,7 @@ kv_cache_update_kernel_selector& kv_cache_update_kernel_selector::Instance() {
 }
 
 sdpa_kernel_selector::sdpa_kernel_selector() {
-    Attach<KVCacheUpdateKernelRef>();
+    Attach<SDPAKernelRef>();
 }
 
 KernelsData sdpa_kernel_selector::GetBestKernels(const Params& params) const {

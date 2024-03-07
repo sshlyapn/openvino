@@ -98,5 +98,9 @@ void paged_attention_inst::update_shape_info_tensor(const kernel_impl_params& pa
 }
 
 paged_attention_inst::typed_primitive_inst(network& network, const paged_attention_node& node)
-    : parent(network, node) {}
+    : parent(network, node)
+    , prefill_network(network::allocate_network(network.get_stream_ptr(),
+                                                node.get_primitive()->prefill_stage,
+                                                false,
+                                                network.is_primary_stream())) { }
 }  // namespace cldnn

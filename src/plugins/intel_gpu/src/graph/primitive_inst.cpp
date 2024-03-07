@@ -230,6 +230,7 @@ void primitive_inst::check_memory_to_set(const memory& mem, const layout& layout
 }
 
 event::ptr primitive_inst::set_output_memory(memory::ptr mem_new, bool check, size_t idx) {
+    GPU_DEBUG_TRACE_DETAIL << "set_output memory for " << id() << ": " << mem_new << "\n";
     auto& eng = _network.get_engine();
     // skip all the buzz if no action actually required
     event::ptr ev = nullptr;
@@ -245,6 +246,7 @@ event::ptr primitive_inst::set_output_memory(memory::ptr mem_new, bool check, si
     if (is_constant()) {
         ev = mem_new->copy_from(_network.get_stream(), *_outputs[idx], false);
     } else {
+        GPU_DEBUG_TRACE_DETAIL << "change output memory: " << mem_new << "\n";
         ev = get_network().get_stream().create_user_event(true);
         _outputs[idx] = mem_new;
     }

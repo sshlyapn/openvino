@@ -46,7 +46,8 @@ SoftmaxKernel_bf::Parent::DispatchData SoftmaxKernel_bf::SetDefault(const softma
     // Combining device execution and local memory restrictions to compute maximum possible LWS.
     auto max_lws = std::min(params.engineInfo.maxWorkGroupSize, params.engineInfo.maxLocalMemSize / local_mem_per_wi);
     GPU_DEBUG_TRACE_DETAIL << "local_mem_per_wi = " << local_mem_per_wi << "\n";
-    GPU_DEBUG_TRACE_DETAIL << "MAX_LWS = " << max_lws << "\n";
+    GPU_DEBUG_TRACE_DETAIL << "MAX_LWS = " << max_lws << " params.engineInfo.maxLocalMemSize=" << params.engineInfo.maxLocalMemSize
+                           << " params.engineInfo.maxWorkGroupSize=" << params.engineInfo.maxWorkGroupSize << "\n";
     dispatchData.maxSlmSize = max_lws;
     if (!params.has_dynamic_tensors()) {
         // start with 1 thread per data set
