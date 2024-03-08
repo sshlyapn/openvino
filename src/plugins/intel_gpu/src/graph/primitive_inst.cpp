@@ -29,6 +29,7 @@
 #include "kv_cache_inst.h"
 #include "condition_inst.h"
 #include "gather_inst.h"
+#include "paged_attention_inst.h"
 #include "experimental_detectron_roi_feature_extractor_inst.hpp"
 #include "implementation_map.hpp"
 #include "graph_optimizer/prepare_buffer_fusing.h"
@@ -551,6 +552,12 @@ event::ptr primitive_inst::realloc_if_needed() {
             _outputs[0] = nullptr;
             _max_output_layout_count = 0;
         }
+    }
+
+    // WA: reallocate memory for PA if previous memory is usm_host used from prefill stage inner model
+    if (_node->is_type<paged_attention>() && _outputs[0] && _outputs[0]->get_allocation_type() != allocation_type::usm_device) {
+        GPU_DEBUG_TRACE_DETAIL << id() << " reset memory\n";
+        _max_output_layout_count = 0;
     }
 
     // update layout to ensure that it repsects paddings for correct allocation size

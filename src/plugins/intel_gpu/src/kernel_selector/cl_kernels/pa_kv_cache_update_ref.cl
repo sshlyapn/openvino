@@ -32,8 +32,8 @@ KERNEL(pa_kv_cache_update)(
                             head_elem_idx * KV_CACHE_BLOCK_SIZE +
                             block_offset;
 
-    // if (INPUT0_FEATURE_NUM == 18 && INPUT0_BATCH_NUM == 2) {
-    //     printf("%d. %d - value\n", out_offset, in_offset);
+    // if (batch_idx == 0) {
+    //     printf("Update value %d. %d (%f)\n", out_offset, in_offset, value_data[in_offset]);
     // }
 
     value_cache_data[out_offset] = value_data[in_offset];
@@ -46,9 +46,9 @@ KERNEL(pa_kv_cache_update)(
                             block_offset * HEAD_SIZE_BLOCKING +
                             head_size_outer_block * KV_CACHE_BLOCK_SIZE * HEAD_SIZE_BLOCKING +
                             head_size_inner_block;
-    // if (INPUT0_FEATURE_NUM == 18 && INPUT0_BATCH_NUM == 2) {
-    //     printf("%d. %d - key\n", out_offset, in_offset);
+    // if (batch_idx == 0) {
+    //     printf("Update key_cache %d. %d (%f)\n", out_offset, in_offset, key_data[in_offset]);
     // }
-    value_cache_data[out_offset] = key_data[in_offset];
+    key_cache_data[out_offset] = key_data[in_offset];
 #endif
 }

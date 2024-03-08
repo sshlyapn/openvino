@@ -119,6 +119,7 @@ JitConstants SDPAKernelRef::GetJitConstants(const sdpa_params& kernel_params) co
     jit.AddConstant(MakeJitConstant("HEAD_SIZE", HEAD_SIZE));
     jit.AddConstant(MakeJitConstant("HEADS_NUM", HEADS_NUM));
     jit.AddConstant(MakeJitConstant("KV_HEADS_NUM", KV_HEADS_NUM));
+    jit.AddConstant(MakeJitConstant("NUM_QUERIES_PER_KV_HEAD", HEADS_NUM / KV_HEADS_NUM));
     jit.AddConstant(MakeJitConstant("BLOCK_SIZE", BLOCK_SIZE));
     jit.AddConstant(MakeJitConstant("X_SIZE", X_SIZE));
 
@@ -140,7 +141,7 @@ CommonDispatchData SDPAKernelRef::SetDefault(const sdpa_params& kernel_params) {
         dispatch_data.gws = { tokens_num,
                               kernel_params.configuration.heads_num,
                               kernel_params.configuration.head_size };
-        dispatch_data.lws = { 1, 1, 16 };
+        dispatch_data.lws = { 1, 1, kernel_params.configuration.head_size };
     }
 
     return dispatch_data;

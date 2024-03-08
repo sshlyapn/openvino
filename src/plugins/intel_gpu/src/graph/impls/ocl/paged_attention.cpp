@@ -100,7 +100,8 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
                             value_cache_mem,              /* value_cache */
                             instance.input_memory_ptr(7), /* max_context_len */
                             instance.input_memory_ptr(8), /* context_lens */
-                            instance.input_memory_ptr(9)  /* block_tables */ };
+                            instance.input_memory_ptr(9), /* block_tables */
+                            instance.input_memory_ptr(10) /* scale */ };
             args.outputs = { instance.output_memory_ptr(0) };
         }
 
@@ -279,13 +280,14 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
     static sdpa_kernel_params_t get_sdpa_kernel_params(const kernel_impl_params& impl_param, bool is_dynamic = false) {
         auto params = get_default_params<kernel_selector::sdpa_params>(impl_param, is_dynamic);
 
-        const auto inputs_count = 6;
+        const auto inputs_count = 7;
         const auto query_layout = impl_param.get_input_layout(0);
         const auto key_cache_layout = impl_param.get_input_layout(3);
         const auto value_cache_layout = impl_param.get_input_layout(4);
         const auto max_context_len_layout = impl_param.get_input_layout(7);
         const auto context_lens_layout = impl_param.get_input_layout(8);
         const auto block_tables_layout = impl_param.get_input_layout(9);
+        const auto scale_layout = impl_param.get_input_layout(10);
 
         params.inputs.resize(inputs_count);
         params.inputs[1] = convert_data_tensor(key_cache_layout);
@@ -293,6 +295,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         params.inputs[3] = convert_data_tensor(max_context_len_layout);
         params.inputs[4] = convert_data_tensor(context_lens_layout);
         params.inputs[5] = convert_data_tensor(block_tables_layout);
+        params.inputs[6] = convert_data_tensor(scale_layout);
 
         if (query_layout.is_static() && key_cache_layout.is_static() && value_cache_layout.is_static()) {
             // query_shape = [batch_size, seq_len, heads_num * head_size]
@@ -328,6 +331,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
             {3, in_offsets_map.at(7)},
             {4, in_offsets_map.at(8)},
             {5, in_offsets_map.at(9)},
+            {6, in_offsets_map.at(10)},
         };
         std::map<size_t, size_t> out_tensor_to_offset_map = {
             {0, out_offsets_map.at(0)},

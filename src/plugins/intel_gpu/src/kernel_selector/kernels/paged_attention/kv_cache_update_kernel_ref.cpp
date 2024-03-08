@@ -117,6 +117,8 @@ bool KVCacheUpdateKernelRef::Validate(const Params& params) const {
 JitConstants KVCacheUpdateKernelRef::GetJitConstants(const kv_cache_update_params& kernel_params, KernelMode mode) const {
     JitConstants jit = MakeBaseParamsJitConstants(kernel_params);
 
+    GPU_DEBUG_TRACE << "Configure kernel for " << static_cast<int>(mode) << "\n";
+
     if (mode == KernelMode::key_cache_update)
         jit.AddConstant(MakeJitConstant("KEY_CACHE_UPDATE", 1));
     else
