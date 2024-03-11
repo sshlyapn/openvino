@@ -37,7 +37,7 @@
 
 
 REQD_SUB_GROUP_SIZE(SUB_GROUP_SIZE)
-__attribute__((reqd_work_group_size(1, 1, 64)))
+__attribute__((reqd_work_group_size(1, 1, HEAD_SIZE)))
 KERNEL(pa_sdpa_ref)(
     OPTIONAL_SHAPE_INFO_ARG
     __global const INPUT0_TYPE* query,
