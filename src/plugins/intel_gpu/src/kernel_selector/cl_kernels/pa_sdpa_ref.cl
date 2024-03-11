@@ -16,7 +16,7 @@
 // constexpr size_t KV_HEADS_NUM = 4;
 // constexpr NUM_QUERIES_PER_KV_HEAD (HEADS_NUM / KV_HEADS_NUM)
 // constexpr size_t BLOCK_SIZE = 16;
-// constexpr size_t X_SIZE = 4;
+// constexpr size_t X_BLOCK_SIZE = 4;
 
 // constexpr size_t MAX_SEQUENCE_LENGTH = 1024;
 
@@ -122,11 +122,11 @@ KERNEL(pa_sdpa_ref)(
                     continue;
 
                 const uint key_idx = block_offset +
-                                     (head_num_idx / NUM_QUERIES_PER_KV_HEAD) * (HEAD_SIZE / X_SIZE * BLOCK_SIZE * X_SIZE) +
-                                     (X_SIZE * QK_VALS_PER_SG_PER_ITER) * sgid +
-                                     (Q_LOAD_ITERS * BLOCK_SIZE * X_SIZE) * hs +
-                                     (sglid / X_SIZE) * X_SIZE * BLOCK_SIZE +
-                                     (sglid % X_SIZE) + qk_idx * X_SIZE;
+                                     (head_num_idx / NUM_QUERIES_PER_KV_HEAD) * (HEAD_SIZE / X_BLOCK_SIZE * BLOCK_SIZE * X_BLOCK_SIZE) +
+                                     (X_BLOCK_SIZE * QK_VALS_PER_SG_PER_ITER) * sgid +
+                                     (SUB_GROUP_SIZE / X_BLOCK_SIZE * BLOCK_SIZE * X_BLOCK_SIZE) * hs +
+                                     (sglid / X_BLOCK_SIZE) * X_BLOCK_SIZE * BLOCK_SIZE +
+                                     (sglid % X_BLOCK_SIZE) + qk_idx * X_BLOCK_SIZE;
 
                 // TODO1: try block loading and shuffling
                 // TODO2: try to load k*4 times and then calculate

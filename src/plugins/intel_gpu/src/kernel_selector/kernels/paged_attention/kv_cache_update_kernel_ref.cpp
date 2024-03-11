@@ -11,7 +11,7 @@ namespace kernel_selector {
 
 constexpr size_t SIMD_SIZE = 16;
 constexpr size_t BLOCK_SIZE = 16;
-constexpr size_t X_BLOCK_SIZE = 4;
+constexpr size_t X_BLOCK_SIZE = 8;
 
 void KVCacheUpdateKernelRef::GetUpdateDispatchDataFunc(KernelData& kd) const {
     kd.update_dispatch_data_func = [](const Params& params, KernelData& kd) {

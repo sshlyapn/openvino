@@ -13,7 +13,7 @@ constexpr size_t HEAD_SIZE = 64;
 constexpr size_t HEADS_NUM = 32;
 constexpr size_t KV_HEADS_NUM = 4;
 constexpr size_t BLOCK_SIZE = 16;
-constexpr size_t X_SIZE = 4;
+constexpr size_t X_BLOCK_SIZE = 8;
 
 constexpr size_t MAX_SEQUENCE_LENGTH = 1024;
 
@@ -38,8 +38,8 @@ void SDPAKernelRef::GetUpdateDispatchDataFunc(KernelData& kd) const {
         OPENVINO_ASSERT(prim_params.configuration.block_size == BLOCK_SIZE,
                         "[GPU] Unexpected BLOCK_SIZE in SDPA kernel, expected ", BLOCK_SIZE,
                         " got ", prim_params.configuration.block_size);
-        OPENVINO_ASSERT(prim_params.configuration.x_size == X_SIZE,
-                        "[GPU] Unexpected X_SIZE in SDPA kernel, expected ", X_SIZE,
+        OPENVINO_ASSERT(prim_params.configuration.x_size == X_BLOCK_SIZE,
+                        "[GPU] Unexpected X_BLOCK_SIZE in SDPA kernel, expected ", X_BLOCK_SIZE,
                         " got ", prim_params.configuration.x_size);
     };
 }
@@ -121,7 +121,7 @@ JitConstants SDPAKernelRef::GetJitConstants(const sdpa_params& kernel_params) co
     jit.AddConstant(MakeJitConstant("KV_HEADS_NUM", KV_HEADS_NUM));
     jit.AddConstant(MakeJitConstant("NUM_QUERIES_PER_KV_HEAD", HEADS_NUM / KV_HEADS_NUM));
     jit.AddConstant(MakeJitConstant("BLOCK_SIZE", BLOCK_SIZE));
-    jit.AddConstant(MakeJitConstant("X_SIZE", X_SIZE));
+    jit.AddConstant(MakeJitConstant("X_BLOCK_SIZE", X_BLOCK_SIZE));
 
     const auto& output = kernel_params.inputs[0];
     const auto shared_mem_size = MAX_SEQUENCE_LENGTH * BytesPerElement(output.GetDType());
