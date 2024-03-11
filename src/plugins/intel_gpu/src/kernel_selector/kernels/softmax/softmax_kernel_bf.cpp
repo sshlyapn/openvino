@@ -45,6 +45,9 @@ SoftmaxKernel_bf::Parent::DispatchData SoftmaxKernel_bf::SetDefault(const softma
     auto local_mem_per_wi = 2 * BytesPerElement(params.inputs[0].GetDType());
     // Combining device execution and local memory restrictions to compute maximum possible LWS.
     auto max_lws = std::min(params.engineInfo.maxWorkGroupSize, params.engineInfo.maxLocalMemSize / local_mem_per_wi);
+    GPU_DEBUG_TRACE_DETAIL << "local_mem_per_wi = " << local_mem_per_wi << "\n";
+    GPU_DEBUG_TRACE_DETAIL << "MAX_LWS = " << max_lws << " params.engineInfo.maxLocalMemSize=" << params.engineInfo.maxLocalMemSize
+                           << " params.engineInfo.maxWorkGroupSize=" << params.engineInfo.maxWorkGroupSize << "\n";
     dispatchData.maxSlmSize = max_lws;
     if (!params.has_dynamic_tensors()) {
         // start with 1 thread per data set
@@ -63,6 +66,8 @@ SoftmaxKernel_bf::Parent::DispatchData SoftmaxKernel_bf::SetDefault(const softma
         dispatchData.leftovers = dispatchData.dataSetSize % dispatchData.lws[0];
         // To use subgroup read/write, the starting address should be aligned to 128 bit
         size_t dataSetSizeInByte = dispatchData.dataSetSize * params.inputs[0].ElementSize();
+        GPU_DEBUG_TRACE_DETAIL << "dataSetSizeInByte = " << dataSetSizeInByte << "\n";
+        GPU_DEBUG_TRACE_DETAIL << "dispatchData.leftovers = " << dispatchData.leftovers << "\n";
         if ((dispatchData.dataSetsCount > 1) && ((dataSetSizeInByte - ((dataSetSizeInByte >> 4) << 4)))) {
             dispatchData.subgroupBlockSize = 1;
         } else {
@@ -78,6 +83,8 @@ SoftmaxKernel_bf::Parent::DispatchData SoftmaxKernel_bf::SetDefault(const softma
         assert((dispatchData.itemsNum + 1) * dispatchData.lws[0] >= dispatchData.dataSetSize && "More than 'lws[0]' items per batch remains! Lws too small?");
 
         dispatchData.gws[0] = dispatchData.lws[0];
+        GPU_DEBUG_TRACE_DETAIL << "dispatchData.itemsNum = " << dispatchData.itemsNum << "\n";
+        GPU_DEBUG_TRACE_DETAIL << "dispatchData.gws[0] = dispatchData.lws[0] = " << dispatchData.gws[0] << "\n";
 
         assert(dispatchData.itemsNum > 0 && dispatchData.lws[0] && dispatchData.gws[0] > 0);
     } else {

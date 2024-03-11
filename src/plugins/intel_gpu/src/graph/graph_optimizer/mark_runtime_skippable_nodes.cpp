@@ -40,6 +40,7 @@ void mark_runtime_skippable_nodes::run(program& p) {
             }
         });
         program_helpers::do_for_types<permute>(*node, [](permute_node& node){
+            return;
             auto impl_params = node.get_kernel_impl_params();
             if (node.is_output() ||
                 node.has_fused_primitives() ||

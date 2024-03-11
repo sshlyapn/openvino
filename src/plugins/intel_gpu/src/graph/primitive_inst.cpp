@@ -29,6 +29,7 @@
 #include "kv_cache_inst.h"
 #include "condition_inst.h"
 #include "gather_inst.h"
+#include "paged_attention_inst.h"
 #include "experimental_detectron_roi_feature_extractor_inst.hpp"
 #include "implementation_map.hpp"
 #include "graph_optimizer/prepare_buffer_fusing.h"
@@ -230,6 +231,7 @@ void primitive_inst::check_memory_to_set(const memory& mem, const layout& layout
 }
 
 event::ptr primitive_inst::set_output_memory(memory::ptr mem_new, bool check, size_t idx) {
+    GPU_DEBUG_TRACE_DETAIL << "set_output memory for " << id() << ": " << mem_new << "\n";
     auto& eng = _network.get_engine();
     // skip all the buzz if no action actually required
     event::ptr ev = nullptr;
@@ -245,6 +247,7 @@ event::ptr primitive_inst::set_output_memory(memory::ptr mem_new, bool check, si
     if (is_constant()) {
         ev = mem_new->copy_from(_network.get_stream(), *_outputs[idx], false);
     } else {
+        GPU_DEBUG_TRACE_DETAIL << "change output memory: " << mem_new << "\n";
         ev = get_network().get_stream().create_user_event(true);
         _outputs[idx] = mem_new;
     }
@@ -549,6 +552,12 @@ event::ptr primitive_inst::realloc_if_needed() {
             _outputs[0] = nullptr;
             _max_output_layout_count = 0;
         }
+    }
+
+    // WA: reallocate memory for PA if previous memory is usm_host used from prefill stage inner model
+    if (_node->is_type<paged_attention>() && _outputs[0] && _outputs[0]->get_allocation_type() != allocation_type::usm_device) {
+        GPU_DEBUG_TRACE_DETAIL << id() << " reset memory\n";
+        _max_output_layout_count = 0;
     }
 
     // update layout to ensure that it repsects paddings for correct allocation size
@@ -1532,6 +1541,9 @@ primitive_inst::primitive_inst(network& network, program_node const& node, bool 
         } else {
             _outputs = allocate_outputs();
         }
+    }
+    if (_node) {
+        GPU_DEBUG_TRACE_DETAIL << _node->type()->to_string(*_node) << "\n";
     }
     if (_impl) {
         _impl->set_node_params(node);

@@ -224,6 +224,7 @@ public:
     void reset_output_change() { _output_changed = false; }
 
     bool shape_changed() const { return _shape_changed; }
+    void set_mem_changed(bool mem_changed) { _mem_changed = mem_changed; }
     bool mem_changed() const { return _mem_changed; }
     void reset_shape_change() { _shape_changed = false; }
     void set_shape_change() { _shape_changed = true; }

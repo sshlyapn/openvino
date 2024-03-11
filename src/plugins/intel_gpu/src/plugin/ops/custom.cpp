@@ -10,6 +10,16 @@
 #include "intel_gpu/plugin/simple_math.hpp"
 #include "intel_gpu/primitives/custom_gpu_primitive.hpp"
 #include "intel_gpu/primitives/reorder.hpp"
+#include "intel_gpu/primitives/paged_attention.hpp"
+
+#include "openvino/op/scaled_dot_product_attention.hpp"
+#include "openvino/op/parameter.hpp"
+#include "openvino/op/constant.hpp"
+#include "openvino/op/result.hpp"
+#include "openvino/op/transpose.hpp"
+#include "openvino/runtime/core.hpp"
+
+#include "intel_gpu/plugin/transformations_pipeline.hpp"
 
 namespace ov {
 namespace intel_gpu {
@@ -99,6 +109,65 @@ public:
 protected:
     std::map<std::string, std::string> m_values;
 };
+
+static std::shared_ptr<ov::Model> make_prefill_subgraph(ov::element::Type type, std::int64_t num_heads = -1, std::int64_t num_kv_heads = -1, std::int64_t head_size = -1) {
+    auto query = std::make_shared<ov::op::v0::Parameter>(type, ov::PartialShape({-1 /* batch */, -1 /* seq_len */, -1 /* queries per kv */, num_kv_heads, head_size}));
+    query->set_friendly_name("query");
+    auto key = std::make_shared<ov::op::v0::Parameter>(type, ov::PartialShape({-1 /* batch */, -1 /* seq_len */, num_kv_heads, 1, head_size}));
+    key->set_friendly_name("key");
+    auto value = std::make_shared<ov::op::v0::Parameter>(type, ov::PartialShape({-1 /* batch */, -1 /* seq_len */, num_kv_heads, 1, head_size}));
+    value->set_friendly_name("value");
+    auto mask = std::make_shared<ov::op::v0::Parameter>(type, ov::PartialShape({-1, -1, -1, -1, -1}));
+    mask->set_friendly_name("mask");
+    auto scale = std::make_shared<ov::op::v0::Parameter>(type, ov::Shape({1}));
+    scale->set_friendly_name("scale");
+
+    // transpose Q, K and V to swap num_heads and seq_len dimensions
+    auto permute_const = ov::op::v0::Constant::create(ov::element::i64, ov::Shape({5}), {0, 3, 2, 1, 4});
+    permute_const->set_friendly_name("permute_const");
+    auto query_transposed = std::make_shared<ov::op::v1::Transpose>(query, permute_const);
+    query_transposed->set_friendly_name("query_transposed");
+    auto key_transposed = std::make_shared<ov::op::v1::Transpose>(key, permute_const);
+    key_transposed->set_friendly_name("key_transposed");
+    auto value_transposed = std::make_shared<ov::op::v1::Transpose>(value, permute_const);
+    value_transposed->set_friendly_name("value_transposed");
+
+    auto spda = std::make_shared<ov::op::v13::ScaledDotProductAttention>(query_transposed, key_transposed, value_transposed, mask, scale, false);
+    spda->set_friendly_name("sdpa");
+
+    // transpose SPDA output to [batch, seq_len, num_q_per_kv, num_kv_heads, head_size] back
+    auto spda_transposed = std::make_shared<ov::op::v1::Transpose>(spda, permute_const);
+
+    return std::make_shared<ov::Model>(spda_transposed, ov::ParameterVector{query, key, value, mask, scale}, "spda_prefill_model");
+}
+
+void CreatePagedAttention(ProgramBuilder& p, const std::shared_ptr<ov::Node>& op) {
+    std::cout << "Create paged attention (id=" << op->get_friendly_name() << "), with " << op->get_input_size() << " inputs\n";
+
+    auto config = p.get_config();
+    config.set_property(ov::intel_gpu::max_dynamic_batch(1));
+    config.set_property(ov::intel_gpu::allow_new_shape_infer(true));
+
+    auto prefill_model = make_prefill_subgraph(op->get_output_element_type(0));
+    TransformationsPipeline transformations(config, p.get_engine().get_device_info());
+    transformations.apply(prefill_model);
+
+    ProgramBuilder prog(prefill_model, p.get_engine(), config, false, false, p.get_task_executor(), p.get_compilation_context(), true);
+
+    validate_inputs_count(op, {13});
+    auto inputs = p.GetInputInfo(op);
+    auto prim = cldnn::paged_attention(layer_type_name_ID(op), inputs);
+    prim.prefill_stage = prog.get_compiled_program();
+
+    prim.num_outputs = op->get_output_size();
+    prim.output_data_types = get_output_data_types(op);
+    prim.output_paddings = get_output_paddings(op);
+
+    OPENVINO_ASSERT(prim.num_outputs == 1, "[GPU] Unexpected outputs number");
+    OPENVINO_ASSERT(prim.output_paddings[0] == cldnn::padding(), "[GPU] Unexpected output padding");
+
+    p.add_primitive(*op, prim);
+}
 
 void CreateCustomOp(ProgramBuilder& p, const std::shared_ptr<ov::Node>& op, CustomLayerPtr customLayer) {
     auto inputs = p.GetInputInfo(op);
