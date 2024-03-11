@@ -27,20 +27,20 @@ void SDPAKernelRef::GetUpdateDispatchDataFunc(KernelData& kd) const {
         kd.kernels[0].skip_execution = false;
 
         OPENVINO_ASSERT(prim_params.configuration.head_size == HEAD_SIZE,
-                        "[GPU] Unexpected HEAD_SIZE in SDPA kernel, expected", HEAD_SIZE,
-                        "got", prim_params.configuration.head_size);
+                        "[GPU] Unexpected HEAD_SIZE in SDPA kernel, expected ", HEAD_SIZE,
+                        " got ", prim_params.configuration.head_size);
         OPENVINO_ASSERT(prim_params.configuration.heads_num == HEADS_NUM,
-                        "[GPU] Unexpected HEADS_NUM in SDPA kernel, expected", HEADS_NUM,
-                        "got", prim_params.configuration.heads_num);
+                        "[GPU] Unexpected HEADS_NUM in SDPA kernel, expected ", HEADS_NUM,
+                        " got ", prim_params.configuration.heads_num);
         OPENVINO_ASSERT(prim_params.configuration.kv_heads_num == KV_HEADS_NUM,
-                        "[GPU] Unexpected KV_HEADS_NUM in SDPA kernel, expected", KV_HEADS_NUM,
-                        "got", prim_params.configuration.kv_heads_num);
+                        "[GPU] Unexpected KV_HEADS_NUM in SDPA kernel, expected ", KV_HEADS_NUM,
+                        " got ", prim_params.configuration.kv_heads_num);
         OPENVINO_ASSERT(prim_params.configuration.block_size == BLOCK_SIZE,
-                        "[GPU] Unexpected BLOCK_SIZE in SDPA kernel, expected", BLOCK_SIZE,
-                        "got", prim_params.configuration.block_size);
+                        "[GPU] Unexpected BLOCK_SIZE in SDPA kernel, expected ", BLOCK_SIZE,
+                        " got ", prim_params.configuration.block_size);
         OPENVINO_ASSERT(prim_params.configuration.x_size == X_SIZE,
-                        "[GPU] Unexpected X_SIZE in SDPA kernel, expected", X_SIZE,
-                        "got", prim_params.configuration.x_size);
+                        "[GPU] Unexpected X_SIZE in SDPA kernel, expected ", X_SIZE,
+                        " got ", prim_params.configuration.x_size);
     };
 }
 

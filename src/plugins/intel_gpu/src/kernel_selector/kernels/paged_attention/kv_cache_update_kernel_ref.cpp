@@ -9,7 +9,9 @@
 
 namespace kernel_selector {
 
-static constexpr size_t kv_cache_block_size = 16;
+constexpr size_t SIMD_SIZE = 16;
+constexpr size_t BLOCK_SIZE = 16;
+constexpr size_t X_BLOCK_SIZE = 4;
 
 void KVCacheUpdateKernelRef::GetUpdateDispatchDataFunc(KernelData& kd) const {
     kd.update_dispatch_data_func = [](const Params& params, KernelData& kd) {
@@ -117,14 +119,13 @@ bool KVCacheUpdateKernelRef::Validate(const Params& params) const {
 JitConstants KVCacheUpdateKernelRef::GetJitConstants(const kv_cache_update_params& kernel_params, KernelMode mode) const {
     JitConstants jit = MakeBaseParamsJitConstants(kernel_params);
 
-    GPU_DEBUG_TRACE << "Configure kernel for " << static_cast<int>(mode) << "\n";
-
     if (mode == KernelMode::key_cache_update)
         jit.AddConstant(MakeJitConstant("KEY_CACHE_UPDATE", 1));
     else
         jit.AddConstant(MakeJitConstant("VALUE_CACHE_UPDATE", 1));
 
-    jit.AddConstant(MakeJitConstant("KV_CACHE_BLOCK_SIZE", kv_cache_block_size));
+    jit.AddConstant(MakeJitConstant("KV_CACHE_BLOCK_SIZE", BLOCK_SIZE));
+    jit.AddConstant(MakeJitConstant("X_BLOCK_SIZE", X_BLOCK_SIZE));
 
     return jit;
 }
@@ -133,17 +134,21 @@ CommonDispatchData KVCacheUpdateKernelRef::SetDefault(const kv_cache_update_para
     CommonDispatchData dispatch_data;
 
     const auto& input = kernel_params.inputs[0];
-    const auto& output = kernel_params.outputs[1];
-    if (!output.is_dynamic()) {
-        const size_t block_size = output.X().v;
-        OPENVINO_ASSERT(block_size == kv_cache_block_size, "[GPU] Block size of kv_cache is expected to be 16, got", block_size);
+    const auto& key_cache = kernel_params.outputs[0];
+    const auto& value_cache = kernel_params.outputs[1];
+    if (!value_cache.is_dynamic() && !key_cache.is_dynamic()) {
+        OPENVINO_ASSERT(kernel_params.configuration.block_size == BLOCK_SIZE,
+                        "[GPU] Unexpected BLOCK_SIZE in kv_cache_update kernel, expected ", BLOCK_SIZE,
+                        " got ", kernel_params.configuration.block_size);
+        OPENVINO_ASSERT(kernel_params.configuration.x_size == X_BLOCK_SIZE,
+                        "[GPU] Unexpected X_BLOCK_SIZE in kv_cache_update kernel, expected ", X_BLOCK_SIZE,
+                        " got ", kernel_params.configuration.x_size);
 
         const size_t batch_size = input.Batch().v;
         const size_t seq_len = input.Feature().v;
-        const size_t tokens_num = batch_size * seq_len;
-        const size_t head_size = input.LogicalSize() / (tokens_num);
-        dispatch_data.gws = {batch_size, seq_len, Align(head_size, 16)};
-        dispatch_data.lws = {1, 1, 16};
+        const size_t hidden_size = kernel_params.configuration.head_size * kernel_params.configuration.kv_heads_num;
+        dispatch_data.gws = {batch_size, seq_len, hidden_size};
+        dispatch_data.lws = {1, 1, SIMD_SIZE};
     }
 
     return dispatch_data;

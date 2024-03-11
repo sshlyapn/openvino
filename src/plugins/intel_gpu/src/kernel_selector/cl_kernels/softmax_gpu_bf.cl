@@ -44,10 +44,10 @@ KERNEL (softmax_gpu_continuous_bfyx)(
     const uint power = CALC_POWER(workers_per_data_set);
     const uint items_num = data_set_size>>power;
     const uint leftovers = data_set_size-(items_num<<power);
-    if (data_set_idx == 0 && in_data_set_idx == 0) {
-        printf("Power=%d, items_num=%d, letfovers=%d, data_set_size=%d, sub_group_size=%d\n", power, items_num,
-                                                                                              leftovers, data_set_size, get_sub_group_size());
-    }
+    // if (data_set_idx == 0 && in_data_set_idx == 0) {
+    //     printf("Power=%d, items_num=%d, letfovers=%d, data_set_size=%d, sub_group_size=%d\n", power, items_num,
+    //                                                                                           leftovers, data_set_size, get_sub_group_size());
+    // }
 #endif
 
     const uint data_set_offset = data_set_idx * data_set_size;

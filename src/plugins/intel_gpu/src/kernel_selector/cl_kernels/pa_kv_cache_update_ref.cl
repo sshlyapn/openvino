@@ -15,13 +15,13 @@ KERNEL(pa_kv_cache_update)(
 {
     const uint batch_idx = (uint)get_global_id(0);
     const uint seq_idx = (uint)get_global_id(1);
-    const uint head_elem_idx = (uint)get_global_id(2);
+    const uint hidden_idx = (uint)get_global_id(2);
 
-    const uint in_offset = batch_idx * INPUT0_BATCH_PITCH + seq_idx * INPUT0_FEATURE_PITCH + head_elem_idx;
+    const uint in_offset = batch_idx * INPUT0_BATCH_PITCH + seq_idx * INPUT0_FEATURE_PITCH + hidden_idx;
     const uint slot_offset = batch_idx * INPUT0_FEATURE_NUM + seq_idx;
 
     const INPUT2_TYPE slot_idx = slot_mapping[slot_offset];
-    if (head_elem_idx >= INPUT0_FEATURE_PITCH || slot_idx == -1)
+    if (hidden_idx >= INPUT0_FEATURE_PITCH || slot_idx == -1)
         return;
 
     const uint block_index = slot_idx / KV_CACHE_BLOCK_SIZE;
@@ -29,7 +29,7 @@ KERNEL(pa_kv_cache_update)(
 
 #ifdef VALUE_CACHE_UPDATE
     const uint out_offset = block_elem_num * block_index +
-                            head_elem_idx * KV_CACHE_BLOCK_SIZE +
+                            hidden_idx * KV_CACHE_BLOCK_SIZE +
                             block_offset;
 
     // if (batch_idx == 0) {
@@ -38,16 +38,16 @@ KERNEL(pa_kv_cache_update)(
 
     value_cache_data[out_offset] = value_data[in_offset];
 #else
-    #define HEAD_SIZE_BLOCKING 4
-    const uint head_size_outer_block = head_elem_idx / HEAD_SIZE_BLOCKING;
-    const uint head_size_inner_block = head_elem_idx % HEAD_SIZE_BLOCKING;
+    const uint head_size_outer_block = hidden_idx / X_BLOCK_SIZE;
+    const uint head_size_inner_block = hidden_idx % X_BLOCK_SIZE;
 
     const uint out_offset = block_elem_num * block_index +
-                            block_offset * HEAD_SIZE_BLOCKING +
-                            head_size_outer_block * KV_CACHE_BLOCK_SIZE * HEAD_SIZE_BLOCKING +
+                            block_offset * X_BLOCK_SIZE +
+                            head_size_outer_block * KV_CACHE_BLOCK_SIZE * X_BLOCK_SIZE +
                             head_size_inner_block;
-    // if (batch_idx == 0) {
-    //     printf("Update key_cache %d. %d (%f)\n", out_offset, in_offset, key_data[in_offset]);
+    // if (batch_idx == 0 && seq_idx < 2) {
+    //     printf("Update key_cache %d. %d (%f); seq_idx=%d, hidden_idx=%d, slot_idx=%d, block_index=%d, block_offset=%d; block_elem_num=%d\n", out_offset, in_offset, key_data[in_offset],
+    //             seq_idx, hidden_idx, slot_idx, block_index, block_offset, block_elem_num);
     // }
     key_cache_data[out_offset] = key_data[in_offset];
 #endif

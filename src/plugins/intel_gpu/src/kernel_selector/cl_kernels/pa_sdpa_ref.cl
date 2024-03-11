@@ -23,18 +23,18 @@
 
 
 #define SUB_GROUP_SIZE 16
+#define SUBGROUPS_PER_WG (HEAD_SIZE / SUB_GROUP_SIZE)
 
 // The size of portion of HEAD_SIZE each WI process
-#define HEAD_ITEMS_PER_WI (HEAD_SIZE / SUB_GROUP_SIZE)
+#define Q_LOAD_ITERS (HEAD_SIZE / SUB_GROUP_SIZE)
 
 // How much QK outputs each subgroup calculates per cycle
-#define QK_PER_SG 4
+#define QK_VALS_PER_SG_PER_ITER (BLOCK_SIZE / SUBGROUPS_PER_WG)
 
 #define KV_CACHE_BLOCK_STRIDE (HEAD_SIZE * KV_HEADS_NUM * BLOCK_SIZE)
 
 #define QUERY_BLOCK_READ(ptr, offset) BLOCK_READN(INPUT0_TYPE, 1, ptr, offset)
 
-#define SUBGROUPS_PER_WG HEAD_SIZE / SUB_GROUP_SIZE
 
 REQD_SUB_GROUP_SIZE(SUB_GROUP_SIZE)
 __attribute__((reqd_work_group_size(1, 1, 64)))
@@ -107,24 +107,24 @@ KERNEL(pa_sdpa_ref)(
         const uint block_idx = batch_idx * blocks_num + block;
         const uint block_offset = block_tables[block_idx] * KV_CACHE_BLOCK_STRIDE;
 
-        OUTPUT_TYPE qk[QK_PER_SG] = {0};
+        OUTPUT_TYPE qk[QK_VALS_PER_SG_PER_ITER] = {0};
 
-        for (uint hs = 0; hs < HEAD_ITEMS_PER_WI; hs++) {
+        for (uint hs = 0; hs < Q_LOAD_ITERS; hs++) {
             const uint query_idx = seq_idx * HEAD_SIZE * HEADS_NUM +
                                    head_num_idx * HEAD_SIZE +
                                    hs * SUB_GROUP_SIZE;
 
-            // TODO: can be preloaded outside HEAD_ITEMS_PER_WI loop - need to check perf
+            // TODO: can be preloaded outside Q_LOAD_ITERS loop - need to check perf
             INPUT0_TYPE q = QUERY_BLOCK_READ(query, query_idx);
-            for (uint qk_idx = 0; qk_idx < QK_PER_SG; qk_idx++) {
-                uint current_token = block * BLOCK_SIZE + sgid * QK_PER_SG + qk_idx;
+            for (uint qk_idx = 0; qk_idx < QK_VALS_PER_SG_PER_ITER; qk_idx++) {
+                uint current_token = block * BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + qk_idx;
                 if (current_token >= context_len)
                     continue;
 
                 const uint key_idx = block_offset +
                                      (head_num_idx / NUM_QUERIES_PER_KV_HEAD) * (HEAD_SIZE / X_SIZE * BLOCK_SIZE * X_SIZE) +
-                                     (X_SIZE * QK_PER_SG) * sgid +
-                                     (HEAD_ITEMS_PER_WI * BLOCK_SIZE * X_SIZE) * hs +
+                                     (X_SIZE * QK_VALS_PER_SG_PER_ITER) * sgid +
+                                     (Q_LOAD_ITERS * BLOCK_SIZE * X_SIZE) * hs +
                                      (sglid / X_SIZE) * X_SIZE * BLOCK_SIZE +
                                      (sglid % X_SIZE) + qk_idx * X_SIZE;
 
@@ -144,8 +144,8 @@ KERNEL(pa_sdpa_ref)(
         }
 
         // Summurize qk calculation across all WIs and apply scale
-        for (uint qk_idx = 0; qk_idx < QK_PER_SG; qk_idx++) {
-            const uint current_token = block * BLOCK_SIZE + sgid * QK_PER_SG + qk_idx;
+        for (uint qk_idx = 0; qk_idx < QK_VALS_PER_SG_PER_ITER; qk_idx++) {
+            const uint current_token = block * BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + qk_idx;
             if (current_token < context_len) {
                 OUTPUT_TYPE tmp_print = qk[qk_idx];
                 qk[qk_idx] = sub_group_reduce_add(qk[qk_idx]);
@@ -158,9 +158,9 @@ KERNEL(pa_sdpa_ref)(
         }
 
         // Save QK results to local memory
-        if (sglid < QK_PER_SG) {
-            const uint current_token = block * BLOCK_SIZE + sgid * QK_PER_SG + sglid;
-            // Fixed -> // const uint qk_local_idx = block * BLOCK_SIZE * sgid * QK_PER_SG + sglid;
+        if (sglid < QK_VALS_PER_SG_PER_ITER) {
+            const uint current_token = block * BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + sglid;
+            // Fixed -> // const uint qk_local_idx = block * BLOCK_SIZE * sgid * QK_VALS_PER_SG_PER_ITER + sglid;
             // OUTPUT_TYPE tmp_print = (current_token >= context_len ? 0 : qk[sglid]);
             // if (head_num_idx < 4 || head_num_idx == 31)
             //     printf("slm save: seq_idx=%d, head_num_idx=%d, sgid=%d, sglid=%d: qk_vals[%d]=%f. Max=%f\n",

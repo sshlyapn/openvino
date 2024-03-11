@@ -5,6 +5,7 @@
 #pragma once
 
 #include "kernel_base_opencl.h"
+#include "sdpa_kernel_ref.hpp"
 
 namespace kernel_selector {
 
@@ -15,6 +16,8 @@ enum class KernelMode {
 
 struct kv_cache_update_params : base_params {
     kv_cache_update_params() : base_params(KernelType::PA_KV_CACHE_UPDATE) {}
+
+    sdpa_configuration configuration;
 };
 
 class KVCacheUpdateKernelRef : public KernelBaseOpenCL {

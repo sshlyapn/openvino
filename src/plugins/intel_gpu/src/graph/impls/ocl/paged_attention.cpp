@@ -146,6 +146,21 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
             }
             all_events.push_back(ev);
         }
+
+
+        if (instance.get_network().get_config().get_property(ov::enable_profiling)) {
+            auto final_event = stream.group_events(all_events);
+            if (final_event != nullptr) {
+                stream.wait_for_events({final_event});
+                auto profiling_info = final_event->get_profiling_info();
+                for (const auto &interval : profiling_info) {
+                    if (interval.stage == cldnn::instrumentation::profiling_stage::executing) {
+                        auto time_res0 = std::chrono::duration_cast<std::chrono::microseconds>(interval.value->value()).count();
+                        GPU_DEBUG_INFO << "PagedAttention " << stage << " stage time: " << time_res0 << " mcs\n";
+                    }
+                }
+            }
+        }
     }
 
     event::ptr execute_impl(const std::vector<event::ptr>& events, paged_attention_inst& instance) override {
@@ -239,6 +254,41 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         }
     }
 
+    static kernel_selector::sdpa_configuration get_sdpa_configuration(const kernel_impl_params& impl_param) {
+        kernel_selector::sdpa_configuration config;
+
+        const auto query_layout = impl_param.get_input_layout(0);
+        const auto key_cache_layout = impl_param.get_input_layout(3);
+        const auto value_cache_layout = impl_param.get_input_layout(4);
+
+        if (query_layout.is_static() && key_cache_layout.is_static() && value_cache_layout.is_static()) {
+            // query_shape = [batch_size, seq_len, heads_num * head_size]
+            const auto query_shape = query_layout.get_shape();
+            // key_cache_shape = [num_blocks, kv_heads_num, head_size / x_size, block_size, x_size]
+            const auto key_cache_shape = key_cache_layout.get_shape();
+            // value_cache_shape = [num_blocks, kv_heads_num, head_size, block_size]
+            const auto value_cache_shape = value_cache_layout.get_shape();
+
+            const size_t hidden_size = query_shape[2];
+            const size_t kv_heads_num = value_cache_shape[1];
+            const size_t head_size = value_cache_shape[2];
+            const size_t heads_num = hidden_size / head_size;
+            const size_t block_size = value_cache_shape[3];
+            const size_t x_size = key_cache_shape[4];
+
+            const size_t simd_size = 16;
+            OPENVINO_ASSERT(head_size % simd_size == 0, "[GPU] Head size is expected to be divisible by 16");
+
+            config.head_size = head_size;
+            config.heads_num = heads_num;
+            config.kv_heads_num = kv_heads_num;
+            config.block_size = block_size;
+            config.x_size = x_size;
+        }
+
+        return config;
+    }
+
     static kv_cache_update_kernel_params_t get_kv_cache_update_kernel_params(const kernel_impl_params& impl_param, bool is_dynamic = false) {
         kv_cache_update_kernel_params_t params;
         set_params(impl_param, params);
@@ -260,6 +310,8 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         params.outputs[0] = convert_data_tensor(key_cache);
         params.outputs[1] = convert_data_tensor(value_cache);
         params.layerID = impl_param.desc->id;
+
+        params.configuration = get_sdpa_configuration(impl_param);
 
         const auto& in_offsets_map = impl_param.in_port_to_shape_info_offset;
         std::map<size_t, size_t> in_tensor_to_offset_map = {
@@ -297,30 +349,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         params.inputs[5] = convert_data_tensor(block_tables_layout);
         params.inputs[6] = convert_data_tensor(scale_layout);
 
-        if (query_layout.is_static() && key_cache_layout.is_static() && value_cache_layout.is_static()) {
-            // query_shape = [batch_size, seq_len, heads_num * head_size]
-            const auto query_shape = query_layout.get_shape();
-            // key_cache_shape = [num_blocks, kv_heads_num, head_size / x_size, block_size, x_size]
-            const auto key_cache_shape = key_cache_layout.get_shape();
-            // value_cache_shape = [num_blocks, kv_heads_num, head_size, block_size]
-            const auto value_cache_shape = value_cache_layout.get_shape();
-
-            const size_t hidden_size = query_shape[2];
-            const size_t kv_heads_num = value_cache_shape[1];
-            const size_t head_size = value_cache_shape[2];
-            const size_t heads_num = hidden_size / head_size;
-            const size_t block_size = value_cache_shape[3];
-            const size_t x_size = key_cache_shape[4];
-
-            const size_t simd_size = 16;
-            OPENVINO_ASSERT(head_size % simd_size == 0, "[GPU] Head size is expected to be divisible by 16");
-
-            params.configuration.head_size = head_size;
-            params.configuration.heads_num = heads_num;
-            params.configuration.kv_heads_num = kv_heads_num;
-            params.configuration.block_size = block_size;
-            params.configuration.x_size = x_size;
-        }
+        params.configuration = get_sdpa_configuration(impl_param);
 
         const auto& in_offsets_map = impl_param.in_port_to_shape_info_offset;
         const auto& out_offsets_map = impl_param.out_port_to_shape_info_offset;
