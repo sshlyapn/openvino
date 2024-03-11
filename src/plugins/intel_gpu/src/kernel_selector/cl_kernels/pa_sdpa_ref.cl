@@ -249,14 +249,15 @@ KERNEL(pa_sdpa_ref)(
 
             OUTPUT_TYPE qk = qk_offset < context_len ? qk_vals[qk_offset] : OUTPUT_VAL_ZERO;
 
-            const uint block_idx = block_tables[batch_idx * blocks_num + (qk_idx / SUB_GROUP_SIZE)];
+            const uint block_idx = block_tables[batch_idx * blocks_num + (qk_idx / BLOCK_SIZE)];
             if (block_idx == 0)
                 continue;
 
             const uint value_cache_offset = block_idx * KV_CACHE_BLOCK_STRIDE +
                                             (head_num_idx / NUM_QUERIES_PER_KV_HEAD) * (HEAD_SIZE * BLOCK_SIZE) +
                                             sgid * (SUB_GROUP_SIZE * BLOCK_SIZE) +
-                                            sglid * BLOCK_SIZE;
+                                            sglid * BLOCK_SIZE +
+                                            ((qk_idx / SUB_GROUP_SIZE) % (BLOCK_SIZE / SUB_GROUP_SIZE)) * SUB_GROUP_SIZE;
 
             #define VALUE_VEC_TYPE MAKE_VECTOR_TYPE(OUTPUT_TYPE, BLOCK_SIZE)
             #define VALUE_VLOAD(offset, ptr) CAT(vload, BLOCK_SIZE)(offset, ptr)
@@ -271,7 +272,7 @@ KERNEL(pa_sdpa_ref)(
             //         seq_idx, head_num_idx, sgid, sglid, block_idx, qk_idx, qk_offset, value_cache_offset - (block_idx * KV_CACHE_BLOCK_STRIDE), block_idx * KV_CACHE_BLOCK_STRIDE, *tmp_print);
             // }
 
-            for (uint token = 0; token < BLOCK_SIZE; token++) {
+            for (uint token = 0; token < SUB_GROUP_SIZE; token++) {
                 OUTPUT_TYPE qk_tmp = sub_group_broadcast(qk, token);
                 if (qk_idx + token < context_len) {
                     acc = mad(qk_tmp, v[token], acc);
