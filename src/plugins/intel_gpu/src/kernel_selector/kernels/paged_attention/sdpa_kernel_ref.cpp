@@ -11,7 +11,7 @@ namespace kernel_selector {
 
 constexpr size_t HEAD_SIZE = 128;
 constexpr size_t HEADS_NUM = 32;
-constexpr size_t KV_HEADS_NUM = 2;
+constexpr size_t KV_HEADS_NUM = 8;
 constexpr size_t BLOCK_SIZE = 16;
 constexpr size_t X_BLOCK_SIZE = 8;
 

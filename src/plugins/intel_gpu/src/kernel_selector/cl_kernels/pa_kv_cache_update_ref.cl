@@ -36,6 +36,10 @@ KERNEL(pa_kv_cache_update)(
     //     printf("Update value %d. %d (%f)\n", out_offset, in_offset, value_data[in_offset]);
     // }
 
+    // if (batch_idx == 0 && hidden_idx == 0) {
+    //     printf("Update value slot for %d = %d\n", seq_idx, slot_idx);
+    // }
+
     value_cache_data[out_offset] = value_data[in_offset];
 #else
     const uint head_size_outer_block = hidden_idx / X_BLOCK_SIZE;
@@ -49,6 +53,11 @@ KERNEL(pa_kv_cache_update)(
     //     printf("Update key_cache %d. %d (%f); seq_idx=%d, hidden_idx=%d, slot_idx=%d, block_index=%d, block_offset=%d; block_elem_num=%d\n", out_offset, in_offset, key_data[in_offset],
     //             seq_idx, hidden_idx, slot_idx, block_index, block_offset, block_elem_num);
     // }
+
+    // if (batch_idx == 0 && hidden_idx == 0) {
+    //     printf("Update key slot for %d = %d\n", seq_idx, slot_idx);
+    // }
+
     key_cache_data[out_offset] = key_data[in_offset];
 #endif
 }

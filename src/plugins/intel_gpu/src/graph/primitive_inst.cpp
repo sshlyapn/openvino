@@ -1244,6 +1244,39 @@ event::ptr primitive_inst::execute(const std::vector<event::ptr>& events) {
         GPU_DEBUG_TRACE_DETAIL << "- inputs[" << i << "] : " <<  _deps[i].first->id() << std::endl;
     }
     GPU_DEBUG_TRACE_DETAIL << "-----------------------------------------------------------------" << std::endl;
+
+    std::vector<std::string> print_ids = {"pagedattentionextension:PagedAttentionExtension_606",
+                                          "gemm:MatMul_112999",
+                                          "softmax:Softmax_113002",
+                                          "gemm:__module.model.layers.0.self_attn/aten::transpose/Transpose_3",
+                                        /* BATCHED chatglm3 fp32 */
+                                          "matmul:MatMul_113004",
+                                          "add:Add_113006",
+                                          "softmax:Softmax_113007",
+                                          "matmul:__module.model.layers.0.self_attn/aten::scaled_dot_product_attention/ScaledDotProductAttention",
+                                          "transpose:__module.model.layers.0.self_attn/aten::transpose/Transpose_3",
+                                          /* Batched  open_llama-7b fp32 + INT8 */
+                                          "matmul:MatMul_158917",
+                                          "add:Add_158919",
+                                          "softmax:Softmax_158920",
+                                          "matmul:__module.model.layers.0.self_attn/aten::scaled_dot_product_attention/ScaledDotProductAttention",
+                                          /* open llama FP32_INT4 */
+                                          };
+
+    if (_impl_params->desc->type_string() == "paged_attention" ||
+        _impl_params->desc->type_string() == "softmax" ||
+        _impl_params->desc->type_string() == "gemm" ||
+        _impl_params->desc->type_string() == "eltwise" ||
+        _impl_params->desc->type_string() == "add" ||
+        _impl_params->desc->type_string() == "transpose")
+        print_ids.push_back(id());
+
+    if (std::find(print_ids.begin(), print_ids.end(), id()) != print_ids.end() && get_network().get_config().get_property(ov::enable_profiling)) {
+        GPU_DEBUG_INFO << "Execute " << id() << " (type: " << _impl_params->desc->type_string() << ") " << std::endl;
+        for (size_t i = 0; i < _deps.size(); ++i) {
+            GPU_DEBUG_INFO << "- inputs[" << i << "] : " <<  _deps[i].first->id() << " - " << _deps[i].first->get_output_layout(0).to_short_string()  << std::endl;
+        }
+    }
     bool need_args_update = false;
     _mem_changed = false;
     const auto orig_outputs = _outputs;
@@ -1400,14 +1433,15 @@ event::ptr primitive_inst::execute(const std::vector<event::ptr>& events) {
         GPU_DEBUG_PROFILED_STAGE(instrumentation::pipeline_stage::inference);
         auto ev = _impl->execute(dependencies, *this);
 
-        GPU_DEBUG_IF(!debug_config->dump_profiling_data.empty()) {
+        if (std::find(print_ids.begin(), print_ids.end(), id()) != print_ids.end() && get_network().get_config().get_property(ov::enable_profiling)) {
             get_network().get_stream().wait_for_events({ev});
 
             if (ev != nullptr) {
                 auto profiling_info = ev->get_profiling_info();
                 for (const auto &interval : profiling_info) {
                     if (interval.stage == cldnn::instrumentation::profiling_stage::executing) {
-                        GPU_DEBUG_CODE(stage_prof.set_custom_stage_duration(interval.value->value()));
+                        auto time_res0 = std::chrono::duration_cast<std::chrono::microseconds>(interval.value->value()).count();
+                        GPU_DEBUG_INFO << id() << " performace time = " << time_res0 << " mcs\n";
                     }
                 }
             }

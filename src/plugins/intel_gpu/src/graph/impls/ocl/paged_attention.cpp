@@ -78,6 +78,29 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
     void set_arguments_impl(paged_attention_inst& instance) override {}
 
     kernel_arguments_data get_arguments(const paged_attention_inst& instance, size_t stage) const override {
+        {
+            kernel_arguments_data args;
+            args.shape_info = instance.shape_info_memory_ptr();
+            if (stage == Stage::KV_CACHE_UPDATE) {
+                args.inputs = { instance.input_memory_ptr(1),  /* key */
+                                instance.input_memory_ptr(2),  /* value */
+                                instance.input_memory_ptr(6)   /* slot_mapping */};
+                args.outputs = { instance.input_memory_ptr(3), /* key_cache */
+                                instance.input_memory_ptr(4)   /* value_cache */ };
+            } else if (stage == Stage::SDPA) {
+                args.inputs = { instance.input_memory_ptr(0), /* query */
+                                instance.input_memory_ptr(3), /* key_cache */
+                                instance.input_memory_ptr(4), /* value_cache */
+                                instance.input_memory_ptr(7), /* max_context_len */
+                                instance.input_memory_ptr(8), /* context_lens */
+                                instance.input_memory_ptr(9), /* block_tables */
+                                instance.input_memory_ptr(10) /* scale */ };
+                args.outputs = { instance.output_memory_ptr(0) };
+            }
+
+            return args;
+        }
+
         // WA due to lack of proper handling of key and value cache buffers. Keep them in impl for test purpose.
         if (value_cache_mem == nullptr) {
             const auto key_cache_layout = instance.get_impl_params()->get_input_layout(3);
@@ -200,6 +223,11 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
             const int64_t head_size = value_cache_shape[2];
             const int64_t heads_num = hidden_size / head_size;
             const int64_t num_queries_per_kv = heads_num / kv_heads_num;
+
+            std::cout << "Prefill stage: batch_size=" << batch_size << " seq_len=" << seq_len << " hidden_size=" << hidden_size
+                      << " kv_heads_num=" << kv_heads_num << " heads_num=" << heads_num << " head_size=" << head_size
+                      << " q=" << query_layout.to_short_string() << " k_cache=" << key_cache_layout.to_short_string()
+                      << " v_cache=" << value_cache_layout.to_short_string() << "\n";
 
             auto attention_bias = generate_attention_bias(batch_size, seq_len, sliding_window, instance.get_network().get_engine());
 

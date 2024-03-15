@@ -700,6 +700,9 @@ void program::transfer_memory_to_device() {
             auto& mem = data_node.get_attached_memory();
             auto mem_layout = mem.get_layout();
             auto alloc_type = mem.get_allocation_type();
+            if (ov::shape_size(mem_layout.get_shape()) == 0)
+                continue;
+            GPU_DEBUG_TRACE_DETAIL << "mem_layout: " << mem_layout.to_short_string() << " data: " << data_node_layout.to_short_string() << "\n";
             if (!mem_layout.compatible(data_node_layout)) {
                 std::string err_str("Node and memory layouts are incompatible, error occurred for " + node->id() + " node");
                 throw std::invalid_argument(err_str);

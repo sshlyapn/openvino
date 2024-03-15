@@ -26,6 +26,7 @@
 #define SUBGROUPS_PER_WG (HEAD_SIZE / SUB_GROUP_SIZE)
 
 // The size of portion of HEAD_SIZE each WI process
+// define Q_LOAD_PER_ITER 4
 #define Q_LOAD_ITERS (HEAD_SIZE / SUB_GROUP_SIZE)
 
 // How much QK outputs each subgroup calculates per cycle
@@ -35,6 +36,7 @@
 
 #define QUERY_BLOCK_READ(ptr, offset) BLOCK_READN(INPUT0_TYPE, 1, ptr, offset)
 
+ulong __attribute__((overloadable)) intel_get_cycle_counter( void );
 
 REQD_SUB_GROUP_SIZE(SUB_GROUP_SIZE)
 __attribute__((reqd_work_group_size(1, 1, HEAD_SIZE)))
@@ -63,27 +65,46 @@ KERNEL(pa_sdpa_ref)(
     const uint blocks_num = INPUT5_FEATURE_NUM;
 
     // if (seq_idx < 2 && head_num_idx < 2 && sgid < 2 && sglid < 2) {
-    //     if (INPUT5_FEATURE_NUM == 0) {
-    //         printf("Empty blocks. Seq_idx=%d, head_num_idx=%d, head_idx=%d, sglid=%d, sgid=%d, batch_idx=%d, token_idx=%d, context_len=%d, scale=%f\n",
-    //         seq_idx, head_num_idx, head_idx, sglid, sgid, batch_idx, token_idx, context_len, scale[0]);
-    //     } else if (INPUT5_FEATURE_NUM == 1) {
-    //         printf("Blocks table[b=0]: %d. Seq_idx=%d, head_num_idx=%d, head_idx=%d, sglid=%d, sgid=%d, batch_idx=%d, token_idx=%d, context_len=%d, scale=%f\n", block_tables[0],
-    //         seq_idx, head_num_idx, head_idx, sglid, sgid, batch_idx, token_idx, context_len, scale[0]);
-    //     } else if (INPUT5_FEATURE_NUM == 2) {
-    //         printf("Blocks table[b=0]: %d %d. Seq_idx=%d, head_num_idx=%d, head_idx=%d, sglid=%d, sgid=%d, batch_idx=%d, token_idx=%d, context_len=%d, scale=%f\n", block_tables[0], block_tables[1],
-    //         seq_idx, head_num_idx, head_idx, sglid, sgid, batch_idx, token_idx, context_len, scale[0]);
-    //     } else if (INPUT5_FEATURE_NUM == 3) {
-    //         printf("Blocks table[b=0]: %d %d %d. Seq_idx=%d, head_num_idx=%d, head_idx=%d, sglid=%d, sgid=%d, batch_idx=%d, token_idx=%d, context_len=%d, scale=%f\n", block_tables[0], block_tables[1], block_tables[2],
-    //         seq_idx, head_num_idx, head_idx, sglid, sgid, batch_idx, token_idx, context_len, scale[0]);
-    //     } else if (INPUT5_FEATURE_NUM == 4) {
-    //         printf("Blocks table[b=0]: %d %d %d %d. Seq_idx=%d, head_num_idx=%d, head_idx=%d, sglid=%d, sgid=%d, batch_idx=%d, token_idx=%d, context_len=%d, scale=%f\n", block_tables[0], block_tables[1], block_tables[2], block_tables[3],
-    //         seq_idx, head_num_idx, head_idx, sglid, sgid, batch_idx, token_idx, context_len, scale[0]);
+    //     if (INPUT5_BATCH_NUM == 2) {
+    //         if (INPUT5_FEATURE_NUM == 0) {
+    //             printf("Empty blocks. Seq_idx=%d, head_num_idx=%d, head_idx=%d, sglid=%d, sgid=%d, batch_idx=%d, token_idx=%d, context_len=%d, scale=%f\n",
+    //             seq_idx, head_num_idx, head_idx, sglid, sgid, batch_idx, token_idx, context_len, scale[0]);
+    //         } else if (INPUT5_FEATURE_NUM == 1) {
+    //             printf("Blocks table[b=0..1]: %d %d. Seq_idx=%d, head_num_idx=%d, head_idx=%d, sglid=%d, sgid=%d, batch_idx=%d, token_idx=%d, context_len=%d, scale=%f\n", block_tables[0], block_tables[1],
+    //             seq_idx, head_num_idx, head_idx, sglid, sgid, batch_idx, token_idx, context_len, scale[0]);
+    //         } else if (INPUT5_FEATURE_NUM == 2) {
+    //             printf("Blocks table[b=0..3]: %d %d %d %d. Seq_idx=%d, head_num_idx=%d, head_idx=%d, sglid=%d, sgid=%d, batch_idx=%d, token_idx=%d, context_len=%d, scale=%f\n", block_tables[0], block_tables[1], block_tables[2], block_tables[3],
+    //             seq_idx, head_num_idx, head_idx, sglid, sgid, batch_idx, token_idx, context_len, scale[0]);
+    //         } else if (INPUT5_FEATURE_NUM == 3) {
+    //             printf("Blocks table[b=0..6]: %d %d %d %d %d %d. Seq_idx=%d, head_num_idx=%d, head_idx=%d, sglid=%d, sgid=%d, batch_idx=%d, token_idx=%d, context_len=%d, scale=%f\n", block_tables[0], block_tables[1], block_tables[2], block_tables[3], block_tables[4], block_tables[5],
+    //             seq_idx, head_num_idx, head_idx, sglid, sgid, batch_idx, token_idx, context_len, scale[0]);
+    //         } else if (INPUT5_FEATURE_NUM == 4) {
+    //             printf("Blocks table[b=0]: %d %d %d %d. Seq_idx=%d, head_num_idx=%d, head_idx=%d, sglid=%d, sgid=%d, batch_idx=%d, token_idx=%d, context_len=%d, scale=%f\n", block_tables[0], block_tables[1], block_tables[2], block_tables[3],
+    //             seq_idx, head_num_idx, head_idx, sglid, sgid, batch_idx, token_idx, context_len, scale[0]);
+    //         }
+    //     } else {
+    //         if (INPUT5_FEATURE_NUM == 0) {
+    //             printf("Empty blocks. Seq_idx=%d, head_num_idx=%d, head_idx=%d, sglid=%d, sgid=%d, batch_idx=%d, token_idx=%d, context_len=%d, scale=%f\n",
+    //             seq_idx, head_num_idx, head_idx, sglid, sgid, batch_idx, token_idx, context_len, scale[0]);
+    //         } else if (INPUT5_FEATURE_NUM == 1) {
+    //             printf("Blocks table[b=0]: %d. Seq_idx=%d, head_num_idx=%d, head_idx=%d, sglid=%d, sgid=%d, batch_idx=%d, token_idx=%d, context_len=%d, scale=%f\n", block_tables[0],
+    //             seq_idx, head_num_idx, head_idx, sglid, sgid, batch_idx, token_idx, context_len, scale[0]);
+    //         } else if (INPUT5_FEATURE_NUM == 2) {
+    //             printf("Blocks table[b=0]: %d %d. Seq_idx=%d, head_num_idx=%d, head_idx=%d, sglid=%d, sgid=%d, batch_idx=%d, token_idx=%d, context_len=%d, scale=%f\n", block_tables[0], block_tables[1],
+    //             seq_idx, head_num_idx, head_idx, sglid, sgid, batch_idx, token_idx, context_len, scale[0]);
+    //         } else if (INPUT5_FEATURE_NUM == 3) {
+    //             printf("Blocks table[b=0]: %d %d %d. Seq_idx=%d, head_num_idx=%d, head_idx=%d, sglid=%d, sgid=%d, batch_idx=%d, token_idx=%d, context_len=%d, scale=%f\n", block_tables[0], block_tables[1], block_tables[2],
+    //             seq_idx, head_num_idx, head_idx, sglid, sgid, batch_idx, token_idx, context_len, scale[0]);
+    //         } else if (INPUT5_FEATURE_NUM == 4) {
+    //             printf("Blocks table[b=0]: %d %d %d %d. Seq_idx=%d, head_num_idx=%d, head_idx=%d, sglid=%d, sgid=%d, batch_idx=%d, token_idx=%d, context_len=%d, scale=%f\n", block_tables[0], block_tables[1], block_tables[2], block_tables[3],
+    //             seq_idx, head_num_idx, head_idx, sglid, sgid, batch_idx, token_idx, context_len, scale[0]);
+    //         }
     //     }
 
-    //     if (seq_idx == 0 && head_num_idx == 0 && sgid == 0 && sglid == 0) {
-    //         printf("key_cache[405504]=%f\n", key_cache[405504]);
-    //         printf("value_cache[405504]=%f\n", value_cache[405504]);
-    //     }
+    //     // if (seq_idx == 0 && head_num_idx == 0 && sgid == 0 && sglid == 0) {
+    //     //     printf("key_cache[0]=%f  key_cache[%d]=%f\n", key_cache[0], KV_CACHE_BLOCK_STRIDE * 2399, key_cache[KV_CACHE_BLOCK_STRIDE * 2399]);
+    //     //     printf("value_cache[0]=%f value_cache[%d]=%f\n", value_cache[0], KV_CACHE_BLOCK_STRIDE * 2399, value_cache[KV_CACHE_BLOCK_STRIDE * 2399]);
+    //     // }
     // }
 
     // sgid0: 0..3
@@ -103,76 +124,106 @@ KERNEL(pa_sdpa_ref)(
 
     OUTPUT_TYPE qk_max = OUTPUT_VAL_MIN;
 
-    for (uint block = 0; block < blocks_num; block++) {
-        const uint block_idx = batch_idx * blocks_num + block;
-        const uint block_offset = block_tables[block_idx] * KV_CACHE_BLOCK_STRIDE;
 
-        OUTPUT_TYPE qk[QK_VALS_PER_SG_PER_ITER] = {0};
-
-        for (uint hs = 0; hs < Q_LOAD_ITERS; hs++) {
+    {
+        ulong timer_start = intel_get_cycle_counter();
+        INPUT0_TYPE q[HEAD_SIZE / SUB_GROUP_SIZE];
+        unroll_for (uint i = 0; i < HEAD_SIZE / SUB_GROUP_SIZE; i++) {
             const uint query_idx = seq_idx * HEAD_SIZE * HEADS_NUM +
-                                   head_num_idx * HEAD_SIZE +
-                                   hs * SUB_GROUP_SIZE;
+                                    head_num_idx * HEAD_SIZE +
+                                    i * SUB_GROUP_SIZE;
+            q[i] = QUERY_BLOCK_READ(query, query_idx);
+        }
 
-            // TODO: can be preloaded outside Q_LOAD_ITERS loop - need to check perf
-            INPUT0_TYPE q = QUERY_BLOCK_READ(query, query_idx);
+
+        for (uint block = 0; block < blocks_num; block++) {
+            const uint block_idx = batch_idx * blocks_num + block;
+            const uint block_offset = block_tables[block_idx] * KV_CACHE_BLOCK_STRIDE;
+
+            OUTPUT_TYPE qk[QK_VALS_PER_SG_PER_ITER] = {0};
+
+            ulong timer2 = intel_get_cycle_counter();
+            for (uint hs = 0; hs < Q_LOAD_ITERS; hs++) {
+                // TODO: can be preloaded outside Q_LOAD_ITERS loop - need to check perf
+                for (uint qk_idx = 0; qk_idx < QK_VALS_PER_SG_PER_ITER; qk_idx++) {
+                    uint current_token = block * BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + qk_idx;
+                    if (current_token >= context_len)
+                        continue;
+
+                    const uint key_idx = block_offset +
+                                        (head_num_idx / NUM_QUERIES_PER_KV_HEAD) * (HEAD_SIZE / X_BLOCK_SIZE * BLOCK_SIZE * X_BLOCK_SIZE) +
+                                        (X_BLOCK_SIZE * QK_VALS_PER_SG_PER_ITER) * sgid +
+                                        (SUB_GROUP_SIZE / X_BLOCK_SIZE * BLOCK_SIZE * X_BLOCK_SIZE) * hs +
+                                        (sglid / X_BLOCK_SIZE) * X_BLOCK_SIZE * BLOCK_SIZE +
+                                        (sglid % X_BLOCK_SIZE) + qk_idx * X_BLOCK_SIZE;
+
+                    // TODO1: try block loading and shuffling
+                    // TODO2: try to load k*4 times and then calculate
+                    // TODO3: try bigger X block
+                    #if X_BLOCK_SIZE == 16
+                    #define KEY_BLOCK_READ(ptr, offset) BLOCK_READN(INPUT1_TYPE, 1, ptr, offset)
+                    INPUT1_TYPE k = KEY_BLOCK_READ(key_cache, key_idx);
+                    #else
+                    INPUT1_TYPE k = key_cache[key_idx];
+                    #endif
+
+
+                    // if (seq_idx == 0 && head_num_idx == 0) {
+                    //     printf("main_calc: seq_idx=%d, head_num_idx=%d, sgid=%d, sglid=%d, block=%d, hs=%d, qk_idx=%d, current_token=%d, query_idx=%d, key_idx=%d (block_offset=%d): %f * %f\n",
+                    //         seq_idx, head_num_idx, sgid, sglid, block, hs, qk_idx, current_token, query_idx, key_idx - block_offset, block_offset, q, k);
+                    // }
+
+                    qk[qk_idx] = mad(q[hs], k, qk[qk_idx]);
+                }
+            }
+            ulong timer3 = intel_get_cycle_counter();
+
+            // Summurize qk calculation across all WIs and apply scale
             for (uint qk_idx = 0; qk_idx < QK_VALS_PER_SG_PER_ITER; qk_idx++) {
-                uint current_token = block * BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + qk_idx;
-                if (current_token >= context_len)
-                    continue;
-
-                const uint key_idx = block_offset +
-                                     (head_num_idx / NUM_QUERIES_PER_KV_HEAD) * (HEAD_SIZE / X_BLOCK_SIZE * BLOCK_SIZE * X_BLOCK_SIZE) +
-                                     (X_BLOCK_SIZE * QK_VALS_PER_SG_PER_ITER) * sgid +
-                                     (SUB_GROUP_SIZE / X_BLOCK_SIZE * BLOCK_SIZE * X_BLOCK_SIZE) * hs +
-                                     (sglid / X_BLOCK_SIZE) * X_BLOCK_SIZE * BLOCK_SIZE +
-                                     (sglid % X_BLOCK_SIZE) + qk_idx * X_BLOCK_SIZE;
-
-                // TODO1: try block loading and shuffling
-                // TODO2: try to load k*4 times and then calculate
-                // TODO3: try bigger X block
-                INPUT1_TYPE k = key_cache[key_idx];
-
-
-                // if (seq_idx == 0 && head_num_idx == 0) {
-                //     printf("main_calc: seq_idx=%d, head_num_idx=%d, sgid=%d, sglid=%d, block=%d, hs=%d, qk_idx=%d, current_token=%d, query_idx=%d, key_idx=%d (block_offset=%d): %f * %f\n",
-                //         seq_idx, head_num_idx, sgid, sglid, block, hs, qk_idx, current_token, query_idx, key_idx - block_offset, block_offset, q, k);
-                // }
-
-                qk[qk_idx] = mad(q, k, qk[qk_idx]);
+                const uint current_token = block * BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + qk_idx;
+                if (current_token < context_len) {
+                    OUTPUT_TYPE tmp_print = qk[qk_idx];
+                    qk[qk_idx] = sub_group_reduce_add(qk[qk_idx]);
+                    // if (head_num_idx < 4)
+                    //     printf("final_calc: seq_idx=%d, head_num_idx=%d, sgid=%d, sglid=%d: before qk[%d]=%f, after=%f\n",
+                    //             seq_idx, head_num_idx, sgid, sglid, qk_idx, tmp_print, qk[qk_idx]);
+                    qk[qk_idx] = scale[0] * qk[qk_idx];
+                    qk_max = OUTPUT_MAX_FUNC(qk_max, qk[qk_idx]);
+                }
             }
-        }
+            ulong timer4 = intel_get_cycle_counter();
 
-        // Summurize qk calculation across all WIs and apply scale
-        for (uint qk_idx = 0; qk_idx < QK_VALS_PER_SG_PER_ITER; qk_idx++) {
-            const uint current_token = block * BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + qk_idx;
-            if (current_token < context_len) {
-                OUTPUT_TYPE tmp_print = qk[qk_idx];
-                qk[qk_idx] = sub_group_reduce_add(qk[qk_idx]);
-                // if (head_num_idx < 4)
-                //     printf("final_calc: seq_idx=%d, head_num_idx=%d, sgid=%d, sglid=%d: before qk[%d]=%f, after=%f\n",
-                //             seq_idx, head_num_idx, sgid, sglid, qk_idx, tmp_print, qk[qk_idx]);
-                qk[qk_idx] = scale[0] * qk[qk_idx];
-                qk_max = OUTPUT_MAX_FUNC(qk_max, qk[qk_idx]);
+            // Save QK results to local memory
+            if (sglid < QK_VALS_PER_SG_PER_ITER) {
+                const uint current_token = block * BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + sglid;
+                // Fixed -> // const uint qk_local_idx = block * BLOCK_SIZE * sgid * QK_VALS_PER_SG_PER_ITER + sglid;
+                // OUTPUT_TYPE tmp_print = (current_token >= context_len ? 0 : qk[sglid]);
+                // if (head_num_idx < 4 || head_num_idx == 31)
+                //     printf("slm save: seq_idx=%d, head_num_idx=%d, sgid=%d, sglid=%d: qk_vals[%d]=%f. Max=%f\n",
+                //             seq_idx, head_num_idx, sgid, sglid, current_token, tmp_print, qk_max);
+                qk_vals[current_token] = current_token >= context_len ? 0 : qk[sglid];
             }
-        }
+            ulong timer5 = intel_get_cycle_counter();
 
-        // Save QK results to local memory
-        if (sglid < QK_VALS_PER_SG_PER_ITER) {
-            const uint current_token = block * BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + sglid;
-            // Fixed -> // const uint qk_local_idx = block * BLOCK_SIZE * sgid * QK_VALS_PER_SG_PER_ITER + sglid;
-            // OUTPUT_TYPE tmp_print = (current_token >= context_len ? 0 : qk[sglid]);
-            // if (head_num_idx < 4 || head_num_idx == 31)
-            //     printf("slm save: seq_idx=%d, head_num_idx=%d, sgid=%d, sglid=%d: qk_vals[%d]=%f. Max=%f\n",
-            //             seq_idx, head_num_idx, sgid, sglid, current_token, tmp_print, qk_max);
-            qk_vals[current_token] = current_token >= context_len ? 0 : qk[sglid];
+            // if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_global_id(2) == 0) {
+            //     printf("SDPA kernel GEMM1 block %d: main_loop=%d, summarization=%d, saving=%d\n", block,
+            //         (uint)(timer3 - timer2),
+            //         (uint)(timer4 - timer3),
+            //         (uint)(timer5 - timer4));
+            // }
         }
+        ulong timer_end = intel_get_cycle_counter();
+        ulong total_time = timer_end - timer_start;
+
+        // if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_global_id(2) == 0)
+        //     printf("SDPA kernel GEMM1: %d; qk_max=%f\n", (uint)total_time, qk_max);
     }
 
     // Apply SoftMax operation
     __local OUTPUT_TYPE qk_max_vals[SUBGROUPS_PER_WG];
     __local OUTPUT_TYPE qk_sum_vals[SUBGROUPS_PER_WG];
     {
+        ulong timer_start = intel_get_cycle_counter();
         if (sglid == 0)
             qk_max_vals[sgid] = qk_max;
 
@@ -233,6 +284,13 @@ KERNEL(pa_sdpa_ref)(
         }
 
         barrier(CLK_LOCAL_MEM_FENCE);
+
+
+        ulong timer_end = intel_get_cycle_counter();
+        ulong total_time = timer_end - timer_start;
+
+        // if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_global_id(2) == 0)
+        //     printf("SDPA kernel Softmax: %d\n", (uint)total_time);
     }
 
     // if (seq_idx == 0 && sgid == 0 && sglid == 0) {
@@ -242,6 +300,7 @@ KERNEL(pa_sdpa_ref)(
     // }
 
     {
+        ulong timer_start = intel_get_cycle_counter();
         OUTPUT_TYPE acc = OUTPUT_VAL_ZERO;
 
         for (uint qk_idx = 0; qk_idx < ALIGN(context_len, SUB_GROUP_SIZE); qk_idx += SUB_GROUP_SIZE) {
@@ -250,8 +309,8 @@ KERNEL(pa_sdpa_ref)(
             OUTPUT_TYPE qk = qk_offset < context_len ? qk_vals[qk_offset] : OUTPUT_VAL_ZERO;
 
             const uint block_idx = block_tables[batch_idx * blocks_num + (qk_idx / BLOCK_SIZE)];
-            if (block_idx == 0)
-                continue;
+            // if (block_idx == 0)
+            //     continue;
 
             const uint value_cache_offset = block_idx * KV_CACHE_BLOCK_STRIDE +
                                             (head_num_idx / NUM_QUERIES_PER_KV_HEAD) * (HEAD_SIZE * BLOCK_SIZE) +
@@ -272,10 +331,17 @@ KERNEL(pa_sdpa_ref)(
             //         seq_idx, head_num_idx, sgid, sglid, block_idx, qk_idx, qk_offset, value_cache_offset - (block_idx * KV_CACHE_BLOCK_STRIDE), block_idx * KV_CACHE_BLOCK_STRIDE, *tmp_print);
             // }
 
-            for (uint token = 0; token < SUB_GROUP_SIZE; token++) {
-                OUTPUT_TYPE qk_tmp = sub_group_broadcast(qk, token);
-                if (qk_idx + token < context_len) {
+            if (qk_idx + SUB_GROUP_SIZE <= context_len) {
+                unroll_for (uint token = 0; token < SUB_GROUP_SIZE; token++) {
+                    OUTPUT_TYPE qk_tmp = sub_group_broadcast(qk, token);
                     acc = mad(qk_tmp, v[token], acc);
+                }
+            } else {
+                for (uint token = 0; token < SUB_GROUP_SIZE; token++) {
+                    OUTPUT_TYPE qk_tmp = sub_group_broadcast(qk, token);
+                    if (qk_idx + token < context_len) {
+                        acc = mad(qk_tmp, v[token], acc);
+                    }
                 }
             }
         }
@@ -292,5 +358,11 @@ KERNEL(pa_sdpa_ref)(
         // }
 
         output[output_offset] = acc;
+
+        ulong timer_end = intel_get_cycle_counter();
+        ulong total_time = timer_end - timer_start;
+
+        // if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_global_id(2) == 0)
+        //     printf("SDPA kernel GEMM2: %d\n", (uint)total_time);
     }
 }

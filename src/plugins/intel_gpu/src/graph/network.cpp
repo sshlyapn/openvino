@@ -1054,7 +1054,7 @@ void network::execute_impl(const std::vector<event::ptr>& events) {
             auto prog_id = ((get_program() != nullptr) ? get_program()->get_id() : 0);
             auto net_id = get_id();
             GPU_DEBUG_IF(debug_config->is_target_iteration(curr_iter) &&
-                        debug_config->is_layer_for_dumping(layer_name, inst->is_output(), inst->is_input()) && prog_id == 2) {
+                        debug_config->is_layer_for_dumping(layer_name, inst->is_output(), inst->is_input())) {
                 std::string debug_str_for_bin_load = " Command for loading : OV_GPU_LoadDumpRawBinary=\""
                                                         + layer_name + ":";
                 for (size_t i = 0; i < get_primitive(layer_name)->outputs_memory_count(); i++) {
