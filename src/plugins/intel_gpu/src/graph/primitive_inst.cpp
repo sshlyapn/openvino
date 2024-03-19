@@ -1279,7 +1279,9 @@ event::ptr primitive_inst::execute(const std::vector<event::ptr>& events) {
     }
     bool need_args_update = false;
     _mem_changed = false;
+    GPU_DEBUG_TRACE_DETAIL << "Before original outputs\n";
     const auto orig_outputs = _outputs;
+    GPU_DEBUG_TRACE_DETAIL << "After original outputs\n";
     std::vector<event::ptr> dependencies;
     if (is_dynamic() && !has_inner_networks()) {
         do_runtime_in_place_concat();

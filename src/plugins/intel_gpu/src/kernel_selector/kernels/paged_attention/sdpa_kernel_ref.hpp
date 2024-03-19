@@ -17,6 +17,8 @@ struct sdpa_configuration {
     size_t kv_heads_num;
     size_t block_size;
     size_t x_size;
+
+    size_t max_context_len;
 };
 
 struct sdpa_params : base_params {

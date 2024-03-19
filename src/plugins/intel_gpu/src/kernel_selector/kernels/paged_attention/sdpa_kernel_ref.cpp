@@ -15,7 +15,9 @@ constexpr size_t KV_HEADS_NUM = 8;
 constexpr size_t BLOCK_SIZE = 16;
 constexpr size_t X_BLOCK_SIZE = 8;
 
-constexpr size_t MAX_SEQUENCE_LENGTH = 1536;
+constexpr size_t SEQ_LEN_PORTION_SIZE = 256;
+
+constexpr size_t MAX_SEQUENCE_LENGTH = SEQ_LEN_PORTION_SIZE;
 
 void SDPAKernelRef::GetUpdateDispatchDataFunc(KernelData& kd) const {
     kd.update_dispatch_data_func = [](const Params& params, KernelData& kd) {
@@ -41,6 +43,34 @@ void SDPAKernelRef::GetUpdateDispatchDataFunc(KernelData& kd) const {
         OPENVINO_ASSERT(prim_params.configuration.x_size == X_BLOCK_SIZE,
                         "[GPU] Unexpected X_BLOCK_SIZE in SDPA kernel, expected ", X_BLOCK_SIZE,
                         " got ", prim_params.configuration.x_size);
+
+        //   exp_sums,        // [num_seqs, num_heads, max_num_partitions]
+        //   max_logits,      // [num_seqs, num_heads, max_num_partitions]
+        //   tmp_out,         // [num_seqs, num_heads, max_num_partitions, head_size]
+
+        const auto& input = prim_params.inputs[0];
+        const size_t batch_size = input.Batch().v;
+        const size_t seq_len = input.Feature().v;
+        const size_t tokens_num = batch_size * seq_len;
+        const size_t num_of_portions = CeilDiv(prim_params.configuration.max_context_len, SEQ_LEN_PORTION_SIZE);
+
+        auto buf_dt_size = BytesPerElement(prim_params.inputs[0].GetDType());
+        auto buf_elements_count = tokens_num * prim_params.configuration.heads_num * num_of_portions;
+        auto buf_size = buf_elements_count * buf_dt_size;
+
+        auto tmp_out_dt_size = BytesPerElement(prim_params.inputs[0].GetDType());
+        auto tmp_out_elements_count = tokens_num * prim_params.configuration.heads_num * num_of_portions * prim_params.configuration.head_size;
+        auto tmp_out_size = tmp_out_elements_count * tmp_out_dt_size;
+
+        kd.kernels[0].params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 0});
+        kd.kernels[0].params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 1});
+        kd.kernels[0].params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 2});
+        kd.internalBufferSizes.clear();
+        kd.internalBufferSizes.push_back(buf_size);
+        kd.internalBufferSizes.push_back(buf_size);
+        kd.internalBufferSizes.push_back(tmp_out_size);
+
+        kd.internalBufferDataType = prim_params.inputs[0].GetDType();
     };
 }
 
@@ -138,9 +168,15 @@ CommonDispatchData SDPAKernelRef::SetDefault(const sdpa_params& kernel_params) {
         const size_t batch_size = input.Batch().v;
         const size_t seq_len = input.Feature().v;
         const size_t tokens_num = batch_size * seq_len;
+
+        size_t num_of_portions = CeilDiv(kernel_params.configuration.max_context_len, SEQ_LEN_PORTION_SIZE);
+        std::cout << "max_context_len=" << kernel_params.configuration.max_context_len
+                  << " SEQ_LEN_PORTION_SIZE=" << SEQ_LEN_PORTION_SIZE
+                  << " num_of_portions=" << num_of_portions << "\n";
+
         dispatch_data.gws = { tokens_num,
                               kernel_params.configuration.heads_num,
-                              kernel_params.configuration.head_size };
+                              kernel_params.configuration.head_size * num_of_portions };
         dispatch_data.lws = { 1, 1, kernel_params.configuration.head_size };
     }
 
