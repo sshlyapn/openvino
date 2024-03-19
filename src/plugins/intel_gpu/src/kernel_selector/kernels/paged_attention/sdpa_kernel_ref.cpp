@@ -15,7 +15,7 @@ constexpr size_t KV_HEADS_NUM = 8;
 constexpr size_t BLOCK_SIZE = 16;
 constexpr size_t X_BLOCK_SIZE = 8;
 
-constexpr size_t MAX_SEQUENCE_LENGTH = 1024;
+constexpr size_t MAX_SEQUENCE_LENGTH = 1536;
 
 void SDPAKernelRef::GetUpdateDispatchDataFunc(KernelData& kd) const {
     kd.update_dispatch_data_func = [](const Params& params, KernelData& kd) {
