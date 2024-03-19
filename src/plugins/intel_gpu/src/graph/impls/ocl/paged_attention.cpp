@@ -16,27 +16,27 @@
 namespace cldnn {
 namespace ocl {
 
-static memory::ptr generate_attention_bias(size_t batch_size, size_t seq_len, size_t sliding_window, engine& engine) {
-    ov::Shape attention_mask_shape({batch_size, 1, 1, seq_len, seq_len});
-    layout bias_layout {attention_mask_shape, data_types::f16, format::bfzyx};
-    memory::ptr attention_mask = engine.allocate_memory(bias_layout, false);
-    mem_lock<ov::float16, mem_lock_type::read> attention_mask_lock(attention_mask, engine.get_service_stream());
-    int attention_mask_stride = seq_len * seq_len;
+// static memory::ptr generate_attention_bias(size_t batch_size, size_t seq_len, size_t sliding_window, engine& engine) {
+//     ov::Shape attention_mask_shape({batch_size, 1, 1, seq_len, seq_len});
+//     layout bias_layout {attention_mask_shape, data_types::f16, format::bfzyx};
+//     memory::ptr attention_mask = engine.allocate_memory(bias_layout, false);
+//     mem_lock<ov::float16, mem_lock_type::read> attention_mask_lock(attention_mask, engine.get_service_stream());
+//     int attention_mask_stride = seq_len * seq_len;
 
-    ov::float16 negative_inf = -std::numeric_limits<ov::float16>::infinity();
+//     ov::float16 negative_inf = -std::numeric_limits<ov::float16>::infinity();
 
-    for (size_t batch_id = 0; batch_id < batch_size; ++batch_id) {
-        ov::float16* attention_mask_data = attention_mask_lock.data() + batch_id * attention_mask_stride;
-        size_t left_window = sliding_window, right_window = 1;
-        for (size_t y = 0; y < seq_len; ++y) {
-            for (size_t x = 0; x < seq_len; ++x) {
-                attention_mask_data[y * seq_len + x] = (x + right_window - 1) > y || (x + left_window - 1) < y ? negative_inf : ov::float16(0);
-            }
-        }
-    }
+//     for (size_t batch_id = 0; batch_id < batch_size; ++batch_id) {
+//         ov::float16* attention_mask_data = attention_mask_lock.data() + batch_id * attention_mask_stride;
+//         size_t left_window = sliding_window, right_window = 1;
+//         for (size_t y = 0; y < seq_len; ++y) {
+//             for (size_t x = 0; x < seq_len; ++x) {
+//                 attention_mask_data[y * seq_len + x] = (x + right_window - 1) > y || (x + left_window - 1) < y ? negative_inf : ov::float16(0);
+//             }
+//         }
+//     }
 
-    return attention_mask;
-}
+//     return attention_mask;
+// }
 
 struct paged_attention_impl : multi_stage_primitive<paged_attention> {
     using parent = multi_stage_primitive<paged_attention>;
@@ -88,14 +88,32 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
                 args.outputs = { instance.input_memory_ptr(3), /* key_cache */
                                 instance.input_memory_ptr(4)   /* value_cache */ };
             } else if (stage == Stage::SDPA) {
-                args.inputs = { instance.input_memory_ptr(0), /* query */
-                                instance.input_memory_ptr(3), /* key_cache */
-                                instance.input_memory_ptr(4), /* value_cache */
-                                instance.input_memory_ptr(7), /* max_context_len */
-                                instance.input_memory_ptr(8), /* context_lens */
-                                instance.input_memory_ptr(9), /* block_tables */
-                                instance.input_memory_ptr(10) /* scale */ };
-                args.outputs = { instance.output_memory_ptr(0) };
+                // auto& stream = instance.get_network().get_stream();
+                auto& service_stream = instance.get_network().get_engine().get_service_stream();
+                auto is_prefill_memory = instance.input_memory_ptr(5);
+                mem_lock<uint8_t, mem_lock_type::read> is_prefill_memory_lock(is_prefill_memory, service_stream);
+                bool is_prefill_stage = is_prefill_memory_lock[0];
+
+                if (!is_prefill_stage) {
+                    args.inputs = { instance.input_memory_ptr(0), /* query */
+                                    instance.input_memory_ptr(3), /* key_cache */
+                                    instance.input_memory_ptr(4), /* value_cache */
+                                    instance.input_memory_ptr(7), /* max_context_len */
+                                    instance.input_memory_ptr(8), /* context_lens */
+                                    instance.input_memory_ptr(9), /* block_tables */
+                                    instance.input_memory_ptr(10) /* scale */ };
+                    args.outputs = { instance.output_memory_ptr(0) };
+                } else {
+                    GPU_DEBUG_TRACE_DETAIL << "Replace arguments for PA\n";
+                    args.inputs = { instance.input_memory_ptr(0), /* query */
+                                    instance.input_memory_ptr(3), /* key_cache */
+                                    instance.input_memory_ptr(4), /* value_cache */
+                                    instance.input_memory_ptr(7), /* max_context_len */
+                                    instance.context_lens_mem,    /* context_lens */
+                                    instance.blocks_mem,          /* block_tables */
+                                    instance.input_memory_ptr(10) /* scale */ };
+                    args.outputs = { instance.output_memory_ptr(0) };
+                }
             }
 
             return args;
@@ -188,84 +206,84 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
 
     event::ptr execute_impl(const std::vector<event::ptr>& events, paged_attention_inst& instance) override {
         auto& stream = instance.get_network().get_stream();
-        auto& service_stream = instance.get_network().get_engine().get_service_stream();
+        // auto& service_stream = instance.get_network().get_engine().get_service_stream();
         std::vector<event::ptr> res_events;
 
-        auto is_prefill_memory = instance.input_memory_ptr(5);
-        mem_lock<uint8_t, mem_lock_type::read> is_prefill_memory_lock(is_prefill_memory, service_stream);
-        bool is_prefill_stage = is_prefill_memory_lock[0];
+        // auto is_prefill_memory = instance.input_memory_ptr(5);
+        // mem_lock<uint8_t, mem_lock_type::read> is_prefill_memory_lock(is_prefill_memory, service_stream);
+        // bool is_prefill_stage = is_prefill_memory_lock[0];
 
-        GPU_DEBUG_TRACE_DETAIL << instance.id() << " stage is " << (is_prefill_stage ? "prefill" : "tokens generating") << "\n";
+        // GPU_DEBUG_TRACE_DETAIL << instance.id() << " stage is " << (is_prefill_stage ? "prefill" : "tokens generating") << "\n";
 
         execute_stage(events, instance, res_events, Stage::KV_CACHE_UPDATE);
 
-        if (is_prefill_stage) {
-            auto sliding_window_memory = instance.input_memory_ptr(12);
-            auto new_sliding_window_layout = layout{{1}, sliding_window_memory->get_layout().data_type, format::bfyx};
-            auto reshaped_sliding_window_mem = instance.get_network().get_engine().reinterpret_buffer(*sliding_window_memory, new_sliding_window_layout);
-            mem_lock<int32_t, mem_lock_type::read> sliding_window_memory_lock(reshaped_sliding_window_mem, service_stream);
-            int32_t sliding_window = sliding_window_memory_lock[0];
-            if (sliding_window == 0) {
-                sliding_window = std::numeric_limits<std::int32_t>::max();
-            }
+        if (false) {
+            // auto sliding_window_memory = instance.input_memory_ptr(12);
+            // auto new_sliding_window_layout = layout{{1}, sliding_window_memory->get_layout().data_type, format::bfyx};
+            // auto reshaped_sliding_window_mem = instance.get_network().get_engine().reinterpret_buffer(*sliding_window_memory, new_sliding_window_layout);
+            // mem_lock<int32_t, mem_lock_type::read> sliding_window_memory_lock(reshaped_sliding_window_mem, service_stream);
+            // int32_t sliding_window = sliding_window_memory_lock[0];
+            // if (sliding_window == 0) {
+            //     sliding_window = std::numeric_limits<std::int32_t>::max();
+            // }
 
-            const auto query_layout = instance.get_impl_params()->get_input_layout(0);
-            const auto query_shape = query_layout.get_shape();
-            const auto key_cache_layout = instance.get_impl_params()->get_input_layout(3);
-            const auto value_cache_layout = instance.get_impl_params()->get_input_layout(4);
-            const auto key_cache_shape = key_cache_layout.get_shape();
-            const auto value_cache_shape = value_cache_layout.get_shape();
+            // const auto query_layout = instance.get_impl_params()->get_input_layout(0);
+            // const auto query_shape = query_layout.get_shape();
+            // const auto key_cache_layout = instance.get_impl_params()->get_input_layout(3);
+            // const auto value_cache_layout = instance.get_impl_params()->get_input_layout(4);
+            // const auto key_cache_shape = key_cache_layout.get_shape();
+            // const auto value_cache_shape = value_cache_layout.get_shape();
 
-            const int64_t batch_size = query_shape[0];
-            const int64_t seq_len = query_shape[1];
-            const int64_t hidden_size = query_shape[2];
-            const int64_t kv_heads_num = value_cache_shape[1];
-            const int64_t head_size = value_cache_shape[2];
-            const int64_t heads_num = hidden_size / head_size;
-            const int64_t num_queries_per_kv = heads_num / kv_heads_num;
+            // const int64_t batch_size = query_shape[0];
+            // const int64_t seq_len = query_shape[1];
+            // const int64_t hidden_size = query_shape[2];
+            // const int64_t kv_heads_num = value_cache_shape[1];
+            // const int64_t head_size = value_cache_shape[2];
+            // const int64_t heads_num = hidden_size / head_size;
+            // const int64_t num_queries_per_kv = heads_num / kv_heads_num;
 
-            std::cout << "Prefill stage: batch_size=" << batch_size << " seq_len=" << seq_len << " hidden_size=" << hidden_size
-                      << " kv_heads_num=" << kv_heads_num << " heads_num=" << heads_num << " head_size=" << head_size
-                      << " q=" << query_layout.to_short_string() << " k_cache=" << key_cache_layout.to_short_string()
-                      << " v_cache=" << value_cache_layout.to_short_string() << "\n";
+            // std::cout << "Prefill stage: batch_size=" << batch_size << " seq_len=" << seq_len << " hidden_size=" << hidden_size
+            //           << " kv_heads_num=" << kv_heads_num << " heads_num=" << heads_num << " head_size=" << head_size
+            //           << " q=" << query_layout.to_short_string() << " k_cache=" << key_cache_layout.to_short_string()
+            //           << " v_cache=" << value_cache_layout.to_short_string() << "\n";
 
-            auto attention_bias = generate_attention_bias(batch_size, seq_len, sliding_window, instance.get_network().get_engine());
+            // auto attention_bias = generate_attention_bias(batch_size, seq_len, sliding_window, instance.get_network().get_engine());
 
-            auto query_mem = instance.input_memory_ptr(0);
-            auto query_layout_new = layout{{batch_size, seq_len, kv_heads_num, num_queries_per_kv, head_size}, query_mem->get_layout().data_type, format::bfzyx};
-            auto reshaped_query_mem = instance.get_network().get_engine().reinterpret_buffer(*query_mem, query_layout_new);
+            // auto query_mem = instance.input_memory_ptr(0);
+            // auto query_layout_new = layout{{batch_size, seq_len, kv_heads_num, num_queries_per_kv, head_size}, query_mem->get_layout().data_type, format::bfzyx};
+            // auto reshaped_query_mem = instance.get_network().get_engine().reinterpret_buffer(*query_mem, query_layout_new);
 
-            auto key_mem = instance.input_memory_ptr(1);
-            auto key_layout_new = layout{{batch_size, seq_len, kv_heads_num, 1, head_size}, key_mem->get_layout().data_type, format::bfzyx};
-            auto reshaped_key_mem = instance.get_network().get_engine().reinterpret_buffer(*key_mem, key_layout_new);
+            // auto key_mem = instance.input_memory_ptr(1);
+            // auto key_layout_new = layout{{batch_size, seq_len, kv_heads_num, 1, head_size}, key_mem->get_layout().data_type, format::bfzyx};
+            // auto reshaped_key_mem = instance.get_network().get_engine().reinterpret_buffer(*key_mem, key_layout_new);
 
-            auto value_mem = instance.input_memory_ptr(2);
-            auto value_layout_new = layout{{batch_size, seq_len, kv_heads_num, 1, head_size}, value_mem->get_layout().data_type, format::bfzyx};
-            auto reshaped_value_mem = instance.get_network().get_engine().reinterpret_buffer(*value_mem, value_layout_new);
+            // auto value_mem = instance.input_memory_ptr(2);
+            // auto value_layout_new = layout{{batch_size, seq_len, kv_heads_num, 1, head_size}, value_mem->get_layout().data_type, format::bfzyx};
+            // auto reshaped_value_mem = instance.get_network().get_engine().reinterpret_buffer(*value_mem, value_layout_new);
 
-            auto scale_mem = instance.input_memory_ptr(10);
-            auto scale_layout_new = layout{{1}, scale_mem->get_layout().data_type, format::bfyx};
-            auto reshaped_scale_mem = instance.get_network().get_engine().reinterpret_buffer(*scale_mem, scale_layout_new);
+            // auto scale_mem = instance.input_memory_ptr(10);
+            // auto scale_layout_new = layout{{1}, scale_mem->get_layout().data_type, format::bfyx};
+            // auto reshaped_scale_mem = instance.get_network().get_engine().reinterpret_buffer(*scale_mem, scale_layout_new);
 
-            auto prefill_network = instance.prefill_network;
-            prefill_network->set_input_data("parameter:query", reshaped_query_mem);
-            prefill_network->set_input_data("parameter:key", reshaped_key_mem);
-            prefill_network->set_input_data("parameter:value", reshaped_value_mem);
-            prefill_network->set_input_data("parameter:mask", attention_bias);
-            prefill_network->set_input_data("parameter:scale", reshaped_scale_mem);
+            // auto prefill_network = instance.prefill_network;
+            // prefill_network->set_input_data("parameter:query", reshaped_query_mem);
+            // prefill_network->set_input_data("parameter:key", reshaped_key_mem);
+            // prefill_network->set_input_data("parameter:value", reshaped_value_mem);
+            // prefill_network->set_input_data("parameter:mask", attention_bias);
+            // prefill_network->set_input_data("parameter:scale", reshaped_scale_mem);
 
-            auto results = prefill_network->execute(events);
+            // auto results = prefill_network->execute(events);
 
-            OPENVINO_ASSERT(results.size() == 1, "[GPU] Unexpected number of outputs of PagedAttention operation");
+            // OPENVINO_ASSERT(results.size() == 1, "[GPU] Unexpected number of outputs of PagedAttention operation");
 
-            auto output_mem = results.begin()->second.get_memory();
-            auto output_layout_new = layout{query_shape, output_mem->get_layout().data_type, format::bfyx};
-            auto reshaped_output_mem = instance.get_network().get_engine().reinterpret_buffer(*output_mem, output_layout_new);
+            // auto output_mem = results.begin()->second.get_memory();
+            // auto output_layout_new = layout{query_shape, output_mem->get_layout().data_type, format::bfyx};
+            // auto reshaped_output_mem = instance.get_network().get_engine().reinterpret_buffer(*output_mem, output_layout_new);
 
-            instance.set_output_memory(reshaped_output_mem);
-            instance.set_mem_changed(true);
+            // instance.set_output_memory(reshaped_output_mem);
+            // instance.set_mem_changed(true);
 
-            return results.begin()->second.get_event();
+            // return results.begin()->second.get_event();
         } else {
             // Add key/value cache update to dependencies
             auto all_events = events;

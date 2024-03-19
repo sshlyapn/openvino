@@ -42,6 +42,9 @@ public:
     typed_primitive_inst(network& network, const paged_attention_node& desc);
     typed_primitive_inst(network& network) : parent(network) {}
 
+    mutable cldnn::memory::ptr blocks_mem = nullptr;
+    mutable cldnn::memory::ptr context_lens_mem = nullptr;
+
     std::shared_ptr<network> prefill_network;
 
 protected:

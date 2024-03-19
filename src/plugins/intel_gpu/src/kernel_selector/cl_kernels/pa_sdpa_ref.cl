@@ -135,7 +135,6 @@ KERNEL(pa_sdpa_ref)(
             q[i] = QUERY_BLOCK_READ(query, query_idx);
         }
 
-
         for (uint block = 0; block < blocks_num; block++) {
             const uint block_idx = batch_idx * blocks_num + block;
             const uint block_offset = block_tables[block_idx] * KV_CACHE_BLOCK_STRIDE;
@@ -144,7 +143,6 @@ KERNEL(pa_sdpa_ref)(
 
             ulong timer2 = intel_get_cycle_counter();
             for (uint hs = 0; hs < Q_LOAD_ITERS; hs++) {
-                // TODO: can be preloaded outside Q_LOAD_ITERS loop - need to check perf
                 for (uint qk_idx = 0; qk_idx < QK_VALS_PER_SG_PER_ITER; qk_idx++) {
                     uint current_token = block * BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + qk_idx;
                     if (current_token >= context_len)
@@ -156,6 +154,13 @@ KERNEL(pa_sdpa_ref)(
                                         (SUB_GROUP_SIZE / X_BLOCK_SIZE * BLOCK_SIZE * X_BLOCK_SIZE) * hs +
                                         (sglid / X_BLOCK_SIZE) * X_BLOCK_SIZE * BLOCK_SIZE +
                                         (sglid % X_BLOCK_SIZE) + qk_idx * X_BLOCK_SIZE;
+
+
+                    // if (get_global_id(1) == 0 && get_global_id(2) == 0 && hs == 0) {
+                    //     printf("test=%d, %d seq_idx=%d (b=%d, t=%d), %d %d: q_idx = %d, k_idx= %d, block=%d\n", get_global_size(0), INPUT0_FEATURE_NUM, get_global_id(0),
+                    //     batch_idx, token_idx,
+                    //     get_global_id(1), get_global_id(2), seq_idx * HEAD_SIZE * HEADS_NUM + head_num_idx * HEAD_SIZE, key_idx, block);
+                    // }
 
                     // TODO1: try block loading and shuffling
                     // TODO2: try to load k*4 times and then calculate
@@ -188,6 +193,11 @@ KERNEL(pa_sdpa_ref)(
                     //     printf("final_calc: seq_idx=%d, head_num_idx=%d, sgid=%d, sglid=%d: before qk[%d]=%f, after=%f\n",
                     //             seq_idx, head_num_idx, sgid, sglid, qk_idx, tmp_print, qk[qk_idx]);
                     qk[qk_idx] = scale[0] * qk[qk_idx];
+
+                    // Apply attention mask during prefill stage
+                    if (INPUT0_FEATURE_NUM > 1 && current_token > token_idx) {
+                        qk[qk_idx] = qk[qk_idx] + OUTPUT_VAL_MIN;
+                    }
                     qk_max = OUTPUT_MAX_FUNC(qk_max, qk[qk_idx]);
                 }
             }
@@ -218,6 +228,21 @@ KERNEL(pa_sdpa_ref)(
         // if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_global_id(2) == 0)
         //     printf("SDPA kernel GEMM1: %d; qk_max=%f\n", (uint)total_time, qk_max);
     }
+
+    // barrier(CLK_LOCAL_MEM_FENCE);
+    // if (get_global_id(1) == 0 && get_global_id(2) == 0) {
+    //     const uint block_idx = batch_idx * blocks_num + 0;
+    //     const uint block_offset = block_tables[block_idx] * KV_CACHE_BLOCK_STRIDE;
+    //     uint key_idx =  block_offset +
+    //                                     (head_num_idx / NUM_QUERIES_PER_KV_HEAD) * (HEAD_SIZE / X_BLOCK_SIZE * BLOCK_SIZE * X_BLOCK_SIZE) +
+    //                                     (X_BLOCK_SIZE * QK_VALS_PER_SG_PER_ITER) * sgid +
+    //                                     (SUB_GROUP_SIZE / X_BLOCK_SIZE * BLOCK_SIZE * X_BLOCK_SIZE) * 0 +
+    //                                     (sglid / X_BLOCK_SIZE) * X_BLOCK_SIZE * BLOCK_SIZE +
+    //                                     (sglid % X_BLOCK_SIZE) + 0 * X_BLOCK_SIZE;
+    //     printf("Intermidiate results for b=%d, seq=%d: %f %f %f %f %f. Q_idx=%d, q_val=%f. K_idx=%d, k_val=%f, block_idx=%d, block_tables[block_idx]=%d\n", batch_idx, token_idx, qk_vals[0], qk_vals[1], qk_vals[2], qk_vals[3], qk_vals[4],
+    //     seq_idx * HEAD_SIZE * HEADS_NUM + head_num_idx * HEAD_SIZE, query[seq_idx * HEAD_SIZE * HEADS_NUM + head_num_idx * HEAD_SIZE],
+    //     key_idx, key_cache[key_idx], block_idx, block_tables[block_idx]);
+    // }
 
     // Apply SoftMax operation
     __local OUTPUT_TYPE qk_max_vals[SUBGROUPS_PER_WG];
