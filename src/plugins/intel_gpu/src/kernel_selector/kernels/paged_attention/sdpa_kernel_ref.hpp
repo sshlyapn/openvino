@@ -17,7 +17,6 @@ struct sdpa_configuration {
     size_t kv_heads_num;
     size_t block_size;
     size_t x_size;
-
     size_t max_context_len;
 };
 
@@ -40,7 +39,7 @@ public:
 protected:
     bool Validate(const Params& params) const override;
     JitConstants GetJitConstants(const sdpa_params& kernel_params) const;
-    static CommonDispatchData SetDefault(const sdpa_params& kernel_params);
+    static CommonDispatchData SetDefault(const sdpa_params& kernel_params, size_t kernel_idx = 0);
     void GetUpdateDispatchDataFunc(KernelData& kd) const override;
 };
 

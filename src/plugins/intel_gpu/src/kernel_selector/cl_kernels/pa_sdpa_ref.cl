@@ -38,6 +38,8 @@
 
 ulong __attribute__((overloadable)) intel_get_cycle_counter( void );
 
+#ifdef SDPA_STAGE_0
+
 REQD_SUB_GROUP_SIZE(SUB_GROUP_SIZE)
 __attribute__((reqd_work_group_size(1, 1, HEAD_SIZE)))
 KERNEL(pa_sdpa_ref)(
@@ -49,7 +51,11 @@ KERNEL(pa_sdpa_ref)(
     __global const INPUT4_TYPE* context_lens,
     __global const INPUT5_TYPE* block_tables,
     __global const INPUT6_TYPE* scale,
-    __global OUTPUT_TYPE* output)
+    __global OUTPUT_TYPE* output,
+    __global OUTPUT_TYPE* exp_sums,
+    __global OUTPUT_TYPE* max_logits,
+    __global OUTPUT_TYPE* tmp_out,
+    uint num_of_portions)
 {
     const uint seq_idx = get_global_id(0);
     const uint head_num_idx = get_global_id(1);
@@ -63,6 +69,11 @@ KERNEL(pa_sdpa_ref)(
     const uint context_len = context_lens[batch_idx];
 
     const uint blocks_num = INPUT5_FEATURE_NUM;
+
+    const uint portion_id = get_group_id(2);
+    const uint block_start_idx = portion_id * SEQ_LEN_PORTION_SIZE / BLOCK_SIZE;
+    const uint block_end_idx = min(block_start_idx + (SEQ_LEN_PORTION_SIZE / BLOCK_SIZE), blocks_num);
+
 
     // if (seq_idx < 2 && head_num_idx < 2 && sgid < 2 && sglid < 2) {
     //     if (INPUT5_BATCH_NUM == 2) {
@@ -135,8 +146,9 @@ KERNEL(pa_sdpa_ref)(
             q[i] = QUERY_BLOCK_READ(query, query_idx);
         }
 
-        for (uint block = 0; block < blocks_num; block++) {
-            const uint block_idx = batch_idx * blocks_num + block;
+        // JIT: Compile time restriction: devisible SEQ_LEN_PORTION_SIZE / BLOCK_SIZE
+        for (uint block = 0; block < SEQ_LEN_PORTION_SIZE / BLOCK_SIZE; block++) {
+            const uint block_idx = batch_idx * blocks_num + block + block_start_idx;
             const uint block_offset = block_tables[block_idx] * KV_CACHE_BLOCK_STRIDE;
 
             OUTPUT_TYPE qk[QK_VALS_PER_SG_PER_ITER] = {0};
@@ -144,7 +156,7 @@ KERNEL(pa_sdpa_ref)(
             ulong timer2 = intel_get_cycle_counter();
             for (uint hs = 0; hs < Q_LOAD_ITERS; hs++) {
                 for (uint qk_idx = 0; qk_idx < QK_VALS_PER_SG_PER_ITER; qk_idx++) {
-                    uint current_token = block * BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + qk_idx;
+                    uint current_token = (block + block_start_idx) * BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + qk_idx;
                     if (current_token >= context_len)
                         continue;
 
@@ -185,7 +197,7 @@ KERNEL(pa_sdpa_ref)(
 
             // Summurize qk calculation across all WIs and apply scale
             for (uint qk_idx = 0; qk_idx < QK_VALS_PER_SG_PER_ITER; qk_idx++) {
-                const uint current_token = block * BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + qk_idx;
+                const uint current_token = (block + block_start_idx) * BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + qk_idx;
                 if (current_token < context_len) {
                     OUTPUT_TYPE tmp_print = qk[qk_idx];
                     qk[qk_idx] = sub_group_reduce_add(qk[qk_idx]);
@@ -194,7 +206,7 @@ KERNEL(pa_sdpa_ref)(
                     //             seq_idx, head_num_idx, sgid, sglid, qk_idx, tmp_print, qk[qk_idx]);
                     qk[qk_idx] = scale[0] * qk[qk_idx];
 
-                    // Apply attention mask during prefill stage
+                    // Apply attention mask at prefill stage
                     if (INPUT0_FEATURE_NUM > 1 && current_token > token_idx) {
                         qk[qk_idx] = qk[qk_idx] + OUTPUT_VAL_MIN;
                     }
@@ -206,12 +218,13 @@ KERNEL(pa_sdpa_ref)(
             // Save QK results to local memory
             if (sglid < QK_VALS_PER_SG_PER_ITER) {
                 const uint current_token = block * BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + sglid;
+                const uint current_token_global_idx = (block + block_start_idx) * BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + sglid;
                 // Fixed -> // const uint qk_local_idx = block * BLOCK_SIZE * sgid * QK_VALS_PER_SG_PER_ITER + sglid;
                 // OUTPUT_TYPE tmp_print = (current_token >= context_len ? 0 : qk[sglid]);
                 // if (head_num_idx < 4 || head_num_idx == 31)
                 //     printf("slm save: seq_idx=%d, head_num_idx=%d, sgid=%d, sglid=%d: qk_vals[%d]=%f. Max=%f\n",
                 //             seq_idx, head_num_idx, sgid, sglid, current_token, tmp_print, qk_max);
-                qk_vals[current_token] = current_token >= context_len ? 0 : qk[sglid];
+                qk_vals[current_token] = current_token_global_idx >= context_len ? 0 : qk[sglid];
             }
             ulong timer5 = intel_get_cycle_counter();
 
@@ -266,12 +279,13 @@ KERNEL(pa_sdpa_ref)(
         // }
 
         OUTPUT_TYPE exp_sum = OUTPUT_VAL_ZERO;
-        for (uint qk_idx = 0; qk_idx < CEIL_DIV(context_len, SUBGROUPS_PER_WG * SUB_GROUP_SIZE); qk_idx++) {
-            const uint data_idx = qk_idx * (SUBGROUPS_PER_WG * SUB_GROUP_SIZE) + sgid * SUB_GROUP_SIZE + sglid;
-            if (data_idx < context_len) {
-                OUTPUT_TYPE val = native_exp(qk_vals[data_idx] - qk_max);
+        for (uint qk_idx = 0; qk_idx < CEIL_DIV(SEQ_LEN_PORTION_SIZE, SUBGROUPS_PER_WG * SUB_GROUP_SIZE); qk_idx++) {
+            const uint local_data_idx = qk_idx * (SUBGROUPS_PER_WG * SUB_GROUP_SIZE) + sgid * SUB_GROUP_SIZE + sglid;
+            const uint global_data_idx = block_start_idx * BLOCK_SIZE + qk_idx * (SUBGROUPS_PER_WG * SUB_GROUP_SIZE) + sgid * SUB_GROUP_SIZE + sglid;
+            if (global_data_idx < context_len) {
+                OUTPUT_TYPE val = native_exp(qk_vals[local_data_idx] - qk_max);
                 exp_sum += val;
-                qk_vals[data_idx] = val;
+                qk_vals[local_data_idx] = val;
                 // if (head_num_idx < 4 || head_num_idx == 31)
                 //     printf("head_num %d, sgid = %d, sglid = %d, exp_sum = %f\n", head_num_idx, sgid, sglid, exp_sum);
             }
@@ -290,6 +304,8 @@ KERNEL(pa_sdpa_ref)(
 
         exp_sum = OUTPUT_VAL_ZERO;
 
+
+        // JIT: Compile time restiction SUBGROUPS_PER_WG <= SG_SIZE
         if (sglid < SUBGROUPS_PER_WG)
             exp_sum = qk_sum_vals[sglid];
 
@@ -300,19 +316,33 @@ KERNEL(pa_sdpa_ref)(
 
 
         // TODO: replace CEIL_DIV with ALIGN and use += SUBGROUPS_PER_WG * SUB_GROUP_SIZE increment
-        for (uint qk_idx = 0; qk_idx < CEIL_DIV(context_len, SUBGROUPS_PER_WG * SUB_GROUP_SIZE); qk_idx++) {
-            const uint data_idx = qk_idx * (SUBGROUPS_PER_WG * SUB_GROUP_SIZE) + sgid * SUB_GROUP_SIZE + sglid;
-            if (data_idx < context_len) {
-                OUTPUT_TYPE val = qk_vals[data_idx] * inv_sum;
-                qk_vals[data_idx] = val;
+        for (uint qk_idx = 0; qk_idx < CEIL_DIV(SEQ_LEN_PORTION_SIZE, SUBGROUPS_PER_WG * SUB_GROUP_SIZE); qk_idx++) {
+            const uint local_data_idx = qk_idx * (SUBGROUPS_PER_WG * SUB_GROUP_SIZE) + sgid * SUB_GROUP_SIZE + sglid;
+            const uint global_data_idx = block_start_idx * BLOCK_SIZE + qk_idx * (SUBGROUPS_PER_WG * SUB_GROUP_SIZE) + sgid * SUB_GROUP_SIZE + sglid;
+            if (global_data_idx < context_len) {
+                OUTPUT_TYPE val = qk_vals[local_data_idx] * inv_sum;
+                qk_vals[local_data_idx] = val;
             }
         }
 
         barrier(CLK_LOCAL_MEM_FENCE);
 
-
         ulong timer_end = intel_get_cycle_counter();
         ulong total_time = timer_end - timer_start;
+
+        {
+            // Save temporary exm_sums and max_logits values for each portion
+            if (sgid == 0) {
+                const uint num_of_portions = get_num_groups(2);
+                const uint exp_sums_offset = seq_idx * HEADS_NUM * num_of_portions +
+                                             head_num_idx * num_of_portions +
+                                             portion_id;
+                exp_sums[exp_sums_offset] = exp_sum;
+
+                const uint max_logits_offset = exp_sums_offset;
+                max_logits[max_logits_offset] = qk_max;
+            }
+        }
 
         // if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_global_id(2) == 0)
         //     printf("SDPA kernel Softmax: %d\n", (uint)total_time);
@@ -328,12 +358,14 @@ KERNEL(pa_sdpa_ref)(
         ulong timer_start = intel_get_cycle_counter();
         OUTPUT_TYPE acc = OUTPUT_VAL_ZERO;
 
-        for (uint qk_idx = 0; qk_idx < ALIGN(context_len, SUB_GROUP_SIZE); qk_idx += SUB_GROUP_SIZE) {
-            const uint qk_offset = qk_idx + sglid;
 
-            OUTPUT_TYPE qk = qk_offset < context_len ? qk_vals[qk_offset] : OUTPUT_VAL_ZERO;
+        for (uint qk_idx = 0; qk_idx < SEQ_LEN_PORTION_SIZE / BLOCK_SIZE * SUB_GROUP_SIZE; qk_idx += SUB_GROUP_SIZE) {
+            const uint qk_offset_local = qk_idx + sglid;
+            const uint qk_offset_global = block_start_idx * BLOCK_SIZE + qk_offset_local;
 
-            const uint block_idx = block_tables[batch_idx * blocks_num + (qk_idx / BLOCK_SIZE)];
+            OUTPUT_TYPE qk = qk_offset_global < context_len ? qk_vals[qk_offset_local] : OUTPUT_VAL_ZERO;
+
+            const uint block_idx = block_tables[batch_idx * blocks_num + block_start_idx + (qk_idx / BLOCK_SIZE)];
             // if (block_idx == 0)
             //     continue;
 
@@ -356,7 +388,8 @@ KERNEL(pa_sdpa_ref)(
             //         seq_idx, head_num_idx, sgid, sglid, block_idx, qk_idx, qk_offset, value_cache_offset - (block_idx * KV_CACHE_BLOCK_STRIDE), block_idx * KV_CACHE_BLOCK_STRIDE, *tmp_print);
             // }
 
-            if (qk_idx + SUB_GROUP_SIZE <= context_len) {
+            // FINAL: rename token -> value_idx
+            if (block_start_idx * BLOCK_SIZE + qk_idx + SUB_GROUP_SIZE <= context_len) {
                 unroll_for (uint token = 0; token < SUB_GROUP_SIZE; token++) {
                     OUTPUT_TYPE qk_tmp = sub_group_broadcast(qk, token);
                     acc = mad(qk_tmp, v[token], acc);
@@ -364,7 +397,7 @@ KERNEL(pa_sdpa_ref)(
             } else {
                 for (uint token = 0; token < SUB_GROUP_SIZE; token++) {
                     OUTPUT_TYPE qk_tmp = sub_group_broadcast(qk, token);
-                    if (qk_idx + token < context_len) {
+                    if (block_start_idx * BLOCK_SIZE + qk_idx + token < context_len) {
                         acc = mad(qk_tmp, v[token], acc);
                     }
                 }
@@ -372,17 +405,32 @@ KERNEL(pa_sdpa_ref)(
         }
 
 
-        const uint output_offset = seq_idx * (HEADS_NUM * HEAD_SIZE) +
-                                   head_num_idx * HEAD_SIZE +
-                                   sgid * SUB_GROUP_SIZE +
-                                   sglid;
+        // const uint output_offset = seq_idx * (HEADS_NUM * HEAD_SIZE) +
+        //                            head_num_idx * HEAD_SIZE +
+        //                            sgid * SUB_GROUP_SIZE +
+        //                            sglid;
 
         // if (seq_idx == 0 && head_num_idx < 2 || head_num_idx == 31) {
         //     printf("output res: seq_idx=%d, head_num_idx=%d, sgid=%d, sglid=%d: output[%d] = %f\n",
         //         seq_idx, head_num_idx, sgid, sglid, output_offset, acc);
         // }
 
-        output[output_offset] = acc;
+        // output[output_offset] = acc;
+
+        {
+            // [num_seqs, num_heads, max_num_partitions, head_size]
+            const uint num_of_portions = get_num_groups(2);
+            const uint tmp_out_offset = seq_idx * (HEADS_NUM * HEAD_SIZE * num_of_portions) +
+                                       head_num_idx * (HEAD_SIZE * num_of_portions) +
+                                       portion_id * HEAD_SIZE +
+                                       sgid * SUB_GROUP_SIZE +
+                                       sglid;
+
+            // if (output_offset != tmp_out_offset)
+            //     printf("Different tmp_out_offset index!! %d vs %d, for portion_id %d\n", output_offset, tmp_out_offset, portion_id);
+
+            tmp_out[tmp_out_offset] = acc;
+        }
 
         ulong timer_end = intel_get_cycle_counter();
         ulong total_time = timer_end - timer_start;
@@ -391,3 +439,78 @@ KERNEL(pa_sdpa_ref)(
         //     printf("SDPA kernel GEMM2: %d\n", (uint)total_time);
     }
 }
+
+#endif
+
+#ifdef SDPA_STAGE_1
+
+//   exp_sums,        // [num_seqs, num_heads, max_num_partitions]
+//   max_logits,      // [num_seqs, num_heads, max_num_partitions]
+//   tmp_out,         // [num_seqs, num_heads, max_num_partitions, head_size]
+
+REQD_SUB_GROUP_SIZE(SUB_GROUP_SIZE)
+KERNEL(pa_sdpa_ref)(
+    OPTIONAL_SHAPE_INFO_ARG
+    __global const INPUT0_TYPE* query,
+    __global const INPUT1_TYPE* key_cache,
+    __global const INPUT2_TYPE* value_cache,
+    __global const INPUT3_TYPE* max_context_len,
+    __global const INPUT4_TYPE* context_lens,
+    __global const INPUT5_TYPE* block_tables,
+    __global const INPUT6_TYPE* scale,
+    __global OUTPUT_TYPE* output,
+    __global OUTPUT_TYPE* exp_sums,
+    __global OUTPUT_TYPE* max_logits,
+    __global OUTPUT_TYPE* tmp_out,
+    uint num_of_portions) {
+    if (num_of_portions <= SUB_GROUP_SIZE) {
+        const uint seq_idx = get_global_id(0);
+        const uint head_num_idx = get_global_id(1);
+        const uint head_idx = get_global_id(2);
+        const uint sglid = get_sub_group_local_id();
+
+        const uint exp_sums_offset = seq_idx * HEADS_NUM * num_of_portions +
+                                     head_num_idx * num_of_portions;
+        const uint max_logit_offset = exp_sums_offset;
+
+        OUTPUT_TYPE exp_sum = BLOCK_READN(OUTPUT_TYPE, 1, exp_sums, exp_sums_offset);
+        OUTPUT_TYPE max_logit = BLOCK_READN(OUTPUT_TYPE, 1, max_logits, max_logit_offset);
+        if (sglid >= num_of_portions) {
+            exp_sum = 0;
+            max_logit = OUTPUT_VAL_MIN;
+        }
+
+        OUTPUT_TYPE global_max = sub_group_reduce_max(max_logit);
+
+        // Update exp_sum with respect to the global maximum
+        OUTPUT_TYPE test_exp_sum = exp_sum;
+        if (sglid < num_of_portions)
+            exp_sum = exp_sum * native_exp(max_logit - global_max);
+
+        OUTPUT_TYPE global_sum = sub_group_reduce_add(exp_sum);
+
+        if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_global_id(2) == 0)
+            printf("Run second kernel for reduction: num_of_portions=%d: max_logit=%f, exp_sum = %f, global_sum = %f, global_max=%f, test = %f, %f, %f\n", num_of_portions,
+            max_logit, exp_sum, global_sum, global_max, test_exp_sum, native_exp(max_logit - global_max), test_exp_sum * native_exp(max_logit - global_max));
+
+        for (uint i = 0; i < HEAD_SIZE / SUB_GROUP_SIZE; i++) {
+            OUTPUT_TYPE acc = OUTPUT_VAL_ZERO;
+            for (uint portion = 0; portion < num_of_portions; portion++) {
+                const uint tmp_out_offset = seq_idx * (HEADS_NUM * HEAD_SIZE * num_of_portions) +
+                                            head_num_idx * (HEAD_SIZE * num_of_portions) +
+                                            portion * HEAD_SIZE;
+                OUTPUT_TYPE out_val = BLOCK_READN(OUTPUT_TYPE, 1, tmp_out, tmp_out_offset);
+                acc += out_val * sub_group_broadcast(exp_sum, portion) / global_sum;
+            }
+            const uint out_offset = seq_idx * (HEADS_NUM * HEAD_SIZE) +
+                                    head_num_idx * HEAD_SIZE +
+                                    i * SUB_GROUP_SIZE;
+            output[out_offset] = acc;
+        }
+    } else {
+        if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_global_id(2) == 0)
+            printf("run second kernel for portion >= 16\n");
+    }
+}
+
+#endif

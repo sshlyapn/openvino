@@ -291,10 +291,6 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
             for (auto& ev : res_events)
                 all_events.push_back(ev);
 
-            auto impl_param = *instance.get_impl_params();
-            auto sdpa_kernel_params = get_sdpa_kernel_params(impl_param, impl_param.is_dynamic());
-            (_kernels_data[Stage::SDPA].update_dispatch_data_func)(sdpa_kernel_params, _kernels_data[Stage::SDPA]);
-
             execute_stage(all_events, instance, res_events, Stage::SDPA);
 
             return aggregate_events(res_events, stream, res_events.size() > 1);
@@ -331,6 +327,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
             config.kv_heads_num = kv_heads_num;
             config.block_size = block_size;
             config.x_size = x_size;
+            config.max_context_len = 1;
         }
 
         return config;
@@ -397,6 +394,29 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         params.inputs[6] = convert_data_tensor(scale_layout);
 
         params.configuration = get_sdpa_configuration(impl_param);
+        GPU_DEBUG_TRACE_DETAIL << "Number of constant_mem " << impl_param.memory_deps.size() << ", dynamic=" << is_dynamic << "\n";
+        if (!is_dynamic) {
+            auto& constant_mem = impl_param.memory_deps;
+
+
+            const auto max_context_len_mem = constant_mem.at(7);
+            mem_lock<int32_t, mem_lock_type::read> max_context_len_mem_lock(max_context_len_mem, impl_param.get_stream());
+            GPU_DEBUG_TRACE_DETAIL << "max_context_len_mem_lock=" << max_context_len_mem_lock[0] << "\n";
+
+            const auto is_prompt_stage_mem = constant_mem.at(5);
+            mem_lock<uint8_t, mem_lock_type::read> is_prompt_stage_mem_lock(is_prompt_stage_mem, impl_param.get_stream());
+            bool is_prompt_stage = is_prompt_stage_mem_lock[0];
+
+            if (is_prompt_stage) {
+                // Use number of slots for KV cache as a maximum context length for the first iteration
+                auto slot_mapping = impl_param.get_input_layout(6);
+                params.configuration.max_context_len = slot_mapping.get_shape()[1];
+            } else {
+                const auto max_context_len_mem = constant_mem.at(7);
+                mem_lock<int32_t, mem_lock_type::read> max_context_len_mem_lock(max_context_len_mem, impl_param.get_stream());
+                params.configuration.max_context_len = max_context_len_mem_lock[0];
+            }
+        }
 
         const auto& in_offsets_map = impl_param.in_port_to_shape_info_offset;
         const auto& out_offsets_map = impl_param.out_port_to_shape_info_offset;
@@ -434,6 +454,9 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
     void update_dispatch_data(const kernel_impl_params& impl_param) override {
         auto kv_cache_update_kernel_params = get_kv_cache_update_kernel_params(impl_param, impl_param.is_dynamic());
         (_kernels_data[Stage::KV_CACHE_UPDATE].update_dispatch_data_func)(kv_cache_update_kernel_params, _kernels_data[Stage::KV_CACHE_UPDATE]);
+
+        auto sdpa_kernel_params = get_sdpa_kernel_params(impl_param, impl_param.is_dynamic());
+        (_kernels_data[Stage::SDPA].update_dispatch_data_func)(sdpa_kernel_params, _kernels_data[Stage::SDPA]);
     }
 };
 
