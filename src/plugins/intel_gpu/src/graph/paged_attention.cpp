@@ -45,6 +45,7 @@ void paged_attention_inst::update_shape_info_tensor(const kernel_impl_params& pa
     auto is_prefill_memory = this->input_memory_ptr(5);
     mem_lock<uint8_t, mem_lock_type::read> is_prefill_memory_lock(is_prefill_memory, service_stream);
     bool is_prefill_stage = is_prefill_memory_lock[0];
+    is_prefill_stage = false;
     if (!is_prefill_stage) {
         parent::update_shape_info_tensor(params);
     } else {
