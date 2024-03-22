@@ -380,6 +380,11 @@ void primitive_inst::update_shape() {
 
         auto dep_mem = _network.get_output_memory(dep_id);
         memory_deps.insert({i, dep_mem});
+
+        // Ignore shape_infer dependency for input_layout dependency type and in_order queue
+        if (get_node().is_type<paged_attention>() && dep.is_type<input_layout>() && queue_type == QueueTypes::in_order)
+            continue;
+
         if (!get_node().is_type<shape_of>() && !dep.is_in_shape_of_subgraph()) {
             has_runtime_deps = true;
 
@@ -391,6 +396,7 @@ void primitive_inst::update_shape() {
         }
     }
 
+    GPU_DEBUG_TRACE_DETAIL << id() << " runtime dependencies = " << has_runtime_deps << "\n";
     if (has_runtime_deps) {
         OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, openvino::itt::handle("update_shape_sync: " + id()));
         if (!dependencies_events.empty() && queue_type == QueueTypes::out_of_order) {

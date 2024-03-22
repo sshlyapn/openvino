@@ -158,6 +158,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
             kernel_offset += _kernels_data[s].kernels.size();
         }
         for (size_t kd_idx = 0; kd_idx < _kernels_data[stage].kernels.size(); ++kd_idx) {
+            auto time0 = std::chrono::high_resolution_clock::now();
             if (_kernels_data[stage].kernels[kd_idx].skip_execution)
                 continue;
 
@@ -166,6 +167,8 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
             bool needs_completion_event = instance.needs_completion_event();
 
             auto& params = _kernels_data[stage].kernels[kd_idx].params;
+
+
             auto args = get_arguments(instance, stage);
             args.scalars = &params.scalars;
 
@@ -173,7 +176,14 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
                 args.intermediates.push_back(m);
             }
 
+            // if (stage == Stage::SDPA && kd_idx != 0) {
+            //     auto& inputs = args.inputs;
+            //     inputs.erase(inputs.begin(), inputs.begin() + 7);
+            // }
+
+            auto time1 = std::chrono::high_resolution_clock::now();
             stream.set_arguments(*_kernels[idx_final], _kernels_data[stage].kernels[kd_idx].params, args);
+            auto time2 = std::chrono::high_resolution_clock::now();
 
             const auto& gws = params.workGroups.global;
             const auto& lws = params.workGroups.local;
@@ -183,30 +193,38 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
                                    << (needs_completion_event ? " has_completion_event=true" : "") << std::endl;
 
             auto ev = stream.enqueue_kernel(*_kernels[idx_final], params, args, tmp_events, needs_completion_event);
+            auto time3 = std::chrono::high_resolution_clock::now();
             if (_kernels_data[stage].needs_sub_kernels_sync) {
                 tmp_events = {ev};
             }
+
+            auto time_res0 = std::chrono::duration_cast<std::chrono::microseconds>(time1 - time0).count();
+            auto time_res1 = std::chrono::duration_cast<std::chrono::microseconds>(time2 - time1).count();
+            auto time_res2 = std::chrono::duration_cast<std::chrono::microseconds>(time3 - time2).count();
+            GPU_DEBUG_TRACE_DETAIL << "Time execute_stage inside = " << time_res0 << "  " << time_res1 << " " << time_res2 << "\n";
+
             all_events.push_back(ev);
         }
 
 
-        if (instance.get_network().get_config().get_property(ov::enable_profiling)) {
-            auto final_event = stream.group_events(all_events);
-            if (final_event != nullptr) {
-                stream.wait_for_events({final_event});
-                auto profiling_info = final_event->get_profiling_info();
-                for (const auto &interval : profiling_info) {
-                    if (interval.stage == cldnn::instrumentation::profiling_stage::executing) {
-                        auto time_res0 = std::chrono::duration_cast<std::chrono::microseconds>(interval.value->value()).count();
-                        GPU_DEBUG_INFO << "PagedAttention " << stage << " stage time: " << time_res0 << " mcs\n";
-                    }
-                }
-            }
-        }
+        // if (instance.get_network().get_config().get_property(ov::enable_profiling)) {
+        //     auto final_event = stream.group_events(all_events);
+        //     if (final_event != nullptr) {
+        //         stream.wait_for_events({final_event});
+        //         auto profiling_info = final_event->get_profiling_info();
+        //         for (const auto &interval : profiling_info) {
+        //             if (interval.stage == cldnn::instrumentation::profiling_stage::executing) {
+        //                 auto time_res0 = std::chrono::duration_cast<std::chrono::microseconds>(interval.value->value()).count();
+        //                 GPU_DEBUG_INFO << "PagedAttention " << stage << " stage time: " << time_res0 << " mcs\n";
+        //             }
+        //         }
+        //     }
+        // }
     }
 
     event::ptr execute_impl(const std::vector<event::ptr>& events, paged_attention_inst& instance) override {
         auto& stream = instance.get_network().get_stream();
+        auto time0 = std::chrono::high_resolution_clock::now();
         // auto& service_stream = instance.get_network().get_engine().get_service_stream();
         std::vector<event::ptr> res_events;
 
@@ -217,6 +235,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         // GPU_DEBUG_TRACE_DETAIL << instance.id() << " stage is " << (is_prefill_stage ? "prefill" : "tokens generating") << "\n";
 
         execute_stage(events, instance, res_events, Stage::KV_CACHE_UPDATE);
+        auto time1 = std::chrono::high_resolution_clock::now();
 
         if (false) {
             // auto sliding_window_memory = instance.input_memory_ptr(12);
@@ -291,11 +310,16 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
             for (auto& ev : res_events)
                 all_events.push_back(ev);
 
-            auto impl_param = *instance.get_impl_params();
-            auto sdpa_kernel_params = get_sdpa_kernel_params(impl_param, impl_param.is_dynamic());
-            (_kernels_data[Stage::SDPA].update_dispatch_data_func)(sdpa_kernel_params, _kernels_data[Stage::SDPA]);
+            // const auto impl_params = *instance.get_impl_params();
+            // auto sdpa_kernel_params = get_sdpa_kernel_params(impl_params, impl_params.is_dynamic());
+            // (_kernels_data[Stage::SDPA].update_dispatch_data_func)(sdpa_kernel_params, _kernels_data[Stage::SDPA]);
 
             execute_stage(all_events, instance, res_events, Stage::SDPA);
+
+            auto time2 = std::chrono::high_resolution_clock::now();
+            auto time_res0 = std::chrono::duration_cast<std::chrono::microseconds>(time1 - time0).count();
+            auto time_res1 = std::chrono::duration_cast<std::chrono::microseconds>(time2 - time1).count();
+            GPU_DEBUG_TRACE_DETAIL << "Time PA = " << time_res0 << "  " << time_res1 << "\n";
 
             return aggregate_events(res_events, stream, res_events.size() > 1);
         }
@@ -331,6 +355,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
             config.kv_heads_num = kv_heads_num;
             config.block_size = block_size;
             config.x_size = x_size;
+            config.max_context_len = 1;
         }
 
         return config;
@@ -397,6 +422,29 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         params.inputs[6] = convert_data_tensor(scale_layout);
 
         params.configuration = get_sdpa_configuration(impl_param);
+        GPU_DEBUG_TRACE_DETAIL << "Number of constant_mem " << impl_param.memory_deps.size() << ", dynamic=" << is_dynamic << "\n";
+        if (!is_dynamic) {
+            auto& constant_mem = impl_param.memory_deps;
+
+
+            const auto max_context_len_mem = constant_mem.at(7);
+            mem_lock<int32_t, mem_lock_type::read> max_context_len_mem_lock(max_context_len_mem, impl_param.get_stream());
+            GPU_DEBUG_TRACE_DETAIL << "max_context_len_mem_lock=" << max_context_len_mem_lock[0] << "\n";
+
+            const auto is_prompt_stage_mem = constant_mem.at(5);
+            mem_lock<uint8_t, mem_lock_type::read> is_prompt_stage_mem_lock(is_prompt_stage_mem, impl_param.get_stream());
+            bool is_prompt_stage = is_prompt_stage_mem_lock[0];
+
+            if (is_prompt_stage) {
+                // Use number of slots for KV cache as a maximum context length for the first iteration
+                auto slot_mapping = impl_param.get_input_layout(6);
+                params.configuration.max_context_len = slot_mapping.get_shape()[1];
+            } else {
+                const auto max_context_len_mem = constant_mem.at(7);
+                mem_lock<int32_t, mem_lock_type::read> max_context_len_mem_lock(max_context_len_mem, impl_param.get_stream());
+                params.configuration.max_context_len = max_context_len_mem_lock[0];
+            }
+        }
 
         const auto& in_offsets_map = impl_param.in_port_to_shape_info_offset;
         const auto& out_offsets_map = impl_param.out_port_to_shape_info_offset;
@@ -434,6 +482,9 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
     void update_dispatch_data(const kernel_impl_params& impl_param) override {
         auto kv_cache_update_kernel_params = get_kv_cache_update_kernel_params(impl_param, impl_param.is_dynamic());
         (_kernels_data[Stage::KV_CACHE_UPDATE].update_dispatch_data_func)(kv_cache_update_kernel_params, _kernels_data[Stage::KV_CACHE_UPDATE]);
+
+        auto sdpa_kernel_params = get_sdpa_kernel_params(impl_param, impl_param.is_dynamic());
+        (_kernels_data[Stage::SDPA].update_dispatch_data_func)(sdpa_kernel_params, _kernels_data[Stage::SDPA]);
     }
 };
 

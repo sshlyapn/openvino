@@ -80,6 +80,7 @@ void set_arguments_impl(ocl_kernel_type& kernel,
     using args_t = argument_desc::Types;
     using scalar_t = scalar_desc::Types;
     for (uint32_t i = 0; i < static_cast<uint32_t>(args.size()); i++) {
+        GPU_DEBUG_TRACE_DETAIL << "set " << static_cast<int>(args[i].t) << "\n";
         cl_int status = CL_INVALID_ARG_VALUE;
         switch (args[i].t) {
             case args_t::INPUT:
@@ -301,7 +302,11 @@ event::ptr ocl_stream::enqueue_kernel(kernel& kernel,
     bool set_output_event = sync_method == sync_methods::events || is_output;
 
     try {
+        auto time0 = std::chrono::high_resolution_clock::now();
         _command_queue.enqueueNDRangeKernel(kern, cl::NullRange, global, local, dep_events_ptr, set_output_event ? &ret_ev : nullptr);
+        auto time1 = std::chrono::high_resolution_clock::now();
+        auto time_res0 = std::chrono::duration_cast<std::chrono::microseconds>(time1 - time0).count();
+        GPU_DEBUG_TRACE << "Time enqueueNDRangeKernel = " << time_res0 << "\n";
     } catch (cl::Error const& err) {
         /// WA: Force exit. Any opencl api call can be hang after CL_OUT_OF_RESOURCES.
         if (err.err() == CL_OUT_OF_RESOURCES) {

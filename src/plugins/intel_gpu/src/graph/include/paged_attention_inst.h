@@ -23,7 +23,7 @@ public:
     program_node& key_cache() const { return get_dependency(3); }
     program_node& value_cache() const { return get_dependency(4); }
 
-    std::vector<size_t> get_shape_infer_dependencies() const override { return {}; }
+    std::vector<size_t> get_shape_infer_dependencies() const override { return { 5 /* is_prompt */, 7 /* max_context_len */ }; }
 };
 
 using paged_attention_node = typed_program_node<paged_attention>;
