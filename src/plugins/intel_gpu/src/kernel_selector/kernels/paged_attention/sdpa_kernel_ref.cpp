@@ -22,6 +22,8 @@ constexpr size_t MAX_SEQUENCE_LENGTH = SEQ_LEN_PORTION_SIZE;
 
 const Datatype acc_dt = Datatype::F32;
 
+const bool use_split_across_seq_len = true;
+
 void SDPAKernelRef::GetUpdateDispatchDataFunc(KernelData& kd) const {
     kd.update_dispatch_data_func = [](const Params& params, KernelData& kd) {
         const auto& prim_params = dynamic_cast<const sdpa_params&>(params);
@@ -189,6 +191,9 @@ bool SDPAKernelRef::Validate(const Params& params) const {
 JitConstants SDPAKernelRef::GetJitConstants(const sdpa_params& kernel_params) const {
     JitConstants jit = MakeBaseParamsJitConstants(kernel_params);
 
+    if (use_split_across_seq_len)
+        jit.AddConstant(MakeJitConstant("USE_SPLIT_ACROSS_SEQ_LEN", 1));
+
     jit.AddConstant(MakeJitConstant("HEAD_SIZE", HEAD_SIZE));
     jit.AddConstant(MakeJitConstant("HEADS_NUM", HEADS_NUM));
     jit.AddConstant(MakeJitConstant("KV_HEADS_NUM", KV_HEADS_NUM));
@@ -197,7 +202,6 @@ JitConstants SDPAKernelRef::GetJitConstants(const sdpa_params& kernel_params) co
     jit.AddConstant(MakeJitConstant("X_BLOCK_SIZE", X_BLOCK_SIZE));
     jit.Merge(MakeTypeJitConstants(acc_dt, "ACCUMULATOR"));
 
-    // const auto& output = kernel_params.inputs[0];
     const auto shared_mem_size = MAX_SEQUENCE_LENGTH;
     jit.AddConstant(MakeJitConstant("SHARED_MEM_SIZE", shared_mem_size));
 
@@ -228,7 +232,7 @@ CommonDispatchData SDPAKernelRef::SetDefault(const sdpa_params& kernel_params, s
         } else {
             dispatch_data.gws = { tokens_num,
                                   kernel_params.configuration.heads_num,
-                                  SUB_GROUP_SIZE };
+                                  kernel_params.configuration.head_size };
             dispatch_data.lws = { 1, 1, SUB_GROUP_SIZE };
         }
     }

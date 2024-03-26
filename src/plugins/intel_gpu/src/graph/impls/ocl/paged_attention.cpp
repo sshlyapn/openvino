@@ -53,6 +53,12 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         return make_unique<paged_attention_impl>(*this);
     }
 
+    paged_attention_impl() = default;
+
+    paged_attention_impl(const std::vector<kernel_selector::kernel_data>& kd) : parent(kd) {
+        this->can_reuse_memory = true;
+    }
+
     enum Stage {
         KV_CACHE_UPDATE,
         SDPA

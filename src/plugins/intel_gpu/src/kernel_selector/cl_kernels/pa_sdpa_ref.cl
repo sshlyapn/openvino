@@ -51,14 +51,17 @@ KERNEL(pa_sdpa_ref)(
     const __global INPUT4_TYPE* context_lens,
     const __global INPUT5_TYPE* block_tables,
     const __global INPUT6_TYPE* scale,
+#ifdef USE_SPLIT_ACROSS_SEQ_LEN
     const __global OUTPUT_TYPE* output,
     __global ACCUMULATOR_TYPE* exp_sums,
     __global ACCUMULATOR_TYPE* max_logits,
     __global OUTPUT_TYPE* tmp_out,
-    const uint num_of_portions)
+    const uint num_of_portions
+#else
+    __global OUTPUT_TYPE* output,
+#endif
+)
 {
-    /* Add short path for short seqences */
-
     const uint seq_idx = get_global_id(0);
     const uint head_num_idx = get_global_id(1);
     const uint head_idx = get_global_id(2);
@@ -70,10 +73,18 @@ KERNEL(pa_sdpa_ref)(
 
     const uint context_len = context_lens[batch_idx];
 
-    const uint blocks_num = INPUT5_FEATURE_NUM;
+    const uint total_blocks_num = INPUT5_FEATURE_NUM;
 
+#ifdef USE_SPLIT_ACROSS_SEQ_LEN
     const uint portion_id = get_group_id(2);
     const uint block_start_idx = portion_id * SEQ_LEN_PORTION_SIZE / BLOCK_SIZE;
+
+    if (portion_id * SEQ_LEN_PORTION_SIZE >= context_len) {
+        return;
+    }
+#else
+    const uint block_start_idx = 0;
+#endif
 
     // if (seq_idx < 2 && head_num_idx < 2 && sgid < 2 && sglid < 2) {
     //     if (INPUT5_BATCH_NUM == 2) {
@@ -146,9 +157,14 @@ KERNEL(pa_sdpa_ref)(
             q[i] = QUERY_BLOCK_READ(query, query_idx);
         }
 
-        // JIT: Compile time restriction: devisible SEQ_LEN_PORTION_SIZE / BLOCK_SIZE
-        for (uint block = 0; block < SEQ_LEN_PORTION_SIZE / BLOCK_SIZE; block++) {
-            const uint block_idx = batch_idx * blocks_num + block_start_idx + block;
+#ifdef USE_SPLIT_ACROSS_SEQ_LEN
+        // FINAL: Compile time restriction: devisible SEQ_LEN_PORTION_SIZE / BLOCK_SIZE
+        const uint blocks_num = SEQ_LEN_PORTION_SIZE / BLOCK_SIZE;
+#else
+        const uint blocks_num = total_blocks_num;
+#endif
+        for (uint block_num = 0; block_num < blocks_num; block_num++) {
+            const uint block_idx = batch_idx * total_blocks_num + block_start_idx + block_num;
             const uint block_offset = block_tables[block_idx] * KV_CACHE_BLOCK_STRIDE;
 
             OUTPUT_TYPE qk[QK_VALS_PER_SG_PER_ITER] = {0};
@@ -156,7 +172,7 @@ KERNEL(pa_sdpa_ref)(
             ulong timer2 = intel_get_cycle_counter();
             for (uint hs = 0; hs < Q_LOAD_ITERS; hs++) {
                 for (uint qk_idx = 0; qk_idx < QK_VALS_PER_SG_PER_ITER; qk_idx++) {
-                    uint current_token = (block_start_idx + block) * BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + qk_idx;
+                    uint current_token = (block_start_idx + block_num) * BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + qk_idx;
                     if (current_token >= context_len)
                         continue;
 
@@ -169,14 +185,14 @@ KERNEL(pa_sdpa_ref)(
 
 
                     // if (get_global_id(1) == 0 && get_global_id(2) == 0 && hs == 0) {
-                    //     printf("test=%d, %d seq_idx=%d (b=%d, t=%d), %d %d: q_idx = %d, k_idx= %d, block=%d\n", get_global_size(0), INPUT0_FEATURE_NUM, get_global_id(0),
+                    //     printf("test=%d, %d seq_idx=%d (b=%d, t=%d), %d %d: q_idx = %d, k_idx= %d, block_num=%d\n", get_global_size(0), INPUT0_FEATURE_NUM, get_global_id(0),
                     //     batch_idx, token_idx,
-                    //     get_global_id(1), get_global_id(2), seq_idx * HEAD_SIZE * HEADS_NUM + head_num_idx * HEAD_SIZE, key_idx, block);
+                    //     get_global_id(1), get_global_id(2), seq_idx * HEAD_SIZE * HEADS_NUM + head_num_idx * HEAD_SIZE, key_idx, block_num);
                     // }
 
-                    // TODO1: try block loading and shuffling
+                    // TODO1: try block_num loading and shuffling
                     // TODO2: try to load k*4 times and then calculate
-                    // TODO3: try bigger X block
+                    // TODO3: try bigger X block_num
                     #if X_BLOCK_SIZE == 16
                     #define KEY_BLOCK_READ(ptr, offset) BLOCK_READN(INPUT1_TYPE, 1, ptr, offset)
                     INPUT1_TYPE k = KEY_BLOCK_READ(key_cache, key_idx);
@@ -186,8 +202,8 @@ KERNEL(pa_sdpa_ref)(
 
 
                     // if (seq_idx == 0 && head_num_idx == 0) {
-                    //     printf("main_calc: seq_idx=%d, head_num_idx=%d, sgid=%d, sglid=%d, block=%d, hs=%d, qk_idx=%d, current_token=%d, query_idx=%d, key_idx=%d (block_offset=%d): %f * %f\n",
-                    //         seq_idx, head_num_idx, sgid, sglid, block, hs, qk_idx, current_token, query_idx, key_idx - block_offset, block_offset, q, k);
+                    //     printf("main_calc: seq_idx=%d, head_num_idx=%d, sgid=%d, sglid=%d, block_num=%d, hs=%d, qk_idx=%d, current_token=%d, query_idx=%d, key_idx=%d (block_offset=%d): %f * %f\n",
+                    //         seq_idx, head_num_idx, sgid, sglid, block_num, hs, qk_idx, current_token, query_idx, key_idx - block_offset, block_offset, q, k);
                     // }
 
                     qk[qk_idx] = mad(q[hs], k, qk[qk_idx]);
@@ -197,7 +213,7 @@ KERNEL(pa_sdpa_ref)(
 
             // Summurize qk calculation across all WIs and apply scale
             for (uint qk_idx = 0; qk_idx < QK_VALS_PER_SG_PER_ITER; qk_idx++) {
-                const uint current_token = (block_start_idx + block) * BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + qk_idx;
+                const uint current_token = (block_start_idx + block_num) * BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + qk_idx;
                 if (current_token < context_len) {
                     OUTPUT_TYPE tmp_print = qk[qk_idx];
                     qk[qk_idx] = sub_group_reduce_add(qk[qk_idx]);
@@ -213,7 +229,7 @@ KERNEL(pa_sdpa_ref)(
                     }
 
                     // if (get_global_id(0) == 0 && get_global_id(1) == 0 && max_context_len[0] == 17) {
-                    //     printf("%d %d %d. block %d. QK max value = %f, qk[%d] = %f\n", batch_idx, head_num_idx, head_idx, block, qk_max, qk_idx, qk[qk_idx]);
+                    //     printf("%d %d %d. block_num %d. QK max value = %f, qk[%d] = %f\n", batch_idx, head_num_idx, head_idx, block_num, qk_max, qk_idx, qk[qk_idx]);
                     // }
                     qk_max = ACCUMULATOR_MAX_FUNC(qk_max, TO_ACCUMULATOR_TYPE(qk[qk_idx]));
                 }
@@ -222,9 +238,13 @@ KERNEL(pa_sdpa_ref)(
 
             // Save QK results to local memory
             if (sglid < QK_VALS_PER_SG_PER_ITER) {
-                const uint current_token_local = block * BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + sglid;
-                const uint current_token_global_idx = (block_start_idx + block) * BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + sglid;
-                // Fixed -> // const uint qk_local_idx = block * BLOCK_SIZE * sgid * QK_VALS_PER_SG_PER_ITER + sglid;
+                const uint current_token_global_idx = (block_start_idx + block_num) * BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + sglid;
+#ifdef USE_SPLIT_ACROSS_SEQ_LEN
+                const uint current_token_local = block_num * BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + sglid;
+#else
+                const uint current_token_local = current_token_global_idx;
+#endif
+                // Fixed -> // const uint qk_local_idx = block_num * BLOCK_SIZE * sgid * QK_VALS_PER_SG_PER_ITER + sglid;
                 // OUTPUT_TYPE tmp_print = (current_token_local >= context_len ? 0 : qk[sglid]);
                 // if (head_num_idx < 4 || head_num_idx == 31)
                 //     printf("slm save: seq_idx=%d, head_num_idx=%d, sgid=%d, sglid=%d: qk_vals[%d]=%f. Max=%f\n",
@@ -234,7 +254,7 @@ KERNEL(pa_sdpa_ref)(
             ulong timer5 = intel_get_cycle_counter();
 
             // if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_global_id(2) == 0) {
-            //     printf("SDPA kernel GEMM1 block %d: main_loop=%d, summarization=%d, saving=%d\n", block,
+            //     printf("SDPA kernel GEMM1 block_num %d: main_loop=%d, summarization=%d, saving=%d\n", block_num,
             //         (uint)(timer3 - timer2),
             //         (uint)(timer4 - timer3),
             //         (uint)(timer5 - timer4));
@@ -293,10 +313,19 @@ KERNEL(pa_sdpa_ref)(
         // barrier(CLK_LOCAL_MEM_FENCE);
 
         ACCUMULATOR_TYPE exp_sum = ACCUMULATOR_VAL_ZERO;
-        for (uint qk_idx = 0; qk_idx < CEIL_DIV(SEQ_LEN_PORTION_SIZE, SUBGROUPS_PER_WG * SUB_GROUP_SIZE); qk_idx++) {
+#ifdef USE_SPLIT_ACROSS_SEQ_LEN
+        const uint qk_num = CEIL_DIV(SEQ_LEN_PORTION_SIZE, SUBGROUPS_PER_WG * SUB_GROUP_SIZE);
+#else
+        const uint qk_num = CEIL_DIV(context_len, SUBGROUPS_PER_WG * SUB_GROUP_SIZE);
+#endif
+        for (uint qk_idx = 0; qk_idx < qk_num; qk_idx++) {
             const uint local_data_idx = qk_idx * (SUBGROUPS_PER_WG * SUB_GROUP_SIZE) + sgid * SUB_GROUP_SIZE + sglid;
             const uint global_data_idx = block_start_idx * BLOCK_SIZE + qk_idx * (SUBGROUPS_PER_WG * SUB_GROUP_SIZE) + sgid * SUB_GROUP_SIZE + sglid;
+#ifdef USE_SPLIT_ACROSS_SEQ_LEN
             if (global_data_idx < context_len && local_data_idx < SEQ_LEN_PORTION_SIZE) {
+#else
+            if (global_data_idx < context_len) {
+#endif
                 // if (get_global_id(0) == 0 && get_global_id(1) && max_context_len[0] == 17) {
                 //     printf("Calculation %d %d %d, portion %d, global_id2=%d. qk_vals[%d] = %f, qk_max = %f. Res= %f\n",
                 //     batch_idx, head_num_idx, head_idx, portion_id, get_global_id(2), local_data_idx, qk_vals[local_data_idx], qk_max, native_exp(TO_ACCUMULATOR_TYPE(qk_vals[local_data_idx]) - qk_max));
@@ -348,10 +377,14 @@ KERNEL(pa_sdpa_ref)(
 
 
         // TODO: replace CEIL_DIV with ALIGN and use += SUBGROUPS_PER_WG * SUB_GROUP_SIZE increment
-        for (uint qk_idx = 0; qk_idx < CEIL_DIV(SEQ_LEN_PORTION_SIZE, SUBGROUPS_PER_WG * SUB_GROUP_SIZE); qk_idx++) {
+        for (uint qk_idx = 0; qk_idx < qk_num; qk_idx++) {
             const uint local_data_idx = qk_idx * (SUBGROUPS_PER_WG * SUB_GROUP_SIZE) + sgid * SUB_GROUP_SIZE + sglid;
             const uint global_data_idx = block_start_idx * BLOCK_SIZE + qk_idx * (SUBGROUPS_PER_WG * SUB_GROUP_SIZE) + sgid * SUB_GROUP_SIZE + sglid;
+#ifdef USE_SPLIT_ACROSS_SEQ_LEN
             if (global_data_idx < context_len && local_data_idx < SEQ_LEN_PORTION_SIZE) {
+#else
+            if (global_data_idx < context_len) {
+#endif
                 ACCUMULATOR_TYPE val = TO_ACCUMULATOR_TYPE(qk_vals[local_data_idx]) * inv_sum;
                 qk_vals[local_data_idx] = TO_OUTPUT_TYPE(val);
             }
@@ -362,6 +395,7 @@ KERNEL(pa_sdpa_ref)(
         ulong timer_end = intel_get_cycle_counter();
         ulong total_time = timer_end - timer_start;
 
+#ifdef USE_SPLIT_ACROSS_SEQ_LEN
         {
             // Save temporary exm_sums and max_logits values for each portion
             if (sgid == 0) {
@@ -381,6 +415,7 @@ KERNEL(pa_sdpa_ref)(
                 //     printf("%d, %d. Saved exp_sums=%f, max_logits=%f\n", seq_idx, head_num_idx, exp_sum, qk_max);
             }
         }
+#endif
 
         // if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_global_id(2) == 0)
         //     printf("SDPA kernel Softmax: %d\n", (uint)total_time);
@@ -396,14 +431,19 @@ KERNEL(pa_sdpa_ref)(
         ulong timer_start = intel_get_cycle_counter();
         OUTPUT_TYPE acc = OUTPUT_VAL_ZERO;
 
-
-        for (uint qk_idx = 0; qk_idx < SEQ_LEN_PORTION_SIZE / BLOCK_SIZE * SUB_GROUP_SIZE; qk_idx += SUB_GROUP_SIZE) {
+#ifdef USE_SPLIT_ACROSS_SEQ_LEN
+        // FINAL: Compile time restriction: devisible SEQ_LEN_PORTION_SIZE / BLOCK_SIZE
+        const uint qk_num = SEQ_LEN_PORTION_SIZE / BLOCK_SIZE * SUB_GROUP_SIZE;
+#else
+        const uint qk_num = ALIGN(context_len, SUB_GROUP_SIZE);
+#endif
+        for (uint qk_idx = 0; qk_idx < qk_num; qk_idx += SUB_GROUP_SIZE) {
             const uint qk_offset_local = qk_idx + sglid;
             const uint qk_offset_global = block_start_idx * BLOCK_SIZE + qk_offset_local;
 
             OUTPUT_TYPE qk = qk_offset_global < context_len ? qk_vals[qk_offset_local] : OUTPUT_VAL_ZERO;
 
-            const uint block_idx = block_tables[batch_idx * blocks_num + block_start_idx + (qk_idx / BLOCK_SIZE)];
+            const uint block_idx = block_tables[batch_idx * total_blocks_num + block_start_idx + (qk_idx / BLOCK_SIZE)];
             // if (block_idx == 0)
             //     continue;
 
@@ -442,33 +482,24 @@ KERNEL(pa_sdpa_ref)(
             }
         }
 
+#ifdef USE_SPLIT_ACROSS_SEQ_LEN
+        // tmp_output data layout [num_seqs, num_heads, num_portions, head_size]
+        const uint num_of_portions = get_num_groups(2);
+        const uint tmp_out_offset = seq_idx * (HEADS_NUM * HEAD_SIZE * num_of_portions) +
+                                    head_num_idx * (HEAD_SIZE * num_of_portions) +
+                                    portion_id * HEAD_SIZE +
+                                    sgid * SUB_GROUP_SIZE +
+                                    sglid;
 
-        // const uint output_offset = seq_idx * (HEADS_NUM * HEAD_SIZE) +
-        //                            head_num_idx * HEAD_SIZE +
-        //                            sgid * SUB_GROUP_SIZE +
-        //                            sglid;
+        tmp_out[tmp_out_offset] = acc;
+#else
+        const uint output_offset = seq_idx * (HEADS_NUM * HEAD_SIZE) +
+                                   head_num_idx * HEAD_SIZE +
+                                   sgid * SUB_GROUP_SIZE +
+                                   sglid;
 
-        // if (seq_idx == 0 && head_num_idx < 2 || head_num_idx == 31) {
-        //     printf("output res: seq_idx=%d, head_num_idx=%d, sgid=%d, sglid=%d: output[%d] = %f\n",
-        //         seq_idx, head_num_idx, sgid, sglid, output_offset, acc);
-        // }
-
-        // output[output_offset] = acc;
-
-        {
-            // [num_seqs, num_heads, max_num_partitions, head_size]
-            const uint num_of_portions = get_num_groups(2);
-            const uint tmp_out_offset = seq_idx * (HEADS_NUM * HEAD_SIZE * num_of_portions) +
-                                        head_num_idx * (HEAD_SIZE * num_of_portions) +
-                                        portion_id * HEAD_SIZE +
-                                        sgid * SUB_GROUP_SIZE +
-                                        sglid;
-
-            // if (output_offset != tmp_out_offset)
-            //     printf("Different tmp_out_offset index!! %d vs %d, for portion_id %d\n", output_offset, tmp_out_offset, portion_id);
-
-            tmp_out[tmp_out_offset] = acc;
-        }
+        output[output_offset] = acc;
+#endif
 
         ulong timer_end = intel_get_cycle_counter();
         ulong total_time = timer_end - timer_start;
@@ -499,15 +530,14 @@ KERNEL(pa_sdpa_finalization_stage)(
     const uint num_of_portions) {
     const uint seq_idx = get_global_id(0);
     const uint head_num_idx = get_global_id(1);
+    const uint head_size_idx = get_group_id(2) * SUB_GROUP_SIZE;
     const uint sglid = get_sub_group_local_id();
 
     if (num_of_portions == 1) {
-        for (uint i = 0; i < HEAD_SIZE / SUB_GROUP_SIZE; i++) {
-            const uint out_offset = seq_idx * (HEADS_NUM * HEAD_SIZE) +
-                                    head_num_idx * HEAD_SIZE +
-                                    i * SUB_GROUP_SIZE + sglid;
-            output[out_offset] = tmp_out[out_offset];
-        }
+        const uint out_offset = seq_idx * (HEADS_NUM * HEAD_SIZE) +
+                                head_num_idx * HEAD_SIZE +
+                                head_size_idx + sglid;
+        output[out_offset] = tmp_out[out_offset];
     } else if (num_of_portions <= SUB_GROUP_SIZE) {
         const uint exp_sums_offset = seq_idx * HEADS_NUM * num_of_portions +
                                      head_num_idx * num_of_portions + sglid;
@@ -524,24 +554,22 @@ KERNEL(pa_sdpa_finalization_stage)(
 
         ACCUMULATOR_TYPE global_sum = sub_group_reduce_add(exp_sum);
 
-        for (uint i = 0; i < HEAD_SIZE / SUB_GROUP_SIZE; i++) {
-            float acc = 0.0f;
-            for (uint portion = 0; portion < num_of_portions; portion++) {
-                const uint tmp_out_offset = seq_idx * (HEADS_NUM * num_of_portions * HEAD_SIZE) +
-                                            head_num_idx * (num_of_portions * HEAD_SIZE) +
-                                            portion * HEAD_SIZE +
-                                            i * SUB_GROUP_SIZE +
-                                            sglid;
-                OUTPUT_TYPE out_val = tmp_out[tmp_out_offset];
-                acc += TO_ACCUMULATOR_TYPE(out_val) * TO_ACCUMULATOR_TYPE(sub_group_broadcast(exp_sum, portion)) / TO_ACCUMULATOR_TYPE(global_sum);
-            }
-            const uint out_offset = seq_idx * (HEADS_NUM * HEAD_SIZE) +
-                                    head_num_idx * HEAD_SIZE +
-                                    i * SUB_GROUP_SIZE +
-                                    sglid;
-
-            output[out_offset] = TO_OUTPUT_TYPE(acc);
+        float acc = 0.0f;
+        for (uint portion = 0; portion < num_of_portions; portion++) {
+            const uint tmp_out_offset = seq_idx * (HEADS_NUM * num_of_portions * HEAD_SIZE) +
+                                        head_num_idx * (num_of_portions * HEAD_SIZE) +
+                                        portion * HEAD_SIZE +
+                                        head_size_idx +
+                                        sglid;
+            OUTPUT_TYPE out_val = tmp_out[tmp_out_offset];
+            acc += TO_ACCUMULATOR_TYPE(out_val) * TO_ACCUMULATOR_TYPE(sub_group_broadcast(exp_sum, portion)) / TO_ACCUMULATOR_TYPE(global_sum);
         }
+        const uint out_offset = seq_idx * (HEADS_NUM * HEAD_SIZE) +
+                                head_num_idx * HEAD_SIZE +
+                                head_size_idx +
+                                sglid;
+
+        output[out_offset] = TO_OUTPUT_TYPE(acc);
     } else {
         /* Need to update this part */
         const uint exp_sums_offset = seq_idx * HEADS_NUM * num_of_portions +
@@ -559,24 +587,22 @@ KERNEL(pa_sdpa_finalization_stage)(
 
         ACCUMULATOR_TYPE global_sum = sub_group_reduce_add(exp_sum);
 
-        for (uint i = 0; i < HEAD_SIZE / SUB_GROUP_SIZE; i++) {
-            float acc = 0.0f;
-            for (uint portion = 0; portion < num_of_portions; portion++) {
-                const uint tmp_out_offset = seq_idx * (HEADS_NUM * num_of_portions * HEAD_SIZE) +
-                                            head_num_idx * (num_of_portions * HEAD_SIZE) +
-                                            portion * HEAD_SIZE +
-                                            i * SUB_GROUP_SIZE +
-                                            sglid;
-                OUTPUT_TYPE out_val = tmp_out[tmp_out_offset];
-                acc += TO_ACCUMULATOR_TYPE(out_val) * TO_ACCUMULATOR_TYPE(sub_group_broadcast(exp_sum, portion)) / TO_ACCUMULATOR_TYPE(global_sum);
-            }
-            const uint out_offset = seq_idx * (HEADS_NUM * HEAD_SIZE) +
-                                    head_num_idx * HEAD_SIZE +
-                                    i * SUB_GROUP_SIZE +
-                                    sglid;
-
-            output[out_offset] = TO_OUTPUT_TYPE(acc);
+        float acc = 0.0f;
+        for (uint portion = 0; portion < num_of_portions; portion++) {
+            const uint tmp_out_offset = seq_idx * (HEADS_NUM * num_of_portions * HEAD_SIZE) +
+                                        head_num_idx * (num_of_portions * HEAD_SIZE) +
+                                        portion * HEAD_SIZE +
+                                        head_size_idx +
+                                        sglid;
+            OUTPUT_TYPE out_val = tmp_out[tmp_out_offset];
+            acc += TO_ACCUMULATOR_TYPE(out_val) * TO_ACCUMULATOR_TYPE(sub_group_broadcast(exp_sum, portion)) / TO_ACCUMULATOR_TYPE(global_sum);
         }
+        const uint out_offset = seq_idx * (HEADS_NUM * HEAD_SIZE) +
+                                head_num_idx * HEAD_SIZE +
+                                head_size_idx +
+                                sglid;
+
+        output[out_offset] = TO_OUTPUT_TYPE(acc);
     }
 }
 
