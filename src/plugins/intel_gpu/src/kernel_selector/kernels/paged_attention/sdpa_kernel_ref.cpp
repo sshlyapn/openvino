@@ -15,29 +15,37 @@ constexpr size_t KV_HEADS_NUM = 8;
 constexpr size_t BLOCK_SIZE = 16;
 constexpr size_t X_BLOCK_SIZE = 8;
 
+constexpr size_t MAX_SEQUENCE_LENGTH = 3072;
 constexpr size_t SEQ_LEN_PORTION_SIZE = 256;
 constexpr size_t SUB_GROUP_SIZE = 16;
 
-constexpr size_t MAX_SEQUENCE_LENGTH = SEQ_LEN_PORTION_SIZE;
-
-const Datatype acc_dt = Datatype::F32;
+const Datatype softmax_acc_dt = Datatype::F32;
 
 const bool use_split_across_seq_len = true;
+
+
+template <typename T>
+T convert_to(const std::string &str) {
+    std::istringstream ss(str);
+    T res;
+    ss >> res;
+    return res;
+}
+
+template <>
+std::string convert_to(const std::string &str) {
+    return str;
+}
 
 void SDPAKernelRef::GetUpdateDispatchDataFunc(KernelData& kd) const {
     kd.update_dispatch_data_func = [](const Params& params, KernelData& kd) {
         const auto& prim_params = dynamic_cast<const sdpa_params&>(params);
-        OPENVINO_ASSERT(kd.kernels.size() == 2, "[GPU] Invalid kernels size for update dispatch data func of SDPA kernel");
-
-        auto dispatchData1 = SetDefault(prim_params, 0);
-        kd.kernels[0].params.workGroups.global = dispatchData1.gws;
-        kd.kernels[0].params.workGroups.local = dispatchData1.lws;
-        kd.kernels[0].skip_execution = false;
-
-        auto dispatchData2 = SetDefault(prim_params, 1);
-        kd.kernels[1].params.workGroups.global = dispatchData2.gws;
-        kd.kernels[1].params.workGroups.local = dispatchData2.lws;
-        kd.kernels[1].skip_execution = false;
+        bool use_split_across_seq_len = false;
+        if (const auto env_var = std::getenv("USE_SPLIT")) {
+            use_split_across_seq_len = convert_to<bool>(env_var);
+        }
+        const size_t expected_kernels_num = use_split_across_seq_len ? 2 : 1;
+        OPENVINO_ASSERT(kd.kernels.size() == expected_kernels_num, "[GPU] Invalid kernels size for update dispatch data func of SDPA kernel");
 
         OPENVINO_ASSERT(prim_params.configuration.head_size == HEAD_SIZE,
                         "[GPU] Unexpected HEAD_SIZE in SDPA kernel, expected ", HEAD_SIZE,
@@ -55,40 +63,46 @@ void SDPAKernelRef::GetUpdateDispatchDataFunc(KernelData& kd) const {
                         "[GPU] Unexpected X_BLOCK_SIZE in SDPA kernel, expected ", X_BLOCK_SIZE,
                         " got ", prim_params.configuration.x_size);
 
-        //   exp_sums,        // [num_seqs, num_heads, max_num_partitions]
-        //   max_logits,      // [num_seqs, num_heads, max_num_partitions]
-        //   tmp_out,         // [num_seqs, num_heads, max_num_partitions, head_size]
+        auto dispatchData = SetDefault(prim_params, 0);
+        kd.kernels[0].params.workGroups.global = dispatchData.gws;
+        kd.kernels[0].params.workGroups.local = dispatchData.lws;
+        kd.kernels[0].skip_execution = false;
 
-        const auto& input = prim_params.inputs[0];
-        const size_t batch_size = input.Batch().v;
-        const size_t seq_len = input.Feature().v;
-        const size_t tokens_num = batch_size * seq_len;
-        const size_t num_of_portions = CeilDiv(prim_params.configuration.max_context_len, SEQ_LEN_PORTION_SIZE);
+        if (expected_kernels_num == 2) {
+            auto dispatchData = SetDefault(prim_params, 1);
+            kd.kernels[1].params.workGroups.global = dispatchData.gws;
+            kd.kernels[1].params.workGroups.local = dispatchData.lws;
+            kd.kernels[1].skip_execution = false;
 
-        auto buf_dt_size = 4;
-        auto buf_elements_count = tokens_num * prim_params.configuration.heads_num * Align(num_of_portions, SUB_GROUP_SIZE);
-        auto buf_size = buf_elements_count * buf_dt_size;
+            const auto& input = prim_params.inputs[0];
+            const size_t batch_size = input.Batch().v;
+            const size_t seq_len = input.Feature().v;
+            const size_t tokens_num = batch_size * seq_len;
+            const size_t num_of_portions = CeilDiv(prim_params.configuration.max_context_len, SEQ_LEN_PORTION_SIZE);
 
-        auto tmp_out_dt_size = 4;
-        auto tmp_out_elements_count = tokens_num * prim_params.configuration.heads_num * num_of_portions * prim_params.configuration.head_size;
-        auto tmp_out_size = tmp_out_elements_count * tmp_out_dt_size;
+            auto buf_dt_size = 4;
+            auto buf_elements_count = tokens_num * prim_params.configuration.heads_num * num_of_portions;
+            auto buf_size = buf_elements_count * buf_dt_size;
 
-        GPU_DEBUG_TRACE_DETAIL << "Buffer sizes: " << buf_size << ", " << buf_size << ", " << tmp_out_size << "\n";
+            auto tmp_out_dt_size = 4;
+            auto tmp_out_elements_count = tokens_num * prim_params.configuration.heads_num * num_of_portions * prim_params.configuration.head_size;
+            auto tmp_out_size = tmp_out_elements_count * tmp_out_dt_size;
 
-        kd.internalBufferSizes.clear();
-        kd.internalBufferSizes.push_back(buf_size);
-        kd.internalBufferSizes.push_back(buf_size);
-        kd.internalBufferSizes.push_back(tmp_out_size);
-        kd.internalBufferDataType = acc_dt;
+            kd.internalBufferSizes.clear();
+            kd.internalBufferSizes.push_back(buf_size);
+            kd.internalBufferSizes.push_back(buf_size);
+            kd.internalBufferSizes.push_back(tmp_out_size);
+            kd.internalBufferDataType = softmax_acc_dt;
 
-        ScalarDescriptor block_elem_num;
-        block_elem_num.t = ScalarDescriptor::Types::UINT32;
-        block_elem_num.v.u32 = num_of_portions;
-        kd.kernels[0].params.scalars.resize(1);
-        kd.kernels[0].params.scalars[0] = block_elem_num;
+            ScalarDescriptor block_elem_num;
+            block_elem_num.t = ScalarDescriptor::Types::UINT32;
+            block_elem_num.v.u32 = num_of_portions;
+            kd.kernels[0].params.scalars.resize(1);
+            kd.kernels[0].params.scalars[0] = block_elem_num;
 
-        kd.kernels[1].params.scalars.resize(1);
-        kd.kernels[1].params.scalars[0] = block_elem_num;
+            kd.kernels[1].params.scalars.resize(1);
+            kd.kernels[1].params.scalars[0] = block_elem_num;
+        }
     };
 }
 
@@ -96,8 +110,15 @@ KernelsData SDPAKernelRef::GetKernelsData(const Params& params) const {
     if (!Validate(params)) {
         return {};
     }
-
-    const uint kernels_num = 2;
+    bool use_split_across_seq_len = false;
+    if (const auto env_var = std::getenv("USE_SPLIT")) {
+        use_split_across_seq_len = convert_to<bool>(env_var);
+        static bool printed = false;
+        if (!printed)
+            std::cout << "Force SPLIT to " << use_split_across_seq_len << "\n";
+        printed = true;
+    }
+    const uint kernels_num = use_split_across_seq_len ? 2 : 1;
     KernelData kd = KernelData::Default<sdpa_params>(params, kernels_num);
     kd.needs_sub_kernels_sync = true;
     GetUpdateDispatchDataFunc(kd);
@@ -117,8 +138,6 @@ KernelsData SDPAKernelRef::GetKernelsData(const Params& params) const {
 
         const auto jit = CreateJit(kernel_name, jit_constants, entry_point);
 
-
-        // auto input_buffers_num = (i == 0) ? static_cast<int>(kernel_params.inputs.size()) : 0;
         auto& kernel = kd.kernels[i];
         FillCLKernelData(kernel,
                         dispatch_data,
@@ -134,20 +153,22 @@ KernelsData SDPAKernelRef::GetKernelsData(const Params& params) const {
                         static_cast<int>(kernel_params.outputs.size()),
                         kernel_params.is_shape_agnostic);
 
-        kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 0});
-        kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 1});
-        kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 2});
-        kd.internalBufferSizes.clear();
-        kd.internalBufferSizes.push_back(1);
-        kd.internalBufferSizes.push_back(1);
-        kd.internalBufferSizes.push_back(1);
-        kd.internalBufferDataType = acc_dt;
+        if (use_split_across_seq_len) {
+            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 0});
+            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 1});
+            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 2});
+            kd.internalBufferSizes.clear();
+            kd.internalBufferSizes.push_back(1);
+            kd.internalBufferSizes.push_back(1);
+            kd.internalBufferSizes.push_back(1);
+            kd.internalBufferDataType = softmax_acc_dt;
 
-        ScalarDescriptor block_elem_num;
-        block_elem_num.t = ScalarDescriptor::Types::UINT32;
-        block_elem_num.v.u32 = 0;
-        kernel.params.scalars.push_back(block_elem_num);
-        kernel.params.arguments.push_back({ArgumentDescriptor::Types::SCALAR, 0});
+            ScalarDescriptor block_elem_num;
+            block_elem_num.t = ScalarDescriptor::Types::UINT32;
+            block_elem_num.v.u32 = 0;
+            kernel.params.scalars.push_back(block_elem_num);
+            kernel.params.arguments.push_back({ArgumentDescriptor::Types::SCALAR, 0});
+        }
     }
 
     return {kd};
@@ -191,21 +212,26 @@ bool SDPAKernelRef::Validate(const Params& params) const {
 JitConstants SDPAKernelRef::GetJitConstants(const sdpa_params& kernel_params) const {
     JitConstants jit = MakeBaseParamsJitConstants(kernel_params);
 
-    if (use_split_across_seq_len)
-        jit.AddConstant(MakeJitConstant("USE_SPLIT_ACROSS_SEQ_LEN", 1));
-
     jit.AddConstant(MakeJitConstant("HEAD_SIZE", HEAD_SIZE));
     jit.AddConstant(MakeJitConstant("HEADS_NUM", HEADS_NUM));
     jit.AddConstant(MakeJitConstant("KV_HEADS_NUM", KV_HEADS_NUM));
     jit.AddConstant(MakeJitConstant("NUM_QUERIES_PER_KV_HEAD", HEADS_NUM / KV_HEADS_NUM));
     jit.AddConstant(MakeJitConstant("BLOCK_SIZE", BLOCK_SIZE));
     jit.AddConstant(MakeJitConstant("X_BLOCK_SIZE", X_BLOCK_SIZE));
-    jit.Merge(MakeTypeJitConstants(acc_dt, "ACCUMULATOR"));
+    jit.Merge(MakeTypeJitConstants(softmax_acc_dt, "ACCUMULATOR"));
 
-    const auto shared_mem_size = MAX_SEQUENCE_LENGTH;
-    jit.AddConstant(MakeJitConstant("SHARED_MEM_SIZE", shared_mem_size));
+    bool use_split_across_seq_len = false;
+    if (const auto env_var = std::getenv("USE_SPLIT")) {
+        use_split_across_seq_len = convert_to<bool>(env_var);
+    }
 
-    jit.AddConstant(MakeJitConstant("SEQ_LEN_PORTION_SIZE", SEQ_LEN_PORTION_SIZE));
+    if (use_split_across_seq_len) {
+        jit.AddConstant(MakeJitConstant("USE_SPLIT_ACROSS_SEQ_LEN", true));
+        jit.AddConstant(MakeJitConstant("SEQ_LEN_PORTION_SIZE", SEQ_LEN_PORTION_SIZE));
+        jit.AddConstant(MakeJitConstant("SHARED_MEM_SIZE", SEQ_LEN_PORTION_SIZE));
+    } else {
+        jit.AddConstant(MakeJitConstant("SHARED_MEM_SIZE", MAX_SEQUENCE_LENGTH));
+    }
 
     return jit;
 }
@@ -213,16 +239,26 @@ JitConstants SDPAKernelRef::GetJitConstants(const sdpa_params& kernel_params) co
 CommonDispatchData SDPAKernelRef::SetDefault(const sdpa_params& kernel_params, size_t kernel_idx) {
     CommonDispatchData dispatch_data;
 
+    bool use_split_across_seq_len = false;
+    if (const auto env_var = std::getenv("USE_SPLIT")) {
+        use_split_across_seq_len = convert_to<bool>(env_var);
+    }
+
     const auto& input = kernel_params.inputs[0];
     if (!input.is_dynamic()) {
         const size_t batch_size = input.Batch().v;
         const size_t seq_len = input.Feature().v;
         const size_t tokens_num = batch_size * seq_len;
 
-        size_t num_of_portions = CeilDiv(kernel_params.configuration.max_context_len, SEQ_LEN_PORTION_SIZE);
-        // std::cout << "max_context_len=" << kernel_params.configuration.max_context_len
-        //           << " SEQ_LEN_PORTION_SIZE=" << SEQ_LEN_PORTION_SIZE
-        //           << " num_of_portions=" << num_of_portions << "\n";
+        static bool printed = false;
+
+        const size_t num_of_portions =
+            use_split_across_seq_len ? CeilDiv(kernel_params.configuration.max_context_len, SEQ_LEN_PORTION_SIZE) : 1;
+
+        if (!printed)
+            std::cout << "First max_context_len = " << kernel_params.configuration.max_context_len << ", num_of_portions = " << num_of_portions << "\n";
+
+        printed = true;
 
         if (kernel_idx == 0) {
             dispatch_data.gws = { tokens_num,

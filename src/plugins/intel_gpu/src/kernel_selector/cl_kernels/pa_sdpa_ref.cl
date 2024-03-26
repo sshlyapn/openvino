@@ -58,10 +58,9 @@ KERNEL(pa_sdpa_ref)(
     __global OUTPUT_TYPE* tmp_out,
     const uint num_of_portions
 #else
-    __global OUTPUT_TYPE* output,
+    __global OUTPUT_TYPE* output
 #endif
-)
-{
+) {
     const uint seq_idx = get_global_id(0);
     const uint head_num_idx = get_global_id(1);
     const uint head_idx = get_global_id(2);
@@ -73,7 +72,7 @@ KERNEL(pa_sdpa_ref)(
 
     const uint context_len = context_lens[batch_idx];
 
-    const uint total_blocks_num = INPUT5_FEATURE_NUM;
+    const uint blocks_pitch = INPUT5_FEATURE_NUM;
 
 #ifdef USE_SPLIT_ACROSS_SEQ_LEN
     const uint portion_id = get_group_id(2);
@@ -85,6 +84,8 @@ KERNEL(pa_sdpa_ref)(
 #else
     const uint block_start_idx = 0;
 #endif
+
+    const uint total_blocks_num = CEIL_DIV(context_len, BLOCK_SIZE);
 
     // if (seq_idx < 2 && head_num_idx < 2 && sgid < 2 && sglid < 2) {
     //     if (INPUT5_BATCH_NUM == 2) {
@@ -159,12 +160,13 @@ KERNEL(pa_sdpa_ref)(
 
 #ifdef USE_SPLIT_ACROSS_SEQ_LEN
         // FINAL: Compile time restriction: devisible SEQ_LEN_PORTION_SIZE / BLOCK_SIZE
-        const uint blocks_num = SEQ_LEN_PORTION_SIZE / BLOCK_SIZE;
+        const uint blocks_num = (portion_id == num_of_portions - 1) ? (total_blocks_num - (portion_id * SEQ_LEN_PORTION_SIZE / BLOCK_SIZE))
+                                                                    : (SEQ_LEN_PORTION_SIZE / BLOCK_SIZE);
 #else
         const uint blocks_num = total_blocks_num;
 #endif
         for (uint block_num = 0; block_num < blocks_num; block_num++) {
-            const uint block_idx = batch_idx * total_blocks_num + block_start_idx + block_num;
+            const uint block_idx = batch_idx * blocks_pitch + block_start_idx + block_num;
             const uint block_offset = block_tables[block_idx] * KV_CACHE_BLOCK_STRIDE;
 
             OUTPUT_TYPE qk[QK_VALS_PER_SG_PER_ITER] = {0};
@@ -263,8 +265,9 @@ KERNEL(pa_sdpa_ref)(
         ulong timer_end = intel_get_cycle_counter();
         ulong total_time = timer_end - timer_start;
 
-        // if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_global_id(2) == 0)
-        //     printf("SDPA kernel GEMM1: %d; qk_max=%f\n", (uint)total_time, qk_max);
+        // if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_local_id(2) == 0 && context_len >= 496)
+        //     printf("%d. %d. SDPA kernel GEMM1: %d; qk_max=%f, blocks_num=%d, total_blocks_num=%d, portion_id=%d, num_of_portions=%d\n",
+        //         context_len, get_global_id(2), (uint)total_time, qk_max, blocks_num, total_blocks_num, portion_id, num_of_portions);
     }
 
     // barrier(CLK_LOCAL_MEM_FENCE);
@@ -311,10 +314,12 @@ KERNEL(pa_sdpa_ref)(
 
         // // temp test
         // barrier(CLK_LOCAL_MEM_FENCE);
+        ulong timer_start2 = intel_get_cycle_counter();
 
         ACCUMULATOR_TYPE exp_sum = ACCUMULATOR_VAL_ZERO;
 #ifdef USE_SPLIT_ACROSS_SEQ_LEN
-        const uint qk_num = CEIL_DIV(SEQ_LEN_PORTION_SIZE, SUBGROUPS_PER_WG * SUB_GROUP_SIZE);
+        const uint qk_num = (num_of_portions == 1) ? CEIL_DIV(context_len, SUBGROUPS_PER_WG * SUB_GROUP_SIZE)
+                                                   : CEIL_DIV(SEQ_LEN_PORTION_SIZE, SUBGROUPS_PER_WG * SUB_GROUP_SIZE);
 #else
         const uint qk_num = CEIL_DIV(context_len, SUBGROUPS_PER_WG * SUB_GROUP_SIZE);
 #endif
@@ -338,6 +343,7 @@ KERNEL(pa_sdpa_ref)(
             }
         }
 
+        ulong timer_start3 = intel_get_cycle_counter();
 
         // // temp test
         // barrier(CLK_LOCAL_MEM_FENCE);
@@ -365,6 +371,7 @@ KERNEL(pa_sdpa_ref)(
 
         exp_sum = ACCUMULATOR_VAL_ZERO;
 
+        ulong timer_start4 = intel_get_cycle_counter();
 
         // FINAL FIX: Compile time restiction SUBGROUPS_PER_WG <= SG_SIZE
         if (sglid < SUBGROUPS_PER_WG)
@@ -391,9 +398,7 @@ KERNEL(pa_sdpa_ref)(
         }
 
         barrier(CLK_LOCAL_MEM_FENCE);
-
-        ulong timer_end = intel_get_cycle_counter();
-        ulong total_time = timer_end - timer_start;
+        ulong timer_start5 = intel_get_cycle_counter();
 
 #ifdef USE_SPLIT_ACROSS_SEQ_LEN
         {
@@ -417,8 +422,17 @@ KERNEL(pa_sdpa_ref)(
         }
 #endif
 
-        // if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_global_id(2) == 0)
-        //     printf("SDPA kernel Softmax: %d\n", (uint)total_time);
+        ulong timer_end = intel_get_cycle_counter();
+
+        ulong total_time1 = timer_start2 - timer_start;
+        ulong total_time2 = timer_start3 - timer_start2;
+        ulong total_time3 = timer_start4 - timer_start3;
+        ulong total_time4 = timer_start5 - timer_start4;
+        ulong total_time5 = timer_end - timer_start5;
+
+        // if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_local_id(2) == 0)
+        //     printf("%d. SDPA kernel Softmax: qk_max calc: %d, exp_sum_loc calc: %d, exp_sum calc: %d, qk_vals recalc: %d, save: %d\n",
+        //     get_global_id(2), (uint)total_time1, (uint)total_time2, (uint)total_time3, (uint)total_time4, (uint)total_time5);
     }
 
     // if (seq_idx == 0 && sgid == 0 && sglid == 0) {
@@ -433,9 +447,10 @@ KERNEL(pa_sdpa_ref)(
 
 #ifdef USE_SPLIT_ACROSS_SEQ_LEN
         // FINAL: Compile time restriction: devisible SEQ_LEN_PORTION_SIZE / BLOCK_SIZE
-        const uint qk_num = SEQ_LEN_PORTION_SIZE / BLOCK_SIZE * SUB_GROUP_SIZE;
+        const uint qk_num = (portion_id == num_of_portions - 1) ? (context_len - (portion_id * SEQ_LEN_PORTION_SIZE))
+                                                                : (SEQ_LEN_PORTION_SIZE);
 #else
-        const uint qk_num = ALIGN(context_len, SUB_GROUP_SIZE);
+        const uint qk_num = context_len;
 #endif
         for (uint qk_idx = 0; qk_idx < qk_num; qk_idx += SUB_GROUP_SIZE) {
             const uint qk_offset_local = qk_idx + sglid;
@@ -443,7 +458,7 @@ KERNEL(pa_sdpa_ref)(
 
             OUTPUT_TYPE qk = qk_offset_global < context_len ? qk_vals[qk_offset_local] : OUTPUT_VAL_ZERO;
 
-            const uint block_idx = block_tables[batch_idx * total_blocks_num + block_start_idx + (qk_idx / BLOCK_SIZE)];
+            const uint block_idx = block_tables[batch_idx * blocks_pitch + block_start_idx + (qk_idx / BLOCK_SIZE)];
             // if (block_idx == 0)
             //     continue;
 
@@ -504,8 +519,8 @@ KERNEL(pa_sdpa_ref)(
         ulong timer_end = intel_get_cycle_counter();
         ulong total_time = timer_end - timer_start;
 
-        // if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_global_id(2) == 0)
-        //     printf("SDPA kernel GEMM2: %d\n", (uint)total_time);
+        // if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_local_id(2) == 0)
+        //     printf("%d. SDPA kernel GEMM2: %d\n", get_global_id(2), (uint)total_time);
     }
 }
 
