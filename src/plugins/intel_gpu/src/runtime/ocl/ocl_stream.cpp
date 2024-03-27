@@ -80,6 +80,7 @@ void set_arguments_impl(ocl_kernel_type& kernel,
     using args_t = argument_desc::Types;
     using scalar_t = scalar_desc::Types;
     for (uint32_t i = 0; i < static_cast<uint32_t>(args.size()); i++) {
+        GPU_DEBUG_TRACE_DETAIL << "set " << static_cast<int>(args[i].t) << "\n";
         cl_int status = CL_INVALID_ARG_VALUE;
         switch (args[i].t) {
             case args_t::INPUT:
