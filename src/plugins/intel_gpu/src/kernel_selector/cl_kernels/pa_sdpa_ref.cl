@@ -14,7 +14,7 @@
 #define Q_LOAD_ITERS (HEAD_SIZE / SUB_GROUP_SIZE)
 
 // How much QK outputs each subgroup calculates per block
-#define QK_VALS_PER_SG_PER_ITER (BLOCK_SIZE / SUBGROUPS_PER_WG)
+#define QK_VALS_PER_SG_PER_ITER CEIL_DIV(BLOCK_SIZE, SUBGROUPS_PER_WG)
 
 #define KV_CACHE_BLOCK_STRIDE (HEAD_SIZE * KV_HEADS_NUM * BLOCK_SIZE)
 
@@ -35,6 +35,7 @@ KERNEL(pa_sdpa_ref)(
     const __global INPUT4_TYPE* context_lens,
     const __global INPUT5_TYPE* block_tables,
     const __global INPUT6_TYPE* scale,
+    const __global INPUT7_TYPE* is_prompt,
 #ifdef USE_SEQ_LEN_SPLIT
     __global OUTPUT_TYPE* output,
     __global ACCUMULATOR_TYPE* exp_sums,
@@ -71,6 +72,10 @@ KERNEL(pa_sdpa_ref)(
 
     const uint total_blocks_num = CEIL_DIV(context_len, BLOCK_SIZE);
 
+    // if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_global_id(2) == 0) {
+    //     printf("context_len=%d block_start_idx=%d total_blocks_num=%d context_len=%d, SCALE_VAL=%f is_prompt=%d\n", context_len, block_start_idx, total_blocks_num, context_len, scale[0], is_prompt[0]);
+    // }
+
     __local OUTPUT_TYPE qk_vals_local[SHARED_MEM_SIZE];
     ACCUMULATOR_TYPE qk_max = ACCUMULATOR_VAL_MIN;
 
@@ -99,7 +104,12 @@ KERNEL(pa_sdpa_ref)(
             for (uint q_idx = 0; q_idx < Q_LOAD_ITERS; q_idx++) {
                 for (uint qk_idx = 0; qk_idx < QK_VALS_PER_SG_PER_ITER; qk_idx++) {
                     uint current_token = (block_start_idx + block_num) * BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + qk_idx;
+#if BLOCK_SIZE % SUBGROUPS_PER_WG != 0
+                    // TODO: Optimize for BLOCK_SIZE % SUBGROUPS_PER_WG != 0 case
+                    if (current_token >= context_len || sgid >= BLOCK_SIZE / QK_VALS_PER_SG_PER_ITER)
+#else
                     if (current_token >= context_len)
+#endif
                         continue;
 
                     const uint key_idx = block_offset +
@@ -120,19 +130,32 @@ KERNEL(pa_sdpa_ref)(
                 }
             }
 
+            // if (context_len == 17 && sgid == 4 && QK_VALS_PER_SG_PER_ITER == 4 && (head_num_idx == 0 || head_num_idx == 1 || head_num_idx == 28)) {
+            //     printf("FROM SGID=4; token_idx=%d, head_num=%d block_num=%d, sglid=%d: %f %f %f %f \n", token_idx, head_num_idx, block_num, sglid,
+            //     qk[0], qk[1], qk[2], qk[3]);
+            // }
+
             // Summurize qk calculation across all WIs and apply scale
             for (uint qk_idx = 0; qk_idx < QK_VALS_PER_SG_PER_ITER; qk_idx++) {
                 const uint current_token = (block_start_idx + block_num) * BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + qk_idx;
+#if BLOCK_SIZE % SUBGROUPS_PER_WG != 0
+                if (current_token < context_len && sgid < BLOCK_SIZE / QK_VALS_PER_SG_PER_ITER) {
+#else
                 if (current_token < context_len) {
+#endif
                     qk[qk_idx] = sub_group_reduce_add(qk[qk_idx]);
 
                     // Apply scale
                     qk[qk_idx] = scale[0] * qk[qk_idx];
 
                     // Apply attention mask for context processing stage
-                    const bool is_prefill_stage = INPUT0_FEATURE_NUM > 1;
-                    if (is_prefill_stage && current_token > token_idx) {
-                        qk[qk_idx] = qk[qk_idx] + OUTPUT_VAL_MIN;
+                    const unsigned char is_prefill_stage = is_prompt[0];
+                    if (is_prefill_stage == 1) {
+                        if (current_token > token_idx)
+                            qk[qk_idx] = qk[qk_idx] + OUTPUT_VAL_MIN;
+                    } else if (is_prefill_stage == 2) {
+                        if (current_token > context_len - INPUT0_FEATURE_NUM + token_idx)
+                            qk[qk_idx] = qk[qk_idx] + OUTPUT_VAL_MIN;
                     }
 
                     qk_max = ACCUMULATOR_MAX_FUNC(qk_max, TO_ACCUMULATOR_TYPE(qk[qk_idx]));
@@ -140,7 +163,11 @@ KERNEL(pa_sdpa_ref)(
             }
 
             // Save QK results to local memory
+#if BLOCK_SIZE % SUBGROUPS_PER_WG != 0
+            if (sglid < QK_VALS_PER_SG_PER_ITER && sgid < BLOCK_SIZE / QK_VALS_PER_SG_PER_ITER) {
+#else
             if (sglid < QK_VALS_PER_SG_PER_ITER) {
+#endif
                 const uint current_token_global_idx = (block_start_idx + block_num) * BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + sglid;
 #ifdef USE_SEQ_LEN_SPLIT
                 const uint current_token_local = block_num * BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + sglid;
@@ -151,6 +178,33 @@ KERNEL(pa_sdpa_ref)(
             }
         }
     }
+
+    // barrier(CLK_LOCAL_MEM_FENCE);
+    // if (get_global_id(1) == 0 && get_global_id(2) == 0) {
+    //     if (context_len == 15)
+    //         printf("token_idx=%d, qk_vals_local: %f, %f, %f, %f, %f,  %f, %f, %f, %f, %f,  %f, %f, %f, %f, %f: %d\n",
+    //             token_idx, qk_vals_local[0], qk_vals_local[1], qk_vals_local[2], qk_vals_local[3], qk_vals_local[4],
+    //             qk_vals_local[5], qk_vals_local[6], qk_vals_local[7], qk_vals_local[8], qk_vals_local[9],
+    //             qk_vals_local[10], qk_vals_local[11], qk_vals_local[12], qk_vals_local[13], qk_vals_local[14], is_prompt[0]);
+    //     else if (context_len == 16)
+    //         printf("token_idx=%d, qk_vals_local: %f, %f, %f, %f, %f,  %f, %f, %f, %f, %f,  %f, %f, %f, %f, %f,  %f: %d\n",
+    //             token_idx, qk_vals_local[0], qk_vals_local[1], qk_vals_local[2], qk_vals_local[3], qk_vals_local[4],
+    //             qk_vals_local[5], qk_vals_local[6], qk_vals_local[7], qk_vals_local[8], qk_vals_local[9],
+    //             qk_vals_local[10], qk_vals_local[11], qk_vals_local[12], qk_vals_local[13], qk_vals_local[14], qk_vals_local[15], is_prompt[0]);
+    //     else if (context_len == 17)
+    //         printf("token_idx=%d, qk_vals_local: %f, %f, %f, %f, %f,  %f, %f, %f, %f, %f,  %f, %f, %f, %f, %f,  %f, %f: %d\n",
+    //             token_idx, qk_vals_local[0], qk_vals_local[1], qk_vals_local[2], qk_vals_local[3], qk_vals_local[4],
+    //             qk_vals_local[5], qk_vals_local[6], qk_vals_local[7], qk_vals_local[8], qk_vals_local[9],
+    //             qk_vals_local[10], qk_vals_local[11], qk_vals_local[12], qk_vals_local[13], qk_vals_local[14], qk_vals_local[15], qk_vals_local[16], is_prompt[0]);
+    // }
+
+    // barrier(CLK_LOCAL_MEM_FENCE);
+    // if (context_len == 17 && sgid == 4 && sglid == 0) {
+    //     printf("FROM SGID=4; token_idx=%d, head_num=%d qk_vals_local: %f, %f, %f, %f, %f,  %f, %f, %f, %f, %f,  %f, %f, %f, %f, %f,  %f, %f: %d. qk_max=%f\n",
+    //             token_idx, head_num_idx, qk_vals_local[0], qk_vals_local[1], qk_vals_local[2], qk_vals_local[3], qk_vals_local[4],
+    //             qk_vals_local[5], qk_vals_local[6], qk_vals_local[7], qk_vals_local[8], qk_vals_local[9],
+    //             qk_vals_local[10], qk_vals_local[11], qk_vals_local[12], qk_vals_local[13], qk_vals_local[14], qk_vals_local[15], qk_vals_local[16], is_prompt[0], qk_max);
+    // }
 
     // Apply SoftMax operation
     __local ACCUMULATOR_TYPE qk_max_vals[SUBGROUPS_PER_WG];
@@ -167,6 +221,16 @@ KERNEL(pa_sdpa_ref)(
 
         // Final max value after reduction across of all SG and WI
         qk_max = sub_group_reduce_max(qk_max);
+
+        // barrier(CLK_LOCAL_MEM_FENCE);
+        // if (context_len == 17 && get_global_id(2) == 0 && (head_num_idx == 1 || head_num_idx == 28) && SUBGROUPS_PER_WG == 5) {
+        //     printf("Calculation QK_VALS token_idx=%d, head_num=%d qk_vals_local: %f (-qk_max = %f, native_exp = %f), %f, %f, %f, %f,  %f, %f, %f, %f, %f,  %f, %f, %f, %f, %f,  %f, %f(-qk_max = %f, native_exp = %f): %d. qk_max=%f (%f %f %f %f %f)\n",
+        //             token_idx, head_num_idx, qk_vals_local[0], TO_ACCUMULATOR_TYPE(qk_vals_local[0] - qk_max), native_exp(TO_ACCUMULATOR_TYPE(qk_vals_local[0]) - qk_max), qk_vals_local[1], qk_vals_local[2], qk_vals_local[3], qk_vals_local[4],
+        //             qk_vals_local[5], qk_vals_local[6], qk_vals_local[7], qk_vals_local[8], qk_vals_local[9],
+        //             qk_vals_local[10], qk_vals_local[11], qk_vals_local[12], qk_vals_local[13], qk_vals_local[14], qk_vals_local[15],
+        //             qk_vals_local[16], TO_ACCUMULATOR_TYPE(qk_vals_local[16] - qk_max), native_exp(TO_ACCUMULATOR_TYPE(qk_vals_local[16]) - qk_max),
+        //              is_prompt[0], qk_max, qk_max_vals[0], qk_max_vals[1], qk_max_vals[2], qk_max_vals[3], qk_max_vals[4]);
+        // }
 
         ACCUMULATOR_TYPE exp_sum = ACCUMULATOR_VAL_ZERO;
 #ifdef USE_SEQ_LEN_SPLIT
@@ -188,6 +252,15 @@ KERNEL(pa_sdpa_ref)(
                 qk_vals_local[local_data_idx] = TO_OUTPUT_TYPE(val);
             }
         }
+
+
+        // barrier(CLK_LOCAL_MEM_FENCE);
+        // if (context_len == 17 && get_global_id(2) == 0) {
+        //     printf("UPDATED QK_VALS token_idx=%d, head_num=%d qk_vals_local: %f, %f, %f, %f, %f,  %f, %f, %f, %f, %f,  %f, %f, %f, %f, %f,  %f, %f: %d. qk_max=%f\n",
+        //             token_idx, head_num_idx, qk_vals_local[0], qk_vals_local[1], qk_vals_local[2], qk_vals_local[3], qk_vals_local[4],
+        //             qk_vals_local[5], qk_vals_local[6], qk_vals_local[7], qk_vals_local[8], qk_vals_local[9],
+        //             qk_vals_local[10], qk_vals_local[11], qk_vals_local[12], qk_vals_local[13], qk_vals_local[14], qk_vals_local[15], qk_vals_local[16], is_prompt[0], qk_max);
+        // }
 
         exp_sum = sub_group_reduce_add(exp_sum);
 
@@ -236,6 +309,16 @@ KERNEL(pa_sdpa_ref)(
             }
         }
 #endif
+
+
+        // if (context_len == 17 && get_global_id(2) == 0 && SUBGROUPS_PER_WG == 5) {
+        //     printf("SF result: token_idx=%d, head_num=%d qk_vals_local: %f, %f, %f, %f, %f,  %f, %f, %f, %f, %f,  %f, %f, %f, %f, %f,  %f, %f; Total qk_max=%f total sum=%f (%f %f %f %f %f)\n",
+        //             token_idx, head_num_idx, qk_vals_local[0], qk_vals_local[1], qk_vals_local[2], qk_vals_local[3], qk_vals_local[4],
+        //             qk_vals_local[5], qk_vals_local[6], qk_vals_local[7], qk_vals_local[8], qk_vals_local[9],
+        //             qk_vals_local[10], qk_vals_local[11], qk_vals_local[12], qk_vals_local[13], qk_vals_local[14], qk_vals_local[15], qk_vals_local[16], qk_max, exp_sum,
+        //             qk_sum_vals[0], qk_sum_vals[1], qk_sum_vals[2], qk_sum_vals[3], qk_sum_vals[4]);
+
+        // }
     }
 
     {

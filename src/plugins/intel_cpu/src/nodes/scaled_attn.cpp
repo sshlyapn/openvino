@@ -801,6 +801,8 @@ struct ScaledDotProductAttention::AttentionExecutor : public ScaledDotProductAtt
         v_input.reset(inputs[2]);
         present_key.reset(presentk_input);
         present_value.reset(presentv_input);
+        // std::cout << "is_PA=" << is_pagedattn << " q_input=" << inputs[0]->getShape().toPartialShape() << " k_input" << inputs[1]->getShape().toPartialShape()
+        //           << " present_key=" << presentk_input->getShape().toPartialShape() << " present_value=" << presentv_input->getShape().toPartialShape() << "\n";
         if (is_pagedattn) {
             is_prompt = *inputs[ID_IS_PROMPT]->getDataAs<uint8_t>() == 1;
             //auto max_context_len = static_cast<size_t>(*inputs[ID_MAX_CONTEXT_LEN]->getDataAs<int32_t>());
@@ -825,13 +827,17 @@ struct ScaledDotProductAttention::AttentionExecutor : public ScaledDotProductAtt
             // L0 in each batch may be different
             L0 = 0;
 
+            // std::cout << "Assert 1\n";
             q_input.assert_dims({B, L1, H * S});
             if (!is_prompt) {
+                // std::cout << "Assert 2\n";
                 context_lens.assert_dims({B});
+                // std::cout << "Assert 3\n";
                 beam_table.assert_dims({B, 0}, true);
             } else {
                 sliding_window = static_cast<size_t>(*inputs[ID_SLIDING_WINDOW]->getDataAs<int32_t>());
             }
+            // std::cout << "Assert 4\n";
             output_emb.assert_dims({B, L1, H * S});
             q_input = q_input.reshape({B, L1, H, S}).permute({0, 2, 1, 3});
             k_input = k_input.reshape({B, L1, Hk, S}).permute({0, 2, 1, 3});
@@ -872,22 +878,31 @@ struct ScaledDotProductAttention::AttentionExecutor : public ScaledDotProductAtt
             auto Hk = k_input.size(1);
 
             if (fuse_concat) {
+                // std::cout << "Assert 5\n";
                 k_input.assert_dims({B, Hk, L1, S});
+                // std::cout << "Assert 6\n";
                 v_input.assert_dims({B, Hk, L1, S});
             } else {
+                // std::cout << "Assert 7\n";
                 k_input.assert_dims({B, Hk, L0 + L1, S});
+                // std::cout << "Assert 8\n";
                 v_input.assert_dims({B, Hk, L0 + L1, S});
             }
+            // std::cout << "Assert 9\n";
             present_key.assert_dims({B, Hk, L0 + L1, S});
+            // std::cout << "Assert 10\n";
             present_value.assert_dims({B, Hk, L0 + L1, S});
-            if (beam_table)
+            if (beam_table) {
+                // std::cout << "Assert 11\n";
                 beam_table.assert_dims({B, L0 + L1});
+            }
         }
 
         bool auto_causal;
         bool use_attn_mask;
         if (fuse_causal_attn) {
             assert(attn_mask);
+            // std::cout << "Assert 12\n";
             attn_mask.assert_dims({B, 1, L1, L0 + L1});
             auto_causal = true;
             use_attn_mask = true;

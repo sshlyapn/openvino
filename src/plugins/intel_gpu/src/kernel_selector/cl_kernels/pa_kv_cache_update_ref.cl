@@ -26,6 +26,11 @@ KERNEL(pa_kv_cache_update)(
     const uint block_index = slot_idx / KV_CACHE_BLOCK_SIZE;
     const uint block_offset = slot_idx % KV_CACHE_BLOCK_SIZE;
 
+
+    // if (batch_idx == 0 && hidden_idx == 0) {
+    //     printf("Update kv_cache %d: block_dx=%d offset=%d, slot_idx=%d\n", seq_idx, block_index, block_offset, slot_idx);
+    // }
+
 #ifdef VALUE_CACHE_UPDATE
     const uint out_offset = CACHE_BLOCK_STRIDE * block_index +
                             hidden_idx * KV_CACHE_BLOCK_SIZE +

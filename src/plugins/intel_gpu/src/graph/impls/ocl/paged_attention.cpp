@@ -71,13 +71,14 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
                              instance.input_memory_ptr(4)   /* value_cache */ };
         } else if (stage == Stage::SDPA) {
             if (kernel_idx == 0) {
-                args.inputs = { instance.input_memory_ptr(0), /* query */
-                                instance.input_memory_ptr(3), /* key_cache */
-                                instance.input_memory_ptr(4), /* value_cache */
-                                instance.input_memory_ptr(7), /* max_context_len */
-                                instance.input_memory_ptr(8), /* context_lens */
-                                instance.input_memory_ptr(9), /* block_tables */
-                                instance.input_memory_ptr(10) /* scale */ };
+                args.inputs = { instance.input_memory_ptr(0),  /* query */
+                                instance.input_memory_ptr(3),  /* key_cache */
+                                instance.input_memory_ptr(4),  /* value_cache */
+                                instance.input_memory_ptr(7),  /* max_context_len */
+                                instance.input_memory_ptr(8),  /* context_lens */
+                                instance.input_memory_ptr(9),  /* block_tables */
+                                instance.input_memory_ptr(10), /* scale */
+                                instance.input_memory_ptr(5)   /* is_prompt */ };
             } else {
                 args.inputs = { instance.input_memory_ptr(8), /* context_lens */ };
             }
@@ -212,10 +213,11 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
     static sdpa_kernel_params_t get_sdpa_kernel_params(const kernel_impl_params& impl_param, bool is_dynamic = false) {
         auto params = get_default_params<kernel_selector::sdpa_params>(impl_param, is_dynamic);
 
-        const auto inputs_count = 7;
+        const auto inputs_count = 8;
         const auto query_layout = impl_param.get_input_layout(0);
         const auto key_cache_layout = impl_param.get_input_layout(3);
         const auto value_cache_layout = impl_param.get_input_layout(4);
+        const auto is_prompt_layout = impl_param.get_input_layout(5);
         const auto max_context_len_layout = impl_param.get_input_layout(7);
         const auto context_lens_layout = impl_param.get_input_layout(8);
         const auto block_tables_layout = impl_param.get_input_layout(9);
@@ -228,6 +230,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         params.inputs[4] = convert_data_tensor(context_lens_layout);
         params.inputs[5] = convert_data_tensor(block_tables_layout);
         params.inputs[6] = convert_data_tensor(scale_layout);
+        params.inputs[7] = convert_data_tensor(is_prompt_layout);
 
         params.configuration = get_sdpa_configuration(impl_param);
         if (!is_dynamic) {
@@ -240,6 +243,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
             mem_lock<uint8_t, mem_lock_type::read> is_prompt_stage_mem_lock(is_prompt_stage_mem, impl_param.get_stream());
             bool is_prompt_stage = is_prompt_stage_mem_lock[0];
 
+
             if (is_prompt_stage) {
                 // Use number of slots for KV cache as a maximum context length for the first iteration
                 auto slot_mapping = impl_param.get_input_layout(6);
@@ -249,6 +253,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
                 mem_lock<int32_t, mem_lock_type::read> max_context_len_mem_lock(max_context_len_mem, impl_param.get_stream());
                 params.configuration.max_context_len = max_context_len_mem_lock[0];
             }
+            // std::cout << "is_prompt_stage=" << is_prompt_stage << " params.configuration.max_context_len=" << params.configuration.max_context_len << "\n";
         }
 
         const auto& in_offsets_map = impl_param.in_port_to_shape_info_offset;
@@ -261,6 +266,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
             {4, in_offsets_map.at(8)},
             {5, in_offsets_map.at(9)},
             {6, in_offsets_map.at(10)},
+            {7, in_offsets_map.at(5)},
         };
         std::map<size_t, size_t> out_tensor_to_offset_map = {
             {0, out_offsets_map.at(0)},

@@ -101,7 +101,8 @@ void mark_runtime_skippable_nodes::run(program& p) {
             if (node.is_output()
                 || node.has_fused_primitives()
                 || (impl_params->get_input_layout(0).format != impl_params->get_output_layout().format)
-                || (impl_params->get_input_layout(0).data_type != impl_params->get_output_layout().data_type))
+                || (impl_params->get_input_layout(0).data_type != impl_params->get_output_layout().data_type)
+                || node.is_in_shape_of_subgraph())
                 return;
 
             if (node.is_dynamic()) {

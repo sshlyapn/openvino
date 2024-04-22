@@ -120,11 +120,45 @@ void CreatePagedAttention(ProgramBuilder& p, const std::shared_ptr<ov::Node>& op
     // const size_t block_size = value_cache_shape[3];
     // const size_t x_size = key_cache_shape[4];
 
-    prim.head_size = 128;
-    prim.heads_num = 32;
-    prim.kv_heads_num = 32;
-    prim.block_size = 16;
-    prim.x_block_size = 8;
+    const auto query_shape = op->get_input_partial_shape(0);
+
+
+    if (query_shape[2] == 1024) {
+        /* q  input tensor: f16:bfyx:1x6x16x64:nopad
+           parameter:past_key_values.0.key was: f16:bfzyx:?x?x?x?x?:nopad now: f16:bfzyx:200x16x8x16x8:nopad
+           parameter:past_key_values.0.value was: f16:bfyx:?x?x?x?:nopad now: f16:bfyx:200x16x64x16:nopad */
+        // Hardcoded for codegen
+        prim.head_size = 64;
+        prim.heads_num = 16;
+        prim.kv_heads_num = 16;
+        prim.block_size = 16;
+        prim.x_block_size = 8;
+    } else if (query_shape[2] == 2560) {
+        // Hardcoded for phi-2
+        /*  q  was: f16:bfyx:?x?x32x80:nopad now: f16:bfyx:1x6x32x80:nopad
+            parameter:past_key_values.0.key was: f16:bfzyx:?x?x?x?x?:nopad now: f16:bfzyx:200x32x10x16x8:nopad
+            parameter:past_key_values.0.value was: f16:bfyx:?x?x?x?:nopad now: f16:bfyx:200x32x80x16:nopad
+         */
+        prim.head_size = 80;
+        prim.heads_num = 32;
+        prim.kv_heads_num = 32;
+        prim.block_size = 16;
+        prim.x_block_size = 8;
+    } else {
+        // Hardcoded for llama-7b and llama-13b
+        const auto heads_num = (query_shape[2] == 5120) ? 40 : (query_shape[2] == 4096) ? 32 : 1;
+        prim.head_size = 128;
+        prim.heads_num = heads_num;
+        prim.kv_heads_num = heads_num;
+        prim.block_size = 16;
+        prim.x_block_size = 8;
+    }
+
+    if (query_shape[2] != prim.head_size * prim.heads_num) {
+        std::cout << "PA: incorrect configuration. Got query shape: " << query_shape << "\n";
+    }
+
+    OPENVINO_ASSERT(query_shape[2] == prim.head_size * prim.heads_num, "PA: incorrect configuration. Got query shape: ", query_shape);
 
     prim.num_outputs = op->get_output_size();
     prim.output_data_types = get_output_data_types(op);

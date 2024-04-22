@@ -12,7 +12,7 @@ namespace kernel_selector {
 // For kernel w/o split
 constexpr size_t max_sequence_length = 3072;
 
-constexpr size_t seq_len_portion_size = 256;
+constexpr size_t seq_len_portion_size = 512;
 constexpr size_t subgroup_size = 16;
 
 const Datatype softmax_acc_dt = Datatype::F32;
@@ -160,6 +160,7 @@ ParamsKey SDPAKernelRef::GetSupportedKey() const {
     ParamsKey key;
     key.EnableInputDataType(Datatype::F16);
     key.EnableInputDataType(Datatype::F32);
+    key.EnableInputDataType(Datatype::UINT8);
     key.EnableInputDataType(Datatype::INT32);
     key.EnableOutputDataType(Datatype::F16);
     key.EnableOutputDataType(Datatype::F32);

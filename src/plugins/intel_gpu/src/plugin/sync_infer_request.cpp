@@ -705,6 +705,16 @@ std::vector<cldnn::event::ptr> SyncInferRequest::prepare_input(const std::string
                                 (m_plugin_inputs[input_idx].owner == TensorOwner::USER && !is_remote) ||
                                 (plugin_tensor_mem_type != cldnn::allocation_type::usm_host && usm_host_raw_ptr);
 
+    // if (internal_name == "parameter:input_ids") {
+    //     std::stringstream ss;
+
+    //     auto ptr = user_tensor_wrapper.ptr->data<int64_t>();
+    //     for (size_t i = 0; i < user_tensor_wrapper.ptr->get_size(); i++)
+    //         ss << ptr[i] << ", ";
+
+    //     std::cout << "parameter:input_ids input: " << ss.str() << "\n";
+    // }
+
     if (update_device_tensor) {
         // If device input hasn't been created, then try to use user memory if it's usm_host, or allocate new device buffer
         m_plugin_inputs[input_idx] = create_or_share_device_tensor(user_tensor_wrapper, internal_name, pshape, device_tensor_et, convert_needed);
