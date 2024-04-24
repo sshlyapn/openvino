@@ -128,6 +128,7 @@
 #include "transformations/op_conversions/simplify_ctc_greedy_decoder_seq_len.hpp"
 #include "transformations/op_conversions/softmax_decomposition.hpp"
 #include "transformations/op_conversions/softplus_decomposition.hpp"
+#include "transformations/op_conversions/scaled_dot_product_attention_decomposition.hpp"
 #include "transformations/opset_conversions/convert_opset2_to_opset1.hpp"
 #include "transformations/opset_conversions/convert_opset3_to_opset2.hpp"
 #include "transformations/resolve_names_collisions.hpp"
@@ -296,6 +297,7 @@ void TransformationsPipeline::apply(std::shared_ptr<ov::Model> func) {
                                                           store_original_precision_as_rt_attribute);
 
         manager.register_pass<ov::pass::CommonOptimizations>();
+        pass_config->set_callback<ov::pass::ScaledDotProductAttentionDecomposition>([&](const std::shared_ptr<const ov::Node>){ return true; });
 
         manager.register_pass<ov::pass::WrapInterpolateIntoTransposes>();
         manager.register_pass<ov::pass::TransposeSinking>();
@@ -717,10 +719,10 @@ void TransformationsPipeline::apply(std::shared_ptr<ov::Model> func) {
         }
         manager.register_pass<ov::pass::ConvertGatherToGatherCompressed>();
         manager.register_pass<ov::intel_gpu::RMSFusion>(device_info.max_work_group_size);
-        manager.register_pass<ov::intel_gpu::KVCacheFusion>();
+        // manager.register_pass<ov::intel_gpu::KVCacheFusion>();
         manager.register_pass<ov::intel_gpu::FullyConnectedConvertFusion>();
         if (!device_info.supports_immad) {
-            manager.register_pass<ov::intel_gpu::TransposeMatMulFusion>();
+            // manager.register_pass<ov::intel_gpu::TransposeMatMulFusion>();
             manager.register_pass<ov::intel_gpu::UnsqueezeBroadcastReshapeMatmulFusion>();
         }
         manager.register_pass<ov::intel_gpu::SwiGLUFusion>();

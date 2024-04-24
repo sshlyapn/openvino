@@ -182,6 +182,7 @@ protected:
         auto dtype = from_data_type(_kernel_data.internalBufferDataType);
         const auto bpp = data_type_traits::size_of(dtype);
         for (auto size : _kernel_data.internalBufferSizes) {
+            GPU_DEBUG_TRACE_DETAIL << "Size " << size << " bpp " << bpp << "\n";
             layout inbuf_layout = {dtype, format::bfyx, // simple linear format (flattern to x channel)
                                     {1, 1, 1, (tensor::value_type)(size / bpp)}};
             layouts.push_back(inbuf_layout);
