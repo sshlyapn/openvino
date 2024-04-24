@@ -5,7 +5,7 @@
 #include "primitive_base.hpp"
 #include "scaled_dot_product_attention_inst.h"
 #include "sdpa/sdpa_kernel_selector.h"
-#include "sdpa/sdpa_kernel_ref.h"
+#include "sdpa/sdpa_kernel_base.h"
 
 namespace cldnn {
 namespace ocl {
@@ -21,6 +21,16 @@ struct scaled_dot_product_attention_impl : typed_primitive_impl_ocl<scaled_dot_p
         return make_unique<scaled_dot_product_attention_impl>(*this);
     }
 
+    static kernel_selector::sdpa_configuration get_sdpa_configuration(const kernel_impl_params& impl_param) {
+        kernel_selector::sdpa_configuration config;
+
+        const auto query_ps = impl_param.get_input_layout(0).get_partial_shape();
+        if (query_ps[query_ps.size() - 1].is_static())
+            config.head_size = query_ps[query_ps.size() - 1].get_length();
+
+        return config;
+    }
+
     static kernel_params_t get_kernel_params(const kernel_impl_params& impl_param, bool is_dynamic) {
         const auto& primitive = impl_param.typed_desc<scaled_dot_product_attention>();
         auto params = get_default_params<kernel_selector::sdpa_params>(impl_param, is_dynamic);
@@ -31,11 +41,7 @@ struct scaled_dot_product_attention_impl : typed_primitive_impl_ocl<scaled_dot_p
         params.inputs[2] = convert_data_tensor(impl_param.get_input_layout(2));
         params.inputs[3] = convert_data_tensor(impl_param.get_input_layout(3));
 
-        // std::cout << impl_param.typed_desc<scaled_dot_product_attention>()->id << "in[0] " << impl_param.get_input_layout(0).to_short_string() << "\n";
-        // std::cout << impl_param.typed_desc<scaled_dot_product_attention>()->id << "in[1] " << impl_param.get_input_layout(1).to_short_string() << "\n";
-        // std::cout << impl_param.typed_desc<scaled_dot_product_attention>()->id << "in[2] " << impl_param.get_input_layout(2).to_short_string() << "\n";
-        // std::cout << impl_param.typed_desc<scaled_dot_product_attention>()->id << "in[3] " << impl_param.get_input_layout(3).to_short_string() << "\n";
-        // std::cout << impl_param.typed_desc<scaled_dot_product_attention>()->id << "out[0] " << impl_param.get_output_layout(0).to_short_string() << "\n";
+        params.conf = get_sdpa_configuration(impl_param);
 
         params.set_dynamic_shape_offsets();
 

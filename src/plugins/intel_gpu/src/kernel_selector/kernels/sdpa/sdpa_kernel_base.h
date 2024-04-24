@@ -9,26 +9,19 @@
 #include <vector>
 
 namespace kernel_selector {
+struct sdpa_configuration {
+    int64_t head_size = -1;
+    int64_t heads_num = -1;
+    int64_t kv_heads_num = -1;
+};
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // sdpa_params
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 struct sdpa_params : public base_params {
     sdpa_params() : base_params(KernelType::SDPA) {}
-    DimTensor<uint32_t> block_shape;
-    DimTensor<uint32_t> crops_begin;
-    DimTensor<uint32_t> crops_end;
 
-    base_params::ArgType block_type = base_params::ArgType::Input;
-    base_params::ArgType begin_type = base_params::ArgType::Input;
-    base_params::ArgType end_type = base_params::ArgType::Input;
-
-    size_t block_dims = 0;
-    size_t begin_dims = 0;
-    size_t end_dims = 0;
-
-    size_t block_input_index = 0;
-    size_t begin_input_index = 0;
-    size_t end_input_index = 0;
+    sdpa_configuration conf;
 };
 
 struct sdpa_fuse_params : fuse_params {
@@ -48,7 +41,6 @@ public:
 protected:
     bool Validate(const Params&) const override;
     virtual JitConstants GetJitConstants(const sdpa_params& params) const;
-    virtual CommonDispatchData SetDefault(const sdpa_params& params) const;
     KernelsData GetCommonKernelsData(const Params& params) const;
 };
 }  // namespace kernel_selector

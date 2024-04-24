@@ -37,6 +37,8 @@ KERNEL(sdpa_ref)(
     const OUTPUT_TYPE scale = OUTPUT_VAL_ONE / sqrt(TO_OUTPUT_TYPE(INPUT1_SIZE_X));
 #endif
 
+    // Process 1*seq_len elements (Gemm1 + SoftMax) using a single work item, saving results to tmp_buf and
+    // reusing them between all work items within a single workgroup for Gemm2 calculations.
     if (get_local_id(2) == 0) {
         for (uint s = 0; s < INPUT1_SIZE_Y /* seq_len */; s++) {
             OUTPUT_TYPE acc = 0;

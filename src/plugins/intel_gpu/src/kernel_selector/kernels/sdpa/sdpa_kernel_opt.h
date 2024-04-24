@@ -7,19 +7,20 @@
 #include "sdpa_kernel_base.h"
 
 namespace kernel_selector {
-class SDPAKernelRef : public SDPAKernelBase {
+class SDPAKernelOpt : public SDPAKernelBase {
 public:
     using Parent = SDPAKernelBase;
-    SDPAKernelRef() : SDPAKernelBase("sdpa_ref") {}
-    virtual ~SDPAKernelRef() {}
+    SDPAKernelOpt() : SDPAKernelBase("sdpa_opt") {}
+    virtual ~SDPAKernelOpt() {}
 
     KernelsData GetKernelsData(const Params& params) const override;
     KernelsPriority GetKernelsPriority(const Params& params) const override;
     ParamsKey GetSupportedKey() const override;
 
 protected:
+    bool Validate(const Params& p) const override;
     void GetUpdateDispatchDataFunc(KernelData& kd) const override;
-    CommonDispatchData SetDefault(const sdpa_params& params) const;
+    CommonDispatchData SetDefault(const sdpa_params& params, size_t kernel_idx) const;
     JitConstants GetJitConstants(const sdpa_params& params) const override;
     std::vector<FusedOpType> GetSupportedFusedOps() const override {
         return {};

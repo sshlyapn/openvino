@@ -143,7 +143,15 @@ KERNEL(gemm_ref)(
         ACCUMULATOR_TYPE val0 = TO_ACCUMULATOR_TYPE(input0[in0_idx]);
         ACCUMULATOR_TYPE val1 = TO_ACCUMULATOR_TYPE(input1[in1_idx]);
 
+
+        // ACCUMULATOR_TYPE tmp_acc = acc;
         acc += val0 * val1;
+        // if ((x < 2) && (y < 2) && get_global_id(2) == 0) {
+        //     printf("y=%d(%d). x=%d(%d). ki=%d. %f = %f * %f + %f (in0_idx=%d, in1_idx=%d), %d %d %d\n",
+        //         y, OUTPUT_SIZE_Y, x, OUTPUT_SIZE_X, ki, acc, val0, val1, tmp_acc,
+        //         in0_idx, in1_idx, get_global_id(0), get_global_id(1), get_global_id(2)
+        //     );
+        // }
     }
 
     acc = TO_ACCUMULATOR_TYPE(ALPHA) * acc;

@@ -4,10 +4,12 @@
 
 #include "sdpa_kernel_selector.h"
 #include "sdpa_kernel_ref.h"
+#include "sdpa_kernel_opt.h"
 
 namespace kernel_selector {
 
 sdpa_kernel_selector::sdpa_kernel_selector() {
+    Attach<SDPAKernelOpt>();
     Attach<SDPAKernelRef>();
 }
 
