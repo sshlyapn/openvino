@@ -29,7 +29,7 @@ ParamsKey SDPAKernelRef::GetSupportedKey() const {
 }
 
 JitConstants SDPAKernelRef::GetJitConstants(const sdpa_params& params) const {
-    auto jit = Parent::GetJitConstants(params);
+    auto jit = MakeBaseParamsJitConstants(params);
 
     jit.Merge(MakeTypeJitConstants(Datatype::F16, "ACCUMULATOR"));
 

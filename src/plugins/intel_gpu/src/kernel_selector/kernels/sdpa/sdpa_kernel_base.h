@@ -40,7 +40,6 @@ public:
 
 protected:
     bool Validate(const Params&) const override;
-    virtual JitConstants GetJitConstants(const sdpa_params& params) const;
     KernelsData GetCommonKernelsData(const Params& params) const;
 };
 }  // namespace kernel_selector

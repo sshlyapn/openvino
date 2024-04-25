@@ -665,11 +665,11 @@ std::vector<cldnn::event::ptr> SyncInferRequest::prepare_input(const std::string
     GPU_DEBUG_TRACE_DETAIL << "    port shape       : " << pshape.to_string() << std::endl;
     GPU_DEBUG_TRACE_DETAIL << "    user_tensor shape: " << user_tensor->get_shape().to_string() << std::endl;
 
-    if (internal_name == "parameter:input_ids") {
-        for (size_t i = 0; i < user_tensor->get_size(); i++) {
-            std::cout << "input_id[" << i << "] = " << user_tensor->data<int64_t>()[i] << "\n";
-        }
-    }
+    // if (internal_name == "parameter:input_ids") {
+    //     for (size_t i = 0; i < user_tensor->get_size(); i++) {
+    //         std::cout << "input_id[" << i << "] = " << user_tensor->data<int64_t>()[i] << "\n";
+    //     }
+    // }
 
     auto network = m_graph->get_network();
     auto& engine = m_graph->get_engine();

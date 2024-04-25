@@ -79,7 +79,15 @@ void set_arguments_impl(ocl_kernel_type& kernel,
                         const kernel_arguments_data& data) {
     using args_t = argument_desc::Types;
     using scalar_t = scalar_desc::Types;
+    GPU_DEBUG_TRACE_DETAIL << "Total args " << args.size() << "\n";
+    GPU_DEBUG_TRACE_DETAIL << "data.inputs.size() = " << data.inputs.size() << "\n";
+    GPU_DEBUG_TRACE_DETAIL << "data.intermediates.size() = " << data.intermediates.size() << "\n";
+    GPU_DEBUG_TRACE_DETAIL << "data.outputs.size() = " << data.outputs.size() << "\n";
+    if (data.scalars)
+        GPU_DEBUG_TRACE_DETAIL << "data.scalars->size() = " << data.scalars->size() << "\n";
+    GPU_DEBUG_TRACE_DETAIL << "data.shape_info = " << data.shape_info << "\n";
     for (uint32_t i = 0; i < static_cast<uint32_t>(args.size()); i++) {
+        GPU_DEBUG_TRACE_DETAIL << "setting " << static_cast<size_t>(args[i].t) << " index=" << args[i].index << "\n";
         cl_int status = CL_INVALID_ARG_VALUE;
         switch (args[i].t) {
             case args_t::INPUT:

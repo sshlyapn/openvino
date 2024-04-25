@@ -9,7 +9,7 @@
 
 namespace kernel_selector {
 
-constexpr size_t seq_len_partition_size = 256;
+constexpr size_t seq_len_partition_size = 128;
 constexpr size_t subgroup_size = 16;
 
 ParamsKey SDPAKernelOpt::GetSupportedKey() const {
@@ -48,11 +48,12 @@ bool SDPAKernelOpt::Validate(const Params& p) const {
     return true;
 }
 
-JitConstants SDPAKernelOpt::GetJitConstants(const sdpa_params& params) const {
-    auto jit = Parent::GetJitConstants(params);
+JitConstants SDPAKernelOpt::GetJitConstants(const sdpa_params& params, size_t kernel_idx) const {
+    auto jit = MakeBaseParamsJitConstants(params);
 
+    // const auto softmax_acc_dt = Datatype::F32;
     const auto softmax_acc_dt = params.inputs[0].GetDType();
-    jit.Merge(MakeTypeJitConstants(softmax_acc_dt, "ACCUMULATOR"));
+    jit.Merge(MakeTypeJitConstants(softmax_acc_dt, "SOFTMAX_ACCUMULATOR"));
 
     const auto& config = params.conf;
     jit.AddConstant(MakeJitConstant("SUBGROUP_SIZE", subgroup_size));
@@ -63,6 +64,7 @@ JitConstants SDPAKernelOpt::GetJitConstants(const sdpa_params& params) const {
     jit.AddConstant(MakeJitConstant("USE_SEQ_LEN_SPLIT", 1));
     jit.AddConstant(MakeJitConstant("SEQ_LEN_PARTITION_SIZE", seq_len_partition_size));
     jit.AddConstant(MakeJitConstant("SLM_SIZE", seq_len_partition_size));
+    jit.AddConstant(MakeJitConstant("SDPA_STAGE_" + std::to_string(kernel_idx), 1));
 
     return jit;
 }
@@ -74,18 +76,19 @@ CommonDispatchData SDPAKernelOpt::SetDefault(const sdpa_params& params, size_t k
     const auto& key_input = params.inputs[1];
     const auto& output = params.outputs[0];
     if (!query_input.is_dynamic()) {
-        const size_t seq_len = key_input.Y().v;
-        const size_t num_of_partitions = CeilDiv(seq_len, seq_len_partition_size);
+        const size_t source_seq_len = key_input.Y().v;
+        const size_t target_seq_len = output.Y().v;
+        const size_t num_of_partitions = CeilDiv(source_seq_len, seq_len_partition_size);
         const size_t head_size = static_cast<size_t>(params.conf.head_size);
 
         if (kernel_idx == 0) {
             dispatch_data.gws = { output.Batch().v * output.Feature().v,
-                                  output.Y().v,
+                                  target_seq_len,
                                   head_size * num_of_partitions };
             dispatch_data.lws = { 1, 1, head_size };
         } else {
             dispatch_data.gws = { output.Batch().v * output.Feature().v,
-                                  output.Y().v,
+                                  target_seq_len,
                                   head_size };
             dispatch_data.lws = { 1, 1, subgroup_size };
         }
@@ -95,54 +98,76 @@ CommonDispatchData SDPAKernelOpt::SetDefault(const sdpa_params& params, size_t k
 }
 
 KernelsData SDPAKernelOpt::GetKernelsData(const Params& params) const {
-    KernelData kd = KernelData::Default<sdpa_params>(params);
-    const auto& prim_params = dynamic_cast<const sdpa_params&>(params);
-
     if (!Validate(params)) {
         return {};
     }
 
-    auto dispatchData = SetDefault(prim_params, 0);
-    auto entry_point = GetEntryPoint(kernelName, prim_params.layerID, params);
-    auto cldnn_jit = GetJitConstants(prim_params);
-    auto jit = CreateJit(kernelName, cldnn_jit, entry_point);
-
-    auto& kernel = kd.kernels[0];
+    const size_t kernels_num = 2;
+    KernelData kd = KernelData::Default<sdpa_params>(params, kernels_num);
+    kd.needs_sub_kernels_sync = true;
 
     GetUpdateDispatchDataFunc(kd);
 
-    FillCLKernelData(kernel, dispatchData, params.engineInfo, kernelName, jit, entry_point,
-                     "", false, false, static_cast<int>(prim_params.inputs.size()),
-                     GetFusedPrimitiveInputsCount(params), 1, prim_params.is_shape_agnostic);
+    const auto& prim_params = dynamic_cast<const sdpa_params&>(params);
+    for (size_t kernel_num = 0; kernel_num < kernels_num; kernel_num++) {
+        auto dispatch_data = SetDefault(prim_params, kernel_num);
+        auto kernel_name = kernel_num == 0 ? kernelName : "sdpa_opt_finalization";
+        auto entry_point = GetEntryPoint(kernel_name, prim_params.layerID, params);
+        auto jit_constants = GetJitConstants(prim_params, kernel_num);
+        auto jit = CreateJit(kernel_name, jit_constants, entry_point);
 
-    auto num_of_partitions = 1;
+        auto& kernel = kd.kernels[kernel_num];
 
-    auto& output = prim_params.outputs[0];
-    auto buf_dt_size = 4;
-    // auto buf_elements_count = tokens_num * prim_params.configuration.heads_num * num_of_portions;
-    auto buf_elements_count = output.LogicalSize() / output.X().v * num_of_partitions;
-    auto buf_size = buf_elements_count * buf_dt_size;
+        auto inputs_num = kernel_num == 1 ? 0 : static_cast<int>(prim_params.inputs.size());
+        FillCLKernelData(kernel,
+                         dispatch_data,
+                         params.engineInfo,
+                         kernelName,
+                         jit,
+                         entry_point,
+                         {},
+                         false,
+                         false,
+                         inputs_num,
+                         GetFusedPrimitiveInputsCount(params),
+                         static_cast<int>(prim_params.outputs.size()),
+                         prim_params.is_shape_agnostic);
 
-    auto tmp_out_dt_size = 4;
-    auto tmp_out_elements_count = output.LogicalSize() / output.X().v * num_of_partitions * prim_params.conf.head_size;
-    auto tmp_out_size = tmp_out_elements_count * tmp_out_dt_size;
+        const auto num_of_partitions = 1;
+        auto& output = prim_params.outputs[0];
+        auto head_size = output.X().v;
 
-    kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 0});
-    kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 1});
-    kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 2});
+        auto buf_dt_size = 4;
+        auto buf_elements_count = (num_of_partitions == 1) ? 1 : output.LogicalSize() / head_size * num_of_partitions;
+        auto buf_size = buf_elements_count * buf_dt_size;
 
-    kd.internalBufferSizes.clear();
-    kd.internalBufferSizes.push_back(buf_size);
-    kd.internalBufferSizes.push_back(buf_size);
-    kd.internalBufferSizes.push_back(tmp_out_size);
-    kd.internalBufferDataType = prim_params.inputs[0].GetDType();
+        auto tmp_out_dt_size = 4;
+        auto tmp_out_elements_count = (num_of_partitions == 1) ? 1 : output.LogicalSize() * num_of_partitions;
+        auto tmp_out_size = tmp_out_elements_count * tmp_out_dt_size;
 
-    // ScalarDescriptor num_of_partitions_scalar;
-    // num_of_partitions_scalar.t = ScalarDescriptor::Types::UINT32;
-    // num_of_partitions_scalar.v.u32 = 1;
+        kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 0});
+        kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 1});
+        kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 2});
 
-    // kd.kernels[1].params.scalars.resize(1);
-    // kd.kernels[1].params.scalars[0] = num_of_partitions_scalar;
+        kd.internalBufferSizes.clear();
+        kd.internalBufferSizes.push_back(buf_size);
+        kd.internalBufferSizes.push_back(buf_size);
+        kd.internalBufferSizes.push_back(tmp_out_size);
+        kd.internalBufferDataType = prim_params.inputs[0].GetDType();
+
+        GPU_DEBUG_TRACE_DETAIL << "configure SDPA " << kernel_num << "th kernel: inputs_num=" << inputs_num << " arguments_num=" << kernel.params.arguments.size() << "\n";
+
+        if (kernel_num == 1) {
+            kernel.params.arguments.push_back({ArgumentDescriptor::Types::SCALAR, 0});
+
+            ScalarDescriptor num_of_partitions_scalar;
+            num_of_partitions_scalar.t = ScalarDescriptor::Types::UINT32;
+            num_of_partitions_scalar.v.u32 = num_of_partitions;
+
+            kernel.params.scalars.clear();
+            kernel.params.scalars.push_back(num_of_partitions_scalar);
+        }
+    }
 
     return { kd };
 }
@@ -150,33 +175,44 @@ KernelsData SDPAKernelOpt::GetKernelsData(const Params& params) const {
 void SDPAKernelOpt::GetUpdateDispatchDataFunc(KernelData& kd) const {
     kd.update_dispatch_data_func = [this](const Params& params, KernelData& kernel_data) {
         const auto& prim_params = static_cast<const sdpa_params&>(params);
-        auto dispatchData = SetDefault(prim_params, 0);
-        OPENVINO_ASSERT(kernel_data.kernels.size() == 1, "[GPU] Invalid kernels size for update dispatch data func");
-        kernel_data.kernels[0].params.workGroups.global = dispatchData.gws;
-        kernel_data.kernels[0].params.workGroups.local = dispatchData.lws;
-        kernel_data.kernels[0].skip_execution = KernelData::SkipKernelExecution(prim_params);
 
-        // auto& in_q = prim_params.inputs[0];
-        // auto& in_k = prim_params.inputs[1];
-
-        // ScalarDescriptor num_of_partitions_scalar;
-        // num_of_partitions_scalar.t = ScalarDescriptor::Types::UINT32;
-        // num_of_partitions_scalar.v.u32 = 1;
-
-        // kernel_data.kernels[0].params.scalars.resize(1);
-        // kernel_data.kernels[0].params.scalars[0] = num_of_partitions_scalar;
-
-        auto num_of_partitions = 1;
+        const size_t expected_kernels_num = 2;
+        OPENVINO_ASSERT(kernel_data.kernels.size() == expected_kernels_num,
+                        "[GPU] Invalid kernels size for update dispatch data func of SDPA kernel");
 
         auto& output = prim_params.outputs[0];
+        auto& key_input = prim_params.inputs[1];
+
+        auto head_size = output.X().v;
+        auto source_seq_len = key_input.Y().v;
+        auto num_of_partitions = CeilDiv(source_seq_len, seq_len_partition_size);
+
         auto buf_dt_size = 4;
-        // auto buf_elements_count = tokens_num * prim_params.configuration.heads_num * num_of_portions;
-        auto buf_elements_count = output.LogicalSize() / output.X().v * num_of_partitions;
+        auto buf_elements_count = (num_of_partitions == 1) ? 1 : output.LogicalSize() / head_size * num_of_partitions;
         auto buf_size = buf_elements_count * buf_dt_size;
 
         auto tmp_out_dt_size = 4;
-        auto tmp_out_elements_count = output.LogicalSize() / output.X().v * num_of_partitions * prim_params.conf.head_size;
+        auto tmp_out_elements_count = (num_of_partitions == 1) ? 1 : output.LogicalSize() * num_of_partitions;
         auto tmp_out_size = tmp_out_elements_count * tmp_out_dt_size;
+
+        auto dispatch_data1 = SetDefault(prim_params, 0);
+        kernel_data.kernels[0].params.workGroups.global = dispatch_data1.gws;
+        kernel_data.kernels[0].params.workGroups.local = dispatch_data1.lws;
+        kernel_data.kernels[0].skip_execution = KernelData::SkipKernelExecution(prim_params);
+
+        ScalarDescriptor num_of_partitions_scalar;
+        num_of_partitions_scalar.t = ScalarDescriptor::Types::UINT32;
+        num_of_partitions_scalar.v.u32 = num_of_partitions;
+
+        auto dispatch_data2 = SetDefault(prim_params, 1);
+        kernel_data.kernels[1].params.workGroups.global = dispatch_data2.gws;
+        kernel_data.kernels[1].params.workGroups.local = dispatch_data2.lws;
+        kernel_data.kernels[1].skip_execution = num_of_partitions == 1;
+
+        kernel_data.kernels[1].params.scalars.clear();
+        kernel_data.kernels[1].params.scalars.push_back(num_of_partitions_scalar);
+        GPU_DEBUG_TRACE_DETAIL << "update_dispatch_data_func SDPA 0th kernel: arguments_num=" << kernel_data.kernels[0].params.arguments.size() << "\n";
+        GPU_DEBUG_TRACE_DETAIL << "update_dispatch_data_func SDPA 1th kernel: arguments_num=" << kernel_data.kernels[1].params.arguments.size() << "\n";
 
         kernel_data.internalBufferSizes.clear();
         kernel_data.internalBufferSizes.push_back(buf_size);

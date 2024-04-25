@@ -20,7 +20,7 @@ public:
 protected:
     void GetUpdateDispatchDataFunc(KernelData& kd) const override;
     CommonDispatchData SetDefault(const sdpa_params& params) const;
-    JitConstants GetJitConstants(const sdpa_params& params) const override;
+    JitConstants GetJitConstants(const sdpa_params& params) const;
     std::vector<FusedOpType> GetSupportedFusedOps() const override {
         return {};
     }

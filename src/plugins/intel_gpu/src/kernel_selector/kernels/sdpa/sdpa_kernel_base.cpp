@@ -21,12 +21,6 @@ bool SDPAKernelBase::Validate(const Params& p) const {
     return true;
 }
 
-JitConstants SDPAKernelBase::GetJitConstants(const sdpa_params& params) const {
-    JitConstants jit = MakeBaseParamsJitConstants(params);
-
-    return jit;
-}
-
 KernelsData SDPAKernelBase::GetCommonKernelsData(const Params& params) const {
     KernelData kd = KernelData::Default<sdpa_params>(params);
 
