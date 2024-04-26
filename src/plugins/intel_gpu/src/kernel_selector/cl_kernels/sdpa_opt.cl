@@ -87,40 +87,55 @@ KERNEL(sdpa_opt)(
     const uint start_partition_idx = partition_idx * SEQ_LEN_PARTITION_SIZE;
 
     { // start Gemm1
-    // const uint query_offset = INPUT0_GET_INDEX(batch_idx, head_num_idx, seq_idx, sgid * SUBGROUP_SIZE);
+    #define QUERY_BLOCK_SIZE 8
+    #define QUERY_BLOCK_READ_NEW(ptr, offset) BLOCK_READN(INPUT0_TYPE, QUERY_BLOCK_SIZE, ptr, offset)
+    #define QUERY_BLOCK_NEW MAKE_VECTOR_TYPE(INPUT0_TYPE, QUERY_BLOCK_SIZE)
+
+    const uint query_offset = INPUT0_GET_INDEX(batch_idx, head_num_idx, seq_idx, 0);
+    QUERY_BLOCK_NEW query_vals = QUERY_BLOCK_READ_NEW(query_input, query_offset);
     // query_vals_local[head_size_idx] = QUERY_BLOCK_READ(query_input, query_offset);
 
     // barrier(CLK_LOCAL_MEM_FENCE);
 
     /* Calculate Gemm1 */
-    for (uint seq_len = lid; seq_len < partition_seq_len; seq_len += wi_num_per_partition) {
-        uint query_offset = INPUT0_GET_INDEX(batch_idx, head_num_idx, seq_idx, 0);
+    for (uint seq_len = sgid; seq_len < partition_seq_len; seq_len += (HEAD_SIZE / SUBGROUP_SIZE)) {
         uint key_offset = INPUT1_GET_INDEX(batch_idx, head_num_idx, start_partition_idx + seq_len, 0);
 
         INPUT0_TYPE acc = INPUT0_VAL_ZERO;
-        unroll_for (uint h = 0; h < HEAD_SIZE; h += SUBGROUP_SIZE) {
-            INPUT0_TYPE query_val = QUERY_BLOCK_READ(query_input, query_offset);
-            KEY_VEC_TYPE key_vec = AS_VALUE_VEC(VLOAD(0, key_input + key_offset));
 
-            unroll_for (uint i = 0; i < SUBGROUP_SIZE; i++) {
-                acc = mad(sub_group_broadcast(query_val, i), key_vec[i], acc);
+#define MULS_NUM 2
+#define KEY_BLOCK_READ_NEW(ptr, offset) BLOCK_READN(INPUT1_TYPE, MULS_NUM, ptr, offset)
+#define KEY_BLOCK_NEW MAKE_VECTOR_TYPE(INPUT1_TYPE, MULS_NUM)
+
+        unroll_for (uint h = 0; h < HEAD_SIZE / SUBGROUP_SIZE / MULS_NUM; h++) {
+            KEY_BLOCK_NEW key_vec = KEY_BLOCK_READ_NEW(key_input, key_offset);
+
+            unroll_for (uint i = 0; i < MULS_NUM; i++) {
+#if MULS_NUM == 1
+                acc = mad(query_vals[h * MULS_NUM + i], key_vec, acc);
+#else
+                acc = mad(query_vals[h * MULS_NUM + i], key_vec[i], acc);
+#endif
             }
 
-            query_offset += SUBGROUP_SIZE;
-            key_offset += SUBGROUP_SIZE;
+            key_offset += SUBGROUP_SIZE * MULS_NUM;
         }
 
-        // Apply scale
-        acc *= scale_val;
+        acc = sub_group_reduce_add(acc);
 
-        // Apply attention mask
-        uint attn_mask_offset = INPUT3_GET_INDEX_SAFE(batch_idx, head_num_idx, seq_idx, start_partition_idx + seq_len);
-        acc += attn_mask[attn_mask_offset];
+        if (sglid == 0) {
+            // Apply scale
+            acc *= scale_val;
 
-        // Update qk_max value
-        qk_max = SOFTMAX_ACCUMULATOR_MAX_FUNC(qk_max, TO_SOFTMAX_ACCUMULATOR_TYPE(acc));
+            // Apply attention mask
+            uint attn_mask_offset = INPUT3_GET_INDEX_SAFE(batch_idx, head_num_idx, seq_idx, start_partition_idx + seq_len);
+            acc += attn_mask[attn_mask_offset];
 
-        qk_vals_local[seq_len] = acc;
+            // Update qk_max value
+            qk_max = SOFTMAX_ACCUMULATOR_MAX_FUNC(qk_max, TO_SOFTMAX_ACCUMULATOR_TYPE(acc));
+
+            qk_vals_local[seq_len] = acc;
+        }
     }
     } // finish Gemm1
 

@@ -48,12 +48,31 @@ bool SDPAKernelOpt::Validate(const Params& p) const {
     return true;
 }
 
+template <typename T>
+T convert_to(const std::string &str) {
+    std::istringstream ss(str);
+    T res;
+    ss >> res;
+    return res;
+}
+
+template <>
+std::string convert_to(const std::string &str) {
+    return str;
+}
+
 JitConstants SDPAKernelOpt::GetJitConstants(const sdpa_params& params, size_t kernel_idx) const {
     auto jit = MakeBaseParamsJitConstants(params);
 
     // const auto softmax_acc_dt = Datatype::F32;
     const auto softmax_acc_dt = params.inputs[0].GetDType();
     jit.Merge(MakeTypeJitConstants(softmax_acc_dt, "SOFTMAX_ACCUMULATOR"));
+
+    // if (const auto env_var = std::getenv("MULS_NUM")) {
+    //     auto muls_num = convert_to<size_t>(env_var);
+    //     std::cout << "Force MULS_NUM to " << muls_num << "\n";
+    //     jit.AddConstant(MakeJitConstant("MULS_NUM", muls_num));
+    // }
 
     const auto& config = params.conf;
     jit.AddConstant(MakeJitConstant("SUBGROUP_SIZE", subgroup_size));
