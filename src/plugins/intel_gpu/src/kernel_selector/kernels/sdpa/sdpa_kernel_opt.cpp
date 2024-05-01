@@ -9,7 +9,6 @@
 
 namespace kernel_selector {
 
-constexpr size_t seq_len_partition_size = 128;
 constexpr size_t subgroup_size = 16;
 
 template <typename T>
@@ -37,6 +36,21 @@ static size_t get_seq_id_block_size() {
         called = true;
     }
     return block_size;
+}
+
+
+static size_t get_seq_len_partition_size() {
+    static bool called = false;
+    size_t seq_len = 128;
+    if (const auto env_var = std::getenv("SEQ_LEN")) {
+        seq_len = convert_to<size_t>(env_var);
+    }
+
+    if (!called) {
+        std::cout << "Set seq_len_partition_size = " << seq_len << "\n";
+        called = true;
+    }
+    return seq_len;
 }
 
 ParamsKey SDPAKernelOpt::GetSupportedKey() const {
@@ -119,8 +133,8 @@ JitConstants SDPAKernelOpt::GetJitConstants(const sdpa_params& params, size_t ke
     jit.AddConstant(MakeJitConstant("KV_HEADS_NUM", config.kv_heads_num));
 
     jit.AddConstant(MakeJitConstant("USE_SEQ_LEN_SPLIT", 1));
-    jit.AddConstant(MakeJitConstant("SEQ_LEN_PARTITION_SIZE", seq_len_partition_size));
-    jit.AddConstant(MakeJitConstant("SLM_SIZE", seq_len_partition_size));
+    jit.AddConstant(MakeJitConstant("SEQ_LEN_PARTITION_SIZE", get_seq_len_partition_size()));
+    jit.AddConstant(MakeJitConstant("SLM_SIZE", get_seq_len_partition_size()));
     jit.AddConstant(MakeJitConstant("SDPA_STAGE_" + std::to_string(kernel_idx), 1));
 
     jit.AddConstant(MakeJitConstant("SEQ_ID_BLOCK_SIZE", get_seq_id_block_size()));
@@ -137,7 +151,7 @@ CommonDispatchData SDPAKernelOpt::SetDefault(const sdpa_params& params, size_t k
     if (!query_input.is_dynamic()) {
         const size_t source_seq_len = key_input.Y().v;
         const size_t target_seq_len = output.Y().v;
-        const size_t num_of_partitions = CeilDiv(source_seq_len, seq_len_partition_size);
+        const size_t num_of_partitions = CeilDiv(source_seq_len, get_seq_len_partition_size());
         const size_t head_size = static_cast<size_t>(params.conf.head_size);
 
         if (kernel_idx == 0) {
@@ -244,7 +258,7 @@ void SDPAKernelOpt::GetUpdateDispatchDataFunc(KernelData& kd) const {
 
         auto head_size = output.X().v;
         auto source_seq_len = key_input.Y().v;
-        auto num_of_partitions = CeilDiv(source_seq_len, seq_len_partition_size);
+        auto num_of_partitions = CeilDiv(source_seq_len, get_seq_len_partition_size());
 
         auto buf_dt_size = 4;
         auto buf_elements_count = (num_of_partitions == 1) ? 1 : output.LogicalSize() / head_size * num_of_partitions;
