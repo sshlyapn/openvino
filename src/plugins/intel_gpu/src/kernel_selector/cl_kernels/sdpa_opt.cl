@@ -91,7 +91,7 @@ KERNEL(sdpa_opt)(
     #if HEAD_SIZE > 256 || MULTI_TOKENS_OPT
         #define QUERY_IN_SLM 1
         #if FIRST_APPROACH
-        __local INPUT0_TYPE query_vals[HEAD_SIZE * SEQ_ID_BLOCK_SIZE];
+        __local INPUT0_TYPE query_vals[HEAD_SIZE];
         #else
         __local INPUT0_TYPE query_vals[HEAD_SIZE];
         #endif
@@ -146,7 +146,7 @@ KERNEL(sdpa_opt)(
 #else
     /* Optimized case for any HEAD_SIZE % SUBGROUP_SIZE == 0 */
 
-    #if defined(FIRST_APPROACH) || defined(SINGLE_TOKEN_OPT)  /* temprorary disable loading */
+    #if defined(SINGLE_TOKEN_OPT)  /* temprorary disable loading */
 
     #ifdef QUERY_IN_SLM
         #if MULTI_TOKENS_OPT
@@ -251,16 +251,15 @@ KERNEL(sdpa_opt)(
     #define KEY_BLOCK_SIZE MULS_NUM
     #define KEY_BLOCK_READ(ptr, offset) BLOCK_READN(INPUT1_TYPE, KEY_BLOCK_SIZE, ptr, offset)
     #define KEY_BLOCK MAKE_VECTOR_TYPE(INPUT1_TYPE, KEY_BLOCK_SIZE)
+    #define QUERY_BLOCK_READ(ptr, offset) BLOCK_READN(INPUT0_TYPE, KEY_BLOCK_SIZE, ptr, offset)
 
     for (uint h = 0; h < HEAD_SIZE / SUBGROUP_SIZE / KEY_BLOCK_SIZE; h++) {
         uint key_offset = INPUT1_GET_INDEX(batch_idx, head_num_idx, start_partition_idx + sgid, h * KEY_BLOCK_SIZE * SUBGROUP_SIZE);
         MAKE_VECTOR_TYPE(INPUT0_TYPE, KEY_BLOCK_SIZE) query_vals_regs[SEQ_ID_BLOCK_SIZE];
 
         unroll_for (uint seq_idx_index = 0; seq_idx_index < SEQ_ID_BLOCK_SIZE; seq_idx_index++) {
-            unroll_for (uint i = 0; i < KEY_BLOCK_SIZE; i++) {
-                const uint query_local_offset = seq_idx_index * HEAD_SIZE + (h * KEY_BLOCK_SIZE + i) * SUBGROUP_SIZE + sglid;
-                query_vals_regs[seq_idx_index][i] = query_vals[query_local_offset]; /* READ FROM SLM TO REG */
-            }
+            const uint query_offset = INPUT0_GET_INDEX(batch_idx, head_num_idx, seq_idx + seq_idx_index, h * KEY_BLOCK_SIZE * SUBGROUP_SIZE);
+            query_vals_regs[seq_idx_index] = QUERY_BLOCK_READ(query_input, query_offset);
         }
 
         for (uint seq_len = sgid; seq_len < partition_seq_len; seq_len += (HEAD_SIZE / SUBGROUP_SIZE)) {
