@@ -254,23 +254,22 @@ KERNEL(sdpa_opt)(
 
     for (uint h = 0; h < HEAD_SIZE / SUBGROUP_SIZE / KEY_BLOCK_SIZE; h++) {
         uint key_offset = INPUT1_GET_INDEX(batch_idx, head_num_idx, start_partition_idx + sgid, h * KEY_BLOCK_SIZE * SUBGROUP_SIZE);
-        MAKE_VECTOR_TYPE(INPUT0_TYPE, KEY_BLOCK_SIZE) query_vals_regs[SEQ_ID_BLOCK_SIZE];
+        // MAKE_VECTOR_TYPE(INPUT0_TYPE, KEY_BLOCK_SIZE) query_vals_regs[SEQ_ID_BLOCK_SIZE];
 
-        unroll_for (uint seq_idx_index = 0; seq_idx_index < SEQ_ID_BLOCK_SIZE; seq_idx_index++) {
-            unroll_for (uint i = 0; i < KEY_BLOCK_SIZE; i++) {
-                const uint query_local_offset = seq_idx_index * HEAD_SIZE + (h * KEY_BLOCK_SIZE + i) * SUBGROUP_SIZE + sglid;
-                query_vals_regs[seq_idx_index][i] = query_vals[query_local_offset]; /* READ FROM SLM TO REG */
-            }
-        }
+        // unroll_for (uint seq_idx_index = 0; seq_idx_index < SEQ_ID_BLOCK_SIZE; seq_idx_index++) {
+        //     unroll_for (uint i = 0; i < KEY_BLOCK_SIZE; i++) {
+        //         const uint query_local_offset = seq_idx_index * HEAD_SIZE + (h * KEY_BLOCK_SIZE + i) * SUBGROUP_SIZE + sglid;
+        //         query_vals_regs[seq_idx_index][i] = query_vals[query_local_offset]; /* READ FROM SLM TO REG */
+        //     }
+        // }
 
         for (uint seq_len = sgid; seq_len < partition_seq_len; seq_len += (HEAD_SIZE / SUBGROUP_SIZE)) {
             INPUT0_TYPE acc[SEQ_ID_BLOCK_SIZE] = {INPUT0_VAL_ZERO};
             KEY_BLOCK key_vec = KEY_BLOCK_READ(key_input, key_offset);
-            unroll_for (uint seq_idx_index = 0; seq_idx_index < SEQ_ID_BLOCK_SIZE; seq_idx_index++) {
+            for (uint seq_idx_index = 0; seq_idx_index < SEQ_ID_BLOCK_SIZE; seq_idx_index++) {
                 unroll_for (uint i = 0; i < KEY_BLOCK_SIZE; i++) {
-                    INPUT0_TYPE before_acc = acc[seq_idx_index];
-                    acc[seq_idx_index] = mad(query_vals_regs[seq_idx_index][i], key_vec[i], acc[seq_idx_index]);
-
+                    const uint query_local_offset = seq_idx_index * HEAD_SIZE + (h * KEY_BLOCK_SIZE + i) * SUBGROUP_SIZE + sglid;
+                    acc[seq_idx_index] = mad(query_vals[query_local_offset], key_vec[i], acc[seq_idx_index]);
                 }
             }
 
