@@ -12,6 +12,33 @@ namespace kernel_selector {
 constexpr size_t seq_len_partition_size = 128;
 constexpr size_t subgroup_size = 16;
 
+template <typename T>
+T convert_to(const std::string &str) {
+    std::istringstream ss(str);
+    T res;
+    ss >> res;
+    return res;
+}
+
+template <>
+std::string convert_to(const std::string &str) {
+    return str;
+}
+
+static size_t get_seq_id_block_size() {
+    static bool called = false;
+    size_t block_size = 1;
+    if (const auto env_var = std::getenv("BLOCK_SIZE")) {
+        block_size = convert_to<size_t>(env_var);
+    }
+
+    if (!called) {
+        std::cout << "Set block size = " << block_size << "\n";
+        called = true;
+    }
+    return block_size;
+}
+
 ParamsKey SDPAKernelOpt::GetSupportedKey() const {
     ParamsKey k;
     k.EnableInputDataType(Datatype::F16);
@@ -48,19 +75,6 @@ bool SDPAKernelOpt::Validate(const Params& p) const {
     return true;
 }
 
-template <typename T>
-T convert_to(const std::string &str) {
-    std::istringstream ss(str);
-    T res;
-    ss >> res;
-    return res;
-}
-
-template <>
-std::string convert_to(const std::string &str) {
-    return str;
-}
-
 JitConstants SDPAKernelOpt::GetJitConstants(const sdpa_params& params, size_t kernel_idx) const {
     auto jit = MakeBaseParamsJitConstants(params);
 
@@ -68,11 +82,35 @@ JitConstants SDPAKernelOpt::GetJitConstants(const sdpa_params& params, size_t ke
     const auto softmax_acc_dt = params.inputs[0].GetDType();
     jit.Merge(MakeTypeJitConstants(softmax_acc_dt, "SOFTMAX_ACCUMULATOR"));
 
-    // if (const auto env_var = std::getenv("MULS_NUM")) {
-    //     auto muls_num = convert_to<size_t>(env_var);
-    //     std::cout << "Force MULS_NUM to " << muls_num << "\n";
-    //     jit.AddConstant(MakeJitConstant("MULS_NUM", muls_num));
-    // }
+    if (const auto env_var = std::getenv("MULS_NUM")) {
+        auto muls_num = convert_to<size_t>(env_var);
+        jit.AddConstant(MakeJitConstant("MULS_NUM", muls_num));
+    }
+
+    if (const auto env_var = std::getenv("FIRST_APPROACH_OPTION2")) {
+        jit.AddConstant(MakeJitConstant("FIRST_APPROACH_OPTION2", 1));
+    }
+
+    if (const auto env_var = std::getenv("FIRST_APPROACH")) {
+        jit.AddConstant(MakeJitConstant("FIRST_APPROACH", 1));
+    }
+
+    static bool printed = false;
+    if (!printed) {
+        printed = true;
+        std::cout << "Input " << static_cast<int>(params.inputs[0].GetDType()) << " " << static_cast<int>(params.outputs[0].GetDType()) << " " << static_cast<int>(softmax_acc_dt) << "\n";
+
+        if (const auto env_var = std::getenv("MULS_NUM")) {
+            auto muls_num = convert_to<size_t>(env_var);
+            std::cout << "Force MULS_NUM to " << muls_num << "\n";
+        }
+        if (const auto env_var = std::getenv("FIRST_APPROACH_OPTION2")) {
+            std::cout << "Force FIRST_APPROACH_OPTION2\n";
+        }
+        if (const auto env_var = std::getenv("FIRST_APPROACH")) {
+            std::cout << "Force FIRST_APPROACH\n";
+        }
+    }
 
     const auto& config = params.conf;
     jit.AddConstant(MakeJitConstant("SUBGROUP_SIZE", subgroup_size));
@@ -84,6 +122,8 @@ JitConstants SDPAKernelOpt::GetJitConstants(const sdpa_params& params, size_t ke
     jit.AddConstant(MakeJitConstant("SEQ_LEN_PARTITION_SIZE", seq_len_partition_size));
     jit.AddConstant(MakeJitConstant("SLM_SIZE", seq_len_partition_size));
     jit.AddConstant(MakeJitConstant("SDPA_STAGE_" + std::to_string(kernel_idx), 1));
+
+    jit.AddConstant(MakeJitConstant("SEQ_ID_BLOCK_SIZE", get_seq_id_block_size()));
 
     return jit;
 }
@@ -102,7 +142,7 @@ CommonDispatchData SDPAKernelOpt::SetDefault(const sdpa_params& params, size_t k
 
         if (kernel_idx == 0) {
             dispatch_data.gws = { output.Batch().v * output.Feature().v,
-                                  target_seq_len,
+                                  CeilDiv(target_seq_len, get_seq_id_block_size()),
                                   head_size * num_of_partitions };
             dispatch_data.lws = { 1, 1, head_size };
         } else {
