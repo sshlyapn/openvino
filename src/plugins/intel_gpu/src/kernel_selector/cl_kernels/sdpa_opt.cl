@@ -412,11 +412,11 @@ KERNEL(sdpa_opt)(
     }
 #endif
 
-    ulong timer_start2 = intel_get_cycle_counter();
-    if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_global_id(2) == 0) {
-        ulong diff = timer_start2 - timer_start1;
-        printf("Gemm1 time: %lu\n", diff);
-    }
+    // ulong timer_start2 = intel_get_cycle_counter();
+    // if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_global_id(2) == 0) {
+    //     ulong diff = timer_start2 - timer_start1;
+    //     printf("Gemm1 time: %lu\n", diff);
+    // }
 
     } // finish Gemm1
 
@@ -519,11 +519,11 @@ KERNEL(sdpa_opt)(
         }
 
 
-        ulong timer_start2 = intel_get_cycle_counter();
-        if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_global_id(2) == 0) {
-            ulong diff = timer_start2 - timer_start1;
-            printf("%d. Softmax time: %lu\n", 0, diff);
-        }
+        // ulong timer_start2 = intel_get_cycle_counter();
+        // if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_global_id(2) == 0) {
+        //     ulong diff = timer_start2 - timer_start1;
+        //     printf("%d. Softmax time: %lu\n", 0, diff);
+        // }
 
     }
 
@@ -533,7 +533,7 @@ KERNEL(sdpa_opt)(
 
     OUTPUT_TYPE acc[SEQ_ID_BLOCK_SIZE] = {OUTPUT_VAL_ZERO};
     for (uint seq_len = 0; seq_len < partition_seq_len / SUBGROUP_SIZE; seq_len++) {
-        uint value_offset = INPUT1_GET_INDEX(batch_idx, head_num_idx, start_partition_idx + (seq_len * SUBGROUP_SIZE), head_size_idx);
+        uint value_offset = INPUT2_GET_INDEX(batch_idx, head_num_idx, start_partition_idx + (seq_len * SUBGROUP_SIZE), head_size_idx);
 
         OUTPUT_TYPE qk_val[SEQ_ID_BLOCK_SIZE];
         unroll_for (uint seq_idx_index = 0; seq_idx_index < SEQ_ID_BLOCK_SIZE; seq_idx_index++) {
@@ -555,7 +555,7 @@ KERNEL(sdpa_opt)(
     /* TODO: Remove if */
     if (seq_len_leftover_start != partition_seq_len) {
         for (uint seq_len = seq_len_leftover_start; seq_len < partition_seq_len; seq_len++) {
-            const uint value_offset = INPUT1_GET_INDEX(batch_idx, head_num_idx, start_partition_idx + seq_len, head_size_idx);
+            const uint value_offset = INPUT2_GET_INDEX(batch_idx, head_num_idx, start_partition_idx + seq_len, head_size_idx);
 
             OUTPUT_TYPE qk_val[SEQ_ID_BLOCK_SIZE];
             unroll_for (uint seq_idx_index = 0; seq_idx_index < SEQ_ID_BLOCK_SIZE; seq_idx_index++) {
@@ -599,11 +599,11 @@ KERNEL(sdpa_opt)(
         }
 
 
-    ulong timer_start2 = intel_get_cycle_counter();
-    if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_global_id(2) == 0) {
-        ulong diff = timer_start2 - timer_start1;
-        printf("Gemm2 time: %lu\n", diff);
-    }
+    // ulong timer_start2 = intel_get_cycle_counter();
+    // if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_global_id(2) == 0) {
+    //     ulong diff = timer_start2 - timer_start1;
+    //     printf("Gemm2 time: %lu\n", diff);
+    // }
     }
 }
 

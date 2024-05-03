@@ -26,7 +26,7 @@ std::string convert_to(const std::string &str) {
 
 static size_t get_seq_id_block_size() {
     static bool called = false;
-    size_t block_size = 1;
+    size_t block_size = 8;
     if (const auto env_var = std::getenv("BLOCK_SIZE")) {
         block_size = convert_to<size_t>(env_var);
     }
@@ -52,6 +52,21 @@ static size_t get_seq_len_partition_size() {
     }
     return seq_len;
 }
+
+static size_t get_mul_num() {
+    static bool called = false;
+    size_t muls_num = 8;
+    if (const auto env_var = std::getenv("MULS_NUM")) {
+        muls_num = convert_to<size_t>(env_var);
+    }
+
+    if (!called) {
+        std::cout << "Set muls_num = " << muls_num << "\n";
+        called = true;
+    }
+    return muls_num;
+}
+
 
 ParamsKey SDPAKernelOpt::GetSupportedKey() const {
     ParamsKey k;
@@ -96,35 +111,7 @@ JitConstants SDPAKernelOpt::GetJitConstants(const sdpa_params& params, size_t ke
     const auto softmax_acc_dt = params.inputs[0].GetDType();
     jit.Merge(MakeTypeJitConstants(softmax_acc_dt, "SOFTMAX_ACCUMULATOR"));
 
-    if (const auto env_var = std::getenv("MULS_NUM")) {
-        auto muls_num = convert_to<size_t>(env_var);
-        jit.AddConstant(MakeJitConstant("MULS_NUM", muls_num));
-    }
-
-    if (const auto env_var = std::getenv("FIRST_APPROACH_OPTION2")) {
-        jit.AddConstant(MakeJitConstant("FIRST_APPROACH_OPTION2", 1));
-    }
-
-    if (const auto env_var = std::getenv("FIRST_APPROACH")) {
-        jit.AddConstant(MakeJitConstant("FIRST_APPROACH", 1));
-    }
-
-    static bool printed = false;
-    if (!printed) {
-        printed = true;
-        std::cout << "Input " << static_cast<int>(params.inputs[0].GetDType()) << " " << static_cast<int>(params.outputs[0].GetDType()) << " " << static_cast<int>(softmax_acc_dt) << "\n";
-
-        if (const auto env_var = std::getenv("MULS_NUM")) {
-            auto muls_num = convert_to<size_t>(env_var);
-            std::cout << "Force MULS_NUM to " << muls_num << "\n";
-        }
-        if (const auto env_var = std::getenv("FIRST_APPROACH_OPTION2")) {
-            std::cout << "Force FIRST_APPROACH_OPTION2\n";
-        }
-        if (const auto env_var = std::getenv("FIRST_APPROACH")) {
-            std::cout << "Force FIRST_APPROACH\n";
-        }
-    }
+    jit.AddConstant(MakeJitConstant("MULS_NUM", get_mul_num()));
 
     const auto& config = params.conf;
     jit.AddConstant(MakeJitConstant("SUBGROUP_SIZE", subgroup_size));
@@ -135,9 +122,17 @@ JitConstants SDPAKernelOpt::GetJitConstants(const sdpa_params& params, size_t ke
     jit.AddConstant(MakeJitConstant("USE_SEQ_LEN_SPLIT", 1));
     jit.AddConstant(MakeJitConstant("SEQ_LEN_PARTITION_SIZE", get_seq_len_partition_size()));
     jit.AddConstant(MakeJitConstant("SLM_SIZE", get_seq_len_partition_size()));
-    jit.AddConstant(MakeJitConstant("SDPA_STAGE_" + std::to_string(kernel_idx), 1));
 
-    jit.AddConstant(MakeJitConstant("SEQ_ID_BLOCK_SIZE", get_seq_id_block_size()));
+    // kernel_idx == 0 - single token opt
+    // kernel_idx == 1 - multi token opt
+    // kernel_idx == 2 - finalization
+    if (kernel_idx == 0)
+        jit.AddConstant(MakeJitConstant("SEQ_ID_BLOCK_SIZE", 1));
+    else
+        jit.AddConstant(MakeJitConstant("SEQ_ID_BLOCK_SIZE", get_seq_id_block_size()));
+
+    auto sdpa_stage = kernel_idx == 2 ? 1 : 0;
+    jit.AddConstant(MakeJitConstant("SDPA_STAGE_" + std::to_string(sdpa_stage), 1));
 
     return jit;
 }
@@ -153,10 +148,11 @@ CommonDispatchData SDPAKernelOpt::SetDefault(const sdpa_params& params, size_t k
         const size_t target_seq_len = output.Y().v;
         const size_t num_of_partitions = CeilDiv(source_seq_len, get_seq_len_partition_size());
         const size_t head_size = static_cast<size_t>(params.conf.head_size);
+        const size_t block_size = kernel_idx == 1 ? get_seq_id_block_size() : 1;
 
-        if (kernel_idx == 0) {
+        if (kernel_idx == 0 || kernel_idx == 1) {
             dispatch_data.gws = { output.Batch().v * output.Feature().v,
-                                  CeilDiv(target_seq_len, get_seq_id_block_size()),
+                                  CeilDiv(target_seq_len, block_size),
                                   head_size * num_of_partitions };
             dispatch_data.lws = { 1, 1, head_size };
         } else {
@@ -175,7 +171,7 @@ KernelsData SDPAKernelOpt::GetKernelsData(const Params& params) const {
         return {};
     }
 
-    const size_t kernels_num = 2;
+    const size_t kernels_num = 3;
     KernelData kd = KernelData::Default<sdpa_params>(params, kernels_num);
     kd.needs_sub_kernels_sync = true;
 
@@ -184,14 +180,15 @@ KernelsData SDPAKernelOpt::GetKernelsData(const Params& params) const {
     const auto& prim_params = dynamic_cast<const sdpa_params&>(params);
     for (size_t kernel_num = 0; kernel_num < kernels_num; kernel_num++) {
         auto dispatch_data = SetDefault(prim_params, kernel_num);
-        auto kernel_name = kernel_num == 0 ? kernelName : "sdpa_opt_finalization";
+        auto kernel_name = kernel_num == 0 ? kernelName + "_single_token" :
+                                             kernel_num == 1 ? kernelName + "_multi_tokens" : "sdpa_opt_finalization";
         auto entry_point = GetEntryPoint(kernel_name, prim_params.layerID, params);
         auto jit_constants = GetJitConstants(prim_params, kernel_num);
         auto jit = CreateJit(kernel_name, jit_constants, entry_point);
 
         auto& kernel = kd.kernels[kernel_num];
 
-        auto inputs_num = kernel_num == 1 ? 0 : static_cast<int>(prim_params.inputs.size());
+        auto inputs_num = kernel_num == 2 ? 0 : static_cast<int>(prim_params.inputs.size());
         FillCLKernelData(kernel,
                          dispatch_data,
                          params.engineInfo,
@@ -230,7 +227,7 @@ KernelsData SDPAKernelOpt::GetKernelsData(const Params& params) const {
 
         GPU_DEBUG_TRACE_DETAIL << "configure SDPA " << kernel_num << "th kernel: inputs_num=" << inputs_num << " arguments_num=" << kernel.params.arguments.size() << "\n";
 
-        if (kernel_num == 1) {
+        if (kernel_num == 2) {
             kernel.params.arguments.push_back({ArgumentDescriptor::Types::SCALAR, 0});
 
             ScalarDescriptor num_of_partitions_scalar;
@@ -249,13 +246,14 @@ void SDPAKernelOpt::GetUpdateDispatchDataFunc(KernelData& kd) const {
     kd.update_dispatch_data_func = [this](const Params& params, KernelData& kernel_data) {
         const auto& prim_params = static_cast<const sdpa_params&>(params);
 
-        const size_t expected_kernels_num = 2;
+        const size_t expected_kernels_num = 3;
         OPENVINO_ASSERT(kernel_data.kernels.size() == expected_kernels_num,
                         "[GPU] Invalid kernels size for update dispatch data func of SDPA kernel");
 
         auto& output = prim_params.outputs[0];
         auto& key_input = prim_params.inputs[1];
 
+        auto seq_num = output.Y().v;
         auto head_size = output.X().v;
         auto source_seq_len = key_input.Y().v;
         auto num_of_partitions = CeilDiv(source_seq_len, get_seq_len_partition_size());
@@ -271,21 +269,27 @@ void SDPAKernelOpt::GetUpdateDispatchDataFunc(KernelData& kd) const {
         auto dispatch_data1 = SetDefault(prim_params, 0);
         kernel_data.kernels[0].params.workGroups.global = dispatch_data1.gws;
         kernel_data.kernels[0].params.workGroups.local = dispatch_data1.lws;
-        kernel_data.kernels[0].skip_execution = KernelData::SkipKernelExecution(prim_params);
+        kernel_data.kernels[0].skip_execution = seq_num > 1;
+
+        auto dispatch_data2 = SetDefault(prim_params, 1);
+        kernel_data.kernels[1].params.workGroups.global = dispatch_data2.gws;
+        kernel_data.kernels[1].params.workGroups.local = dispatch_data2.lws;
+        kernel_data.kernels[1].skip_execution = seq_num == 1;
 
         ScalarDescriptor num_of_partitions_scalar;
         num_of_partitions_scalar.t = ScalarDescriptor::Types::UINT32;
         num_of_partitions_scalar.v.u32 = num_of_partitions;
 
-        auto dispatch_data2 = SetDefault(prim_params, 1);
-        kernel_data.kernels[1].params.workGroups.global = dispatch_data2.gws;
-        kernel_data.kernels[1].params.workGroups.local = dispatch_data2.lws;
-        kernel_data.kernels[1].skip_execution = num_of_partitions == 1;
+        auto dispatch_data3 = SetDefault(prim_params, 2);
+        kernel_data.kernels[2].params.workGroups.global = dispatch_data3.gws;
+        kernel_data.kernels[2].params.workGroups.local = dispatch_data3.lws;
+        kernel_data.kernels[2].skip_execution = num_of_partitions == 1;
 
-        kernel_data.kernels[1].params.scalars.clear();
-        kernel_data.kernels[1].params.scalars.push_back(num_of_partitions_scalar);
+        kernel_data.kernels[2].params.scalars.clear();
+        kernel_data.kernels[2].params.scalars.push_back(num_of_partitions_scalar);
         GPU_DEBUG_TRACE_DETAIL << "update_dispatch_data_func SDPA 0th kernel: arguments_num=" << kernel_data.kernels[0].params.arguments.size() << "\n";
-        GPU_DEBUG_TRACE_DETAIL << "update_dispatch_data_func SDPA 1th kernel: arguments_num=" << kernel_data.kernels[1].params.arguments.size() << "\n";
+        GPU_DEBUG_TRACE_DETAIL << "update_dispatch_data_func SDPA 1th kernel: arguments_num=" << kernel_data.kernels[2].params.arguments.size() << "\n";
+        GPU_DEBUG_TRACE_DETAIL << "update_dispatch_data_func SDPA 3th kernel: arguments_num=" << kernel_data.kernels[3].params.arguments.size() << "\n";
 
         kernel_data.internalBufferSizes.clear();
         kernel_data.internalBufferSizes.push_back(buf_size);
