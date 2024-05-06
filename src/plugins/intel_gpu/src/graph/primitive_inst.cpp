@@ -1541,6 +1541,9 @@ primitive_inst::primitive_inst(network & network, program_node const& node, bool
             _outputs = allocate_outputs();
         }
     }
+    if (_node) {
+        GPU_DEBUG_TRACE_DETAIL << _node->type()->to_string(*_node) << "\n";
+    }
     if (_impl) {
         _impl->set_node_params(node);
         if (_impl->is_dynamic() && !_impl->is_cpu()) {
@@ -1605,7 +1608,7 @@ memory::ptr primitive_inst::allocate_internal_buffer(size_t idx, bool reset) {
         (input_device_mem || _node->get_preferred_impl_type() == impl_types::onednn)) {
         // scratchpad memory type enforces to device mem.
         GPU_DEBUG_LOG << " input is device mem and available device mem size (" << available_device_mem_size
-                      << ") > requested memory (" << layout.bytes_count() << " )" << std::endl;
+                      << ") > requested memory (" << layout.bytes_count() << ", " << layout.to_short_string() << " )" << std::endl;
         alloc_type = engine.get_preferred_memory_allocation_type();
     } else {
         GPU_DEBUG_LOG << " input is not device mem or available device mem size ("

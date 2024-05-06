@@ -128,12 +128,26 @@
 #include "transformations/op_conversions/simplify_ctc_greedy_decoder_seq_len.hpp"
 #include "transformations/op_conversions/softmax_decomposition.hpp"
 #include "transformations/op_conversions/softplus_decomposition.hpp"
+#include "transformations/op_conversions/scaled_dot_product_attention_decomposition.hpp"
 #include "transformations/opset_conversions/convert_opset2_to_opset1.hpp"
 #include "transformations/opset_conversions/convert_opset3_to_opset2.hpp"
 #include "transformations/resolve_names_collisions.hpp"
 #include "transformations/rt_info/fused_names_attribute.hpp"
 #include "transformations/rt_info/keep_const_precision.hpp"
 #include "transformations/smart_reshape/matmul_sr.hpp"
+
+template <typename T>
+T convert_to(const std::string &str) {
+    std::istringstream ss(str);
+    T res;
+    ss >> res;
+    return res;
+}
+
+template <>
+std::string convert_to(const std::string &str) {
+    return str;
+}
 
 namespace {
 template<typename T>
@@ -296,6 +310,14 @@ void TransformationsPipeline::apply(std::shared_ptr<ov::Model> func) {
                                                           store_original_precision_as_rt_attribute);
 
         manager.register_pass<ov::pass::CommonOptimizations>();
+
+        bool use_sdpa = true;
+        if (const auto env_var = std::getenv("USE_SDPA")) {
+            use_sdpa = convert_to<bool>(env_var);
+        }
+        std::cout << "SDPA set to " << (use_sdpa ? "TRUE" : "FALSE") << "\n";
+        if (use_sdpa)
+            pass_config->set_callback<ov::pass::ScaledDotProductAttentionDecomposition>([&](const std::shared_ptr<const ov::Node>){ return true; });
 
         manager.register_pass<ov::pass::WrapInterpolateIntoTransposes>();
         manager.register_pass<ov::pass::TransposeSinking>();
