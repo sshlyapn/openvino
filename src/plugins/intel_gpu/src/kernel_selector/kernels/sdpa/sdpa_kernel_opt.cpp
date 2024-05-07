@@ -155,7 +155,7 @@ CommonDispatchData SDPAKernelOpt::SetDefault(const sdpa_params& params, size_t k
                                   CeilDiv(target_seq_len, block_size),
                                   output.Batch().v * output.Feature().v };
             dispatch_data.lws = { head_size, 1, 1 };
-        } else {
+        } else if (kernel_idx == 2) {
             dispatch_data.gws = { output.Batch().v * output.Feature().v,
                                   target_seq_len,
                                   head_size };
