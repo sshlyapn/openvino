@@ -63,9 +63,9 @@ KERNEL(sdpa_opt)(
 #else
     const uint seq_idx = get_global_id(1);
 #endif
-    const uint head_size_idx = get_local_id(0);
-    // uint head_size_idx = get_global_id(0);
     const uint lid = get_local_id(0);
+    const uint head_size_idx = lid;
+    // uint head_size_idx = get_global_id(0);
 
     const uint sgid = get_sub_group_id();
     const uint sglid = get_sub_group_local_id();
@@ -118,23 +118,23 @@ KERNEL(sdpa_opt)(
     /* Optimized case for any HEAD_SIZE % SUBGROUP_SIZE == 0 */
 
     { // Load input to SLM
-        #define QUERY_LOCAL_STEP SUBGROUP_SIZE * SUBGROUPS_PER_WG
+        #define QUERY_STEP SUBGROUP_SIZE * SUBGROUPS_PER_WG
         uint query_local_offset = sgid * SUBGROUP_SIZE + sglid;
 
-    #if MULTI_TOKENS_OPT
+    #if SEQ_ID_BLOCK_SIZE > 1
         const uint seq_idx_index_end = min(INPUT0_SIZE_Y - seq_idx, (uint)SEQ_ID_BLOCK_SIZE);
     #else
         const uint seq_idx_index_end = 1;
     #endif
-        uint query_offset = INPUT0_GET_INDEX(batch_idx, head_num_idx, seq_idx, 0);
+        uint query_offset = INPUT0_GET_INDEX(batch_idx, head_num_idx, seq_idx, (sgid * SUBGROUP_SIZE));
         for (uint seq_idx_index = 0; seq_idx_index < seq_idx_index_end; seq_idx_index++) {
             #define QUERY_BLOCK_SIZE 1
-            query_offset += seq_idx_index * HEAD_SIZE + sgid * SUBGROUP_SIZE;
 
             INPUT0_TYPE val = BLOCK_READN(INPUT0_TYPE, QUERY_BLOCK_SIZE, query_input, query_offset);
 
             query_vals[query_local_offset] = val;
-            query_local_offset += QUERY_LOCAL_STEP;
+            query_local_offset += QUERY_STEP;
+            query_offset += QUERY_STEP;
         }
 
         barrier(CLK_LOCAL_MEM_FENCE);
@@ -181,6 +181,14 @@ KERNEL(sdpa_opt)(
                 query_offset += HEAD_SIZE;
             }
         }
+
+#if SEQ_ID_BLOCK_SIZE > 1
+        // barrier(CLK_LOCAL_MEM_FENCE);
+        // if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_global_id(2) == 0) {
+        //     printf("acc[1] = %f (first vals %f[%d] * %f[%d])\n",
+        //         acc[1], query_vals[HEAD_SIZE + sglid], HEAD_SIZE + sglid, key_input[INPUT1_GET_INDEX(batch_idx, head_num_idx, start_partition_idx + seq_len, 0)], INPUT1_GET_INDEX(batch_idx, head_num_idx, start_partition_idx + seq_len, 0));
+        // }
+#endif
 
         #define KEY_BLOCK_SIZE 4
         for (; head_idx_index + (KEY_BLOCK_SIZE * SUBGROUP_SIZE) <= HEAD_SIZE; head_idx_index += SUBGROUP_SIZE * KEY_BLOCK_SIZE) {
@@ -312,7 +320,7 @@ KERNEL(sdpa_opt)(
     { // Start softamx
 
     /* Apply SoftMax */
-#if MULTI_TOKENS_OPT
+#if SEQ_ID_BLOCK_SIZE > 1
     const uint seq_idx_index_end = min(INPUT0_SIZE_Y - seq_idx, (uint)SEQ_ID_BLOCK_SIZE);
     // const uint seq_idx_index_end = 1;
 #else
@@ -330,6 +338,16 @@ KERNEL(sdpa_opt)(
                 qk_max_vals[seq_idx_index * SUBGROUPS_PER_WG + sgid] = qk_max[seq_idx_index];
             }
         }
+
+#if SEQ_ID_BLOCK_SIZE > 1
+        // barrier(CLK_LOCAL_MEM_FENCE);
+        // if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_global_id(2) == 0) {
+        //     printf("Main kernel qk_vals_local[%f, %f, %f, %f, %f, %f, %f, %f]\nqk_vals_local[%f, %f, %f, %f, %f, %f, %f, %f]\nlast qk_vals_local[%f, %f, %f, %f, %f, %f, %f, %f]\n",
+        //         qk_vals_local[0], qk_vals_local[1], qk_vals_local[2], qk_vals_local[3], qk_vals_local[4], qk_vals_local[5], qk_vals_local[6], qk_vals_local[7],
+        //         qk_vals_local[SEQ_LEN_PARTITION_SIZE * 1 + 0], qk_vals_local[SEQ_LEN_PARTITION_SIZE * 1 + 1], qk_vals_local[SEQ_LEN_PARTITION_SIZE * 1 + 2], qk_vals_local[SEQ_LEN_PARTITION_SIZE * 1 + 3], qk_vals_local[SEQ_LEN_PARTITION_SIZE * 1 + 4], qk_vals_local[SEQ_LEN_PARTITION_SIZE * 1 + 5], qk_vals_local[SEQ_LEN_PARTITION_SIZE * 1 + 6], qk_vals_local[SEQ_LEN_PARTITION_SIZE * 1 + 7],
+        //         qk_vals_local[SEQ_LEN_PARTITION_SIZE * 7 + 0], qk_vals_local[SEQ_LEN_PARTITION_SIZE * 7 + 1], qk_vals_local[SEQ_LEN_PARTITION_SIZE * 7 + 2], qk_vals_local[SEQ_LEN_PARTITION_SIZE * 7 + 3], qk_vals_local[SEQ_LEN_PARTITION_SIZE * 7 + 4], qk_vals_local[SEQ_LEN_PARTITION_SIZE * 7 + 5], qk_vals_local[SEQ_LEN_PARTITION_SIZE * 7 + 6], qk_vals_local[SEQ_LEN_PARTITION_SIZE * 7 + 7]);
+        // }
+#endif
 
         barrier(CLK_LOCAL_MEM_FENCE);
 
@@ -460,7 +478,7 @@ KERNEL(sdpa_opt)(
     }
 
         if (num_of_partitions > 1) {
-#if MULTI_TOKENS_OPT
+#if SEQ_ID_BLOCK_SIZE > 1
     const uint seq_idx_index_end = min(INPUT0_SIZE_Y - seq_idx, (uint)SEQ_ID_BLOCK_SIZE);
 #else
     const uint seq_idx_index_end = 1;
@@ -475,7 +493,7 @@ KERNEL(sdpa_opt)(
             tmp_out[tmp_out_offset] = acc[seq_idx_index];
     }
         } else {
-#if MULTI_TOKENS_OPT
+#if SEQ_ID_BLOCK_SIZE > 1
     const uint seq_idx_index_end = min(INPUT0_SIZE_Y - seq_idx, (uint)SEQ_ID_BLOCK_SIZE);
 #else
     const uint seq_idx_index_end = 1;
