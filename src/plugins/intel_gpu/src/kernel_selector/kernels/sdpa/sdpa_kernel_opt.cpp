@@ -151,15 +151,15 @@ CommonDispatchData SDPAKernelOpt::SetDefault(const sdpa_params& params, size_t k
         const size_t block_size = kernel_idx == 1 ? get_seq_id_block_size() : 1;
 
         if (kernel_idx == 0 || kernel_idx == 1) {
-            dispatch_data.gws = { output.Batch().v * output.Feature().v,
+            dispatch_data.gws = { head_size * num_of_partitions,
                                   CeilDiv(target_seq_len, block_size),
-                                  head_size * num_of_partitions };
-            dispatch_data.lws = { 1, 1, head_size };
+                                  output.Batch().v * output.Feature().v };
+            dispatch_data.lws = { head_size, 1, 1 };
         } else {
             dispatch_data.gws = { output.Batch().v * output.Feature().v,
                                   target_seq_len,
                                   head_size };
-            dispatch_data.lws = { 1, 1, subgroup_size };
+            dispatch_data.lws = { 1, 1, head_size };
         }
     }
 
