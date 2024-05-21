@@ -143,7 +143,7 @@ TransposeSDPAMatcher::TransposeSDPAMatcher() {
             auto scale = sdpa->get_input_source_output(4);
             sdpa_new = std::make_shared<op::SDPA>(input_q, input_k, input_v, attn_mask, scale, order_q, order_k, order_v, order_output, sdpa->get_causal());
         }
-        std::cout << "SDPA added\n";
+
         sdpa_new->set_friendly_name(sdpa->get_friendly_name());
         ov::copy_runtime_info(m.get_matched_nodes(), sdpa_new);
         ov::replace_node(sdpa, sdpa_new);

@@ -18,45 +18,14 @@ enum KernelsTypes {
     TOTAL_KERNELS_NUM
 };
 
-template <typename T>
-T convert_to(const std::string &str) {
-    std::istringstream ss(str);
-    T res;
-    ss >> res;
-    return res;
-}
-
-template <>
-std::string convert_to(const std::string &str) {
-    return str;
-}
-
 static size_t get_target_seq_len_block_size() {
-    static bool called = false;
-    size_t block_size = 16;
-    if (const auto env_var = std::getenv("BLOCK_SIZE")) {
-        block_size = convert_to<size_t>(env_var);
-    }
-
-    if (!called) {
-        std::cout << "Set block size = " << block_size << "\n";
-        called = true;
-    }
+    const size_t block_size = 16;
     return block_size;
 }
 
 
 static size_t get_seq_len_partition_size() {
-    static bool called = false;
-    size_t seq_len = 256;
-    if (const auto env_var = std::getenv("SEQ_LEN")) {
-        seq_len = convert_to<size_t>(env_var);
-    }
-
-    if (!called) {
-        std::cout << "Set seq_len_partition_size = " << seq_len << "\n";
-        called = true;
-    }
+    const size_t seq_len = 256;
     return seq_len;
 }
 
@@ -101,9 +70,6 @@ JitConstants SDPAKernelOpt::GetJitConstants(const sdpa_params& params, size_t ke
     const auto& config = params.conf;
     jit.AddConstant(MakeJitConstant("SUBGROUP_SIZE", subgroup_size));
     jit.AddConstant(MakeJitConstant("HEAD_SIZE", config.head_size));
-    // jit.AddConstant(MakeJitConstant("HEADS_NUM", config.heads_num));
-    // jit.AddConstant(MakeJitConstant("KV_HEADS_NUM", config.kv_heads_num));
-
     jit.AddConstant(MakeJitConstant("SEQ_LEN_PARTITION_SIZE", get_seq_len_partition_size()));
 
     auto target_seq_len_block_size = kernel_idx == KernelsTypes::SINGLE_TOKEN ? 1 : get_target_seq_len_block_size();

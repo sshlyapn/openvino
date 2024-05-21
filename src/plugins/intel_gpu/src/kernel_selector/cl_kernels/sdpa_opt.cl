@@ -710,6 +710,14 @@ KERNEL(sdpa_opt)(
             const uint seq_idx_end = 1;
 #endif
             #define QK_MAX_NUMS_PER_SG CEIL_DIV(TARGET_SEQ_LEN_BLOCK_SIZE, SUBGROUPS_PER_WG)
+            #if (TARGET_SEQ_LEN_BLOCK_SIZE % SUBGROUPS_PER_WG != 0)
+                /* /* If TARGET_SEQ_LEN_BLOCK_SIZE is not divisible by SUBGROUPS_PER_WG, then some subgroups will have to handle more QK rows than others */
+                #define QK_ITERS_END \
+                    (TARGET_SEQ_LEN_BLOCK_SIZE / SUBGROUPS_PER_WG + (sgid < TARGET_SEQ_LEN_BLOCK_SIZE % SUBGROUPS_PER_WG ? 1 : 0))
+            #else
+                #define QK_ITERS_END QK_MAX_NUMS_PER_SG
+            #endif
+
             OUTPUT_TYPE qk_max[QK_MAX_NUMS_PER_SG];
             for (uint i = 0; i < QK_MAX_NUMS_PER_SG; i++)
                 qk_max[i] = SOFTMAX_ACCUMULATOR_VAL_MIN;
@@ -717,17 +725,20 @@ KERNEL(sdpa_opt)(
             barrier(CLK_LOCAL_MEM_FENCE);
 
             if (sglid < SUBGROUPS_PER_WG)
-                for (uint i = 0; i < QK_MAX_NUMS_PER_SG; i++)
+                for (uint i = 0; i < QK_ITERS_END; i++)
                     qk_max[i] = qk_max_vals[(i * SUBGROUPS_PER_WG * SUBGROUPS_PER_WG) + sgid * SUBGROUPS_PER_WG + sglid];
 
             sub_group_barrier(CLK_LOCAL_MEM_FENCE);
 
-            for (uint i = 0; i < QK_MAX_NUMS_PER_SG; i++) {
+            for (uint i = 0; i < QK_ITERS_END; i++) {
                 qk_max[i] = sub_group_reduce_max(qk_max[i]);
             }
 
-            SOFTMAX_ACCUMULATOR_TYPE exp_sum[QK_MAX_NUMS_PER_SG] = {SOFTMAX_ACCUMULATOR_VAL_ZERO};
-            for (uint i = 0; i < QK_MAX_NUMS_PER_SG; i++) {
+            SOFTMAX_ACCUMULATOR_TYPE exp_sum[QK_MAX_NUMS_PER_SG];
+            for (uint i = 0; i < QK_MAX_NUMS_PER_SG; i++)
+                exp_sum[i] = SOFTMAX_ACCUMULATOR_VAL_ZERO;
+
+            for (uint i = 0; i < QK_ITERS_END; i++) {
                 // TODO: Try full loop, with ternary operator
                 for (uint qk_idx = sglid; qk_idx < partition_seq_len; qk_idx += SUBGROUP_SIZE) {
                     const uint qk_offset = i * SUBGROUPS_PER_WG * SEQ_LEN_PARTITION_SIZE + sgid * SEQ_LEN_PARTITION_SIZE + qk_idx;
@@ -738,11 +749,11 @@ KERNEL(sdpa_opt)(
                 }
             }
 
-            for (uint i = 0; i < QK_MAX_NUMS_PER_SG; i++) {
+            for (uint i = 0; i < QK_ITERS_END; i++) {
                 exp_sum[i] = sub_group_reduce_add(exp_sum[i]);
             }
 
-            for (uint i = 0; i < QK_MAX_NUMS_PER_SG; i++) {
+            for (uint i = 0; i < QK_ITERS_END; i++) {
                 for (uint qk_idx = sglid; qk_idx < partition_seq_len; qk_idx += SUBGROUP_SIZE) {
                     const uint qk_offset = i * SUBGROUPS_PER_WG * SEQ_LEN_PARTITION_SIZE + sgid * SEQ_LEN_PARTITION_SIZE + qk_idx;
                     SOFTMAX_ACCUMULATOR_TYPE qk_val = TO_SOFTMAX_ACCUMULATOR_TYPE(qk_local[qk_offset]);

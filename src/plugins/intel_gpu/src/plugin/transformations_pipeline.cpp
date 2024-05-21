@@ -316,18 +316,11 @@ void TransformationsPipeline::apply(std::shared_ptr<ov::Model> func) {
 
         manager.register_pass<ov::pass::CommonOptimizations>();
 
-        bool use_sdpa = true;
-        if (const auto env_var = std::getenv("USE_SDPA")) {
-            use_sdpa = convert_to<bool>(env_var);
-        }
-        std::cout << "Use SDPA set to " << (use_sdpa ? "TRUE" : "FALSE") << "\n";
-
-
         // Disable SDPA decomposition once additional transformations are added:
         // 1) Input/Output Transpose fusion
         // 2) Indirect inputs support
         // 3) GQA related optimization (Broadcast fusion)
-        pass_config->set_callback<ov::pass::ScaledDotProductAttentionDecomposition>([&](const std::shared_ptr<const ov::Node>){
+        pass_config->set_callback<ov::pass::ScaledDotProductAttentionDecomposition>([&](const std::shared_ptr<const ov::Node> node){
             // Known limitations:
             // - The head size of all Q, K, and V inputs should be the same static value
             // - The head size should be divisible by 16
@@ -335,7 +328,38 @@ void TransformationsPipeline::apply(std::shared_ptr<ov::Model> func) {
             // - The number of dimensions for each input is expected to be 4
             // - SDPA impl could be slower on GPUs with IMMAD support in non-LLM scenarios,
             //   because oneDNN can be used for those cases - SDPA requires DPAS support
-            return use_sdpa;
+            auto sdpa = std::dynamic_pointer_cast<const ov::op::v13::ScaledDotProductAttention>(node);
+            const auto& query_ps = sdpa->get_input_partial_shape(0);
+            const auto& key_ps = sdpa->get_input_partial_shape(1);
+            const auto& value_ps = sdpa->get_input_partial_shape(2);
+
+            if (const auto env_var = std::getenv("USE_SDPA")) {
+                bool use_sdpa = convert_to<bool>(env_var);
+                std::cout << "Use SDPA forced to " << (use_sdpa ? "TRUE" : "FALSE") << "\n";
+                return use_sdpa;
+            }
+
+            if (query_ps.size() != 4 || key_ps.size() != 4 || value_ps.size() != 4) {
+                return false;
+            }
+
+            if (query_ps[query_ps.size() - 1].is_dynamic() || key_ps[key_ps.size() - 1].is_dynamic() || value_ps[query_ps.size() - 1].is_dynamic()) {
+                return false;
+            }
+
+            if (query_ps[query_ps.size() - 1].get_length() != key_ps[key_ps.size() - 1].get_length() ||
+                query_ps[query_ps.size() - 1].get_length() != value_ps[query_ps.size() - 1].get_length()) {
+                return false;
+            }
+
+            const auto optimal_subgroup_size = 16;
+            if (query_ps[query_ps.size() - 1].is_dynamic() ||
+                query_ps[query_ps.size() - 1].get_length() > 256 ||
+                query_ps[query_ps.size() - 1].get_length() % optimal_subgroup_size != 0) {
+                return false;
+            }
+
+            return true;
         });
 
         manager.register_pass<ov::pass::WrapInterpolateIntoTransposes>();

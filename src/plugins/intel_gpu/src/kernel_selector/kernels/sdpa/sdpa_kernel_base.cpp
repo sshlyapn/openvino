@@ -69,10 +69,6 @@ JitConstants SDPAKernelBase::GetJitConstants(const sdpa_params& params) const {
     auto jit = MakeBaseParamsJitConstants(params);
 
     if (params.conf.broadcast_axis != -1) {
-        std::cout << "Has broadcast axis = "
-            << params.conf.broadcast_axis << ", val = " << GetBroadcastInputStr(params.inputs[0].GetDims().size(),
-                                                                       params.conf.broadcast_axis,
-                                                                       params.conf.group_size) << "\n";
         jit.AddConstant(MakeJitConstant("DO_BROADCAST_KEY_VALUE", GetBroadcastInputStr(params.inputs[0].GetDims().size(),
                                                                                        params.conf.broadcast_axis,
                                                                                        params.conf.group_size)));
@@ -90,15 +86,12 @@ JitConstants SDPAKernelBase::GetJitConstants(const sdpa_params& params) const {
     };
 
     if ((!params.input0_order.empty() && !is_default_order(params.input0_order)) || params.conf.broadcast_axis != -1) {
-        std::cout << "Has transpose input0\n";
         jit.AddConstant(MakeJitConstant("INPUT0_DIMS_ORDER", GetDimsOrder(params.input0_order)));
     }
     if ((!params.input1_order.empty() && !is_default_order(params.input1_order)) || params.conf.broadcast_axis != -1) {
-        std::cout << "Has transpose input1\n";
         jit.AddConstant(MakeJitConstant("INPUT1_DIMS_ORDER", GetDimsOrder(params.input1_order)));
     }
     if ((!params.input2_order.empty() && !is_default_order(params.input2_order)) || params.conf.broadcast_axis != -1) {
-        std::cout << "Has transpose input2\n";
         jit.AddConstant(MakeJitConstant("INPUT2_DIMS_ORDER", GetDimsOrder(params.input2_order)));
     }
 
