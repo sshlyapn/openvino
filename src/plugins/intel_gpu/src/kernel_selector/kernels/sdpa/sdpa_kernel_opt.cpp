@@ -36,9 +36,9 @@ static std::string GetKernelName(std::string base_name, KernelsTypes type, bool 
 
     if (type == KernelsTypes::SINGLE_TOKEN) {
         kernel_name += "_single_token";
-    } if (type == KernelsTypes::MULTI_TOKENS) {
+    } else if (type == KernelsTypes::MULTI_TOKENS) {
         kernel_name += "_multi_tokens";
-    } if (type == KernelsTypes::FINALIZATION) {
+    } else if (type == KernelsTypes::FINALIZATION) {
         kernel_name += "_finalization";
     }
 
@@ -120,7 +120,7 @@ CommonDispatchData SDPAKernelOpt::SetDefault(const sdpa_params& params, size_t k
                                   CeilDiv(target_seq_len, target_seq_len_block_size),
                                   head_size * num_of_partitions };
             dispatch_data.lws = { 1, 1, head_size };
-        } else if (kernel_idx == 2) {
+        } else if (kernel_idx == KernelsTypes::FINALIZATION) {
             dispatch_data.gws = { batch_size * heads_num,
                                   target_seq_len,
                                   16 };
