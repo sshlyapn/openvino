@@ -140,6 +140,17 @@ KERNEL(gemm_ref)(
             #endif
         #endif
         #if INDIRECT_INPUT1
+            if (OUTPUT_SIZE_X == 9 && OUTPUT_SIZE_Y == 1 && b == 2) {
+                int bb = beam_table[FUNC_CALL(get_bt_index)(OPTIONAL_SHAPE_INFO_TENSOR b, f, w, z, ki, x)];
+                uint in1_idx = FUNC_CALL(get_input1_index)(OPTIONAL_SHAPE_INFO_TENSOR bb, f, w, z, ki, x);
+                // printf("1) original idx: %d %d %d %d ki=%d. Updated b0 index in beam_table = %d. bb=%d. Input[%d]=%f\n", b, f, y, x, ki, FUNC_CALL(get_bt_index)(OPTIONAL_SHAPE_INFO_TENSOR b, f, w, z, ki, x), bb, in1_idx, input1[in1_idx]);
+            }
+
+            if (INPUT0_SIZE_X == 9 && INPUT0_SIZE_X == 9 && b == 2) {
+                int bb = beam_table[FUNC_CALL(get_bt_index)(OPTIONAL_SHAPE_INFO_TENSOR b, f, w, z, ki, x)];
+                uint in1_idx = FUNC_CALL(get_input1_index)(OPTIONAL_SHAPE_INFO_TENSOR bb, f, w, z, ki, x);
+                // printf("2) original idx: %d %d %d %d ki=%d. Updated b0 index in beam_table = %d. bb=%d. Input[%d]=%f\n", b, f, y, x, ki, FUNC_CALL(get_bt_index)(OPTIONAL_SHAPE_INFO_TENSOR b, f, w, z, ki, x), bb, in1_idx, input1[in1_idx]);
+            }
             #if INDIRECT_AXIS == 0
                 b1 = BEAM_TABLE_BATCH_NUM > 1 ? beam_table[FUNC_CALL(get_bt_index)(OPTIONAL_SHAPE_INFO_TENSOR b, f, w, z, ki, x)] : b;
             #elif INDIRECT_AXIS == 1

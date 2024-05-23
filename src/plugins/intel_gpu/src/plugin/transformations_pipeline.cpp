@@ -351,6 +351,8 @@ void TransformationsPipeline::apply(std::shared_ptr<ov::Model> func) {
                 return false;
             }
 
+            std::cout << "SDPA added\n";
+
             return true;
         });
 

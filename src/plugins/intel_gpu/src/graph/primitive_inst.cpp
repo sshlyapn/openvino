@@ -710,6 +710,7 @@ event::ptr primitive_inst::realloc_if_needed() {
         if (_impl == nullptr)
             return ev;
         const auto& ibuf_layouts = _impl->get_internal_buffer_layouts();
+        GPU_DEBUG_TRACE_DETAIL << "Intermediate buffer " << ibuf_layouts.size() << "\n";
         if (ibuf_layouts.empty())
             return ev;
         GPU_DEBUG_CODE(std::string memalloc_info = "");
@@ -1580,6 +1581,9 @@ primitive_inst::primitive_inst(network & network, program_node const& node, bool
         } else {
             _outputs = allocate_outputs();
         }
+    }
+    if (_node) {
+        GPU_DEBUG_TRACE_DETAIL << _node->type()->to_string(*_node) << "\n";
     }
     if (_impl) {
         _impl->set_node_params(node);
