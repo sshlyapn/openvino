@@ -9,7 +9,15 @@
 namespace kernel_selector {
 
 sdpa_kernel_selector::sdpa_kernel_selector() {
-    Attach<SDPAKernelOpt>();
+    int DISABLE_OPT_SDPA = 0;
+    if (const auto env_var = std::getenv("DISABLE_OPT_SDPA")) {
+        std::istringstream ss(env_var);
+        ss >> DISABLE_OPT_SDPA;
+    }
+
+    if (!DISABLE_OPT_SDPA)
+        Attach<SDPAKernelOpt>();
+
     Attach<SDPAKernelRef>();
 }
 

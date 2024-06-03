@@ -189,6 +189,16 @@ void ExecutionConfig::apply_debug_options(const cldnn::device_info& info) {
         set_property(ov::enable_profiling(true));
     }
 
+    int USE_FP32_ACC = 0;
+    if (const auto env_var = std::getenv("USE_FP32_ACC")) {
+        std::istringstream ss(env_var);
+        ss >> USE_FP32_ACC;
+    }
+    if (USE_FP32_ACC) {
+        std::cout << "Forced DT to fp32\n";
+        set_property(ov::hint::inference_precision(ov::element::f32));
+    }
+
     GPU_DEBUG_IF(debug_config->disable_dynamic_impl == 1) {
         set_property(ov::intel_gpu::use_only_static_kernels_for_dynamic_shape(true));
     }
