@@ -97,6 +97,11 @@ JitConstants SDPAKernelOpt::GetJitConstants(const sdpa_params& params, size_t ke
     auto sdpa_stage = kernel_idx == KernelsTypes::FINALIZATION ? 1 : 0;
     jit.AddConstant(MakeJitConstant("SDPA_STAGE_" + std::to_string(sdpa_stage), 1));
 
+    if (params.inputs.size() <= 4) {
+        jit.AddConstant(MakeJitConstant("STATIC_SCALE_VALUE_INV", std::sqrt(static_cast<float>(params.conf.head_size))));
+        jit.AddConstant(MakeJitConstant("STATIC_SCALE_VALUE", 1.0f / std::sqrt(static_cast<float>(params.conf.head_size))));
+    }
+
     return jit;
 }
 
@@ -115,7 +120,7 @@ CommonDispatchData SDPAKernelOpt::SetDefault(const sdpa_params& params, size_t k
         const size_t source_seq_len = dims_k.y_dim().v;
         const size_t target_seq_len = dims_q.y_dim().v;
         const size_t head_size = static_cast<size_t>(params.conf.head_size);
-        const size_t num_of_partitions = CeilDiv(source_seq_len, get_seq_len_partition_size());
+        const size_t num_of_partitions = kernel_idx == KernelsTypes::MULTI_TOKENS ? 1 : CeilDiv(source_seq_len, get_seq_len_partition_size());
         const size_t target_seq_len_block_size = kernel_idx == 1 ? get_target_seq_len_block_size() : 1;
 
         if (kernel_idx == KernelsTypes::SINGLE_TOKEN || kernel_idx == KernelsTypes::MULTI_TOKENS) {
@@ -243,12 +248,12 @@ void SDPAKernelOpt::GetUpdateDispatchDataFunc(KernelData& kd) const {
         auto tmp_out_elements_count = (num_of_partitions == 1) ? 1 : output.LogicalSize() * num_of_partitions;
         auto tmp_out_size = tmp_out_elements_count * tmp_out_dt_size;
 
-        auto dispatch_data1 = SetDefault(prim_params, 0);
+        auto dispatch_data1 = SetDefault(prim_params, KernelsTypes::SINGLE_TOKEN);
         kernel_data.kernels[KernelsTypes::SINGLE_TOKEN].params.workGroups.global = dispatch_data1.gws;
         kernel_data.kernels[KernelsTypes::SINGLE_TOKEN].params.workGroups.local = dispatch_data1.lws;
         kernel_data.kernels[KernelsTypes::SINGLE_TOKEN].skip_execution = target_seq_len > 1;
 
-        auto dispatch_data2 = SetDefault(prim_params, 1);
+        auto dispatch_data2 = SetDefault(prim_params, KernelsTypes::MULTI_TOKENS);
         kernel_data.kernels[KernelsTypes::MULTI_TOKENS].params.workGroups.global = dispatch_data2.gws;
         kernel_data.kernels[KernelsTypes::MULTI_TOKENS].params.workGroups.local = dispatch_data2.lws;
         kernel_data.kernels[KernelsTypes::MULTI_TOKENS].skip_execution = target_seq_len == 1;
@@ -257,10 +262,10 @@ void SDPAKernelOpt::GetUpdateDispatchDataFunc(KernelData& kd) const {
         num_of_partitions_scalar.t = ScalarDescriptor::Types::UINT32;
         num_of_partitions_scalar.v.u32 = static_cast<uint32_t>(num_of_partitions);
 
-        auto dispatch_data3 = SetDefault(prim_params, 2);
+        auto dispatch_data3 = SetDefault(prim_params, KernelsTypes::FINALIZATION);
         kernel_data.kernels[KernelsTypes::FINALIZATION].params.workGroups.global = dispatch_data3.gws;
         kernel_data.kernels[KernelsTypes::FINALIZATION].params.workGroups.local = dispatch_data3.lws;
-        kernel_data.kernels[KernelsTypes::FINALIZATION].skip_execution = num_of_partitions == 1;
+        kernel_data.kernels[KernelsTypes::FINALIZATION].skip_execution = num_of_partitions == 1 || target_seq_len > 1;
 
         kernel_data.kernels[KernelsTypes::FINALIZATION].params.scalars.clear();
         kernel_data.kernels[KernelsTypes::FINALIZATION].params.scalars.push_back(num_of_partitions_scalar);

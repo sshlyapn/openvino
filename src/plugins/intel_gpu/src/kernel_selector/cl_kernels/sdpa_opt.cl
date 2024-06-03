@@ -549,6 +549,84 @@ KERNEL(sdpa_opt)(
 #else
 /* This version is used for 1st token */
 
+
+__attribute__((noinline))
+uint FUNC(test_get_q_idx)(OPTIONAL_SHAPE_INFO_ARG uint b0_idx, uint b1_idx, uint seq_len, uint* key_pitch) {
+#ifdef BEAM_TABLE_TYPE
+        const uint b_idx = b0_idx;
+        const uint key_offset = FUNC_CALL(get_input1_index)(OPTIONAL_SHAPE_INFO_TENSOR b_idx, b1_idx, 0, 0, seq_len, 0);
+#else
+#ifdef INPUT1_DIMS_ORDER
+        uint key_offset = FUNC_CALL(get_input1_index)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, seq_len, 0);
+        uint key_offset_next_seq = FUNC_CALL(get_input1_index)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, seq_len + 1, 0);
+        key_pitch = key_offset_next_seq - key_offset;
+#else
+        uint key_offset = INPUT1_GET_INDEX(b0_idx, b1_idx, seq_len, 0);
+        key_pitch = HEAD_SIZE;
+#endif
+#endif
+}
+
+#if HAS_ATTN_MASK_INPUT
+    #define ATTN_MASK_BUFFER , attn_mask
+    #define ATTN_MASK_BUFFER_ARG , const __global INPUT3_TYPE* attn_mask
+#else
+    #define ATTN_MASK_BUFFER
+    #define ATTN_MASK_BUFFER_ARG
+#endif
+
+#if HAS_SCALE_INPUT
+    #define SCALE_BUFFER
+#endif
+
+inline MAKE_VECTOR_TYPE(INPUT0_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) FUNC(load_attn_mask)(OPTIONAL_SHAPE_INFO_ARG
+                                                                                     uint b0_idx,
+                                                                                     uint b1_idx,
+                                                                                     uint target_seq_idx,
+                                                                                     uint source_seq_idx
+                                                                                     ATTN_MASK_BUFFER_ARG) {
+    MAKE_VECTOR_TYPE(INPUT0_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) mask_vec;
+#if !IS_CAUSAL && HAS_ATTN_MASK_INPUT
+    const uint attn_mask_offset = INPUT3_GET_INDEX_SAFE(b0_idx, b1_idx, target_seq_idx, source_seq_idx);
+    if (target_seq_idx >= (uint)TARGET_SEQ_LEN) {
+        unroll_for (uint i = 0; i < SUBGROUP_SIZE; i++) {
+            mask_vec[i] = NAN;
+        }
+    } else {
+        if (source_seq_idx + SUBGROUP_SIZE <= (uint)SOURCE_SEQ_LEN) {
+            unroll_for (uint i = 0; i < SUBGROUP_SIZE; i++) {
+                const INPUT3_TYPE mask_val = attn_mask[attn_mask_offset + i];
+                mask_vec[i] = mask_val;
+            }
+        } else {
+            const uint max_mask_offset = min(source_seq_idx + SUBGROUP_SIZE, (uint)SOURCE_SEQ_LEN);
+            for (uint i = 0; i < SUBGROUP_SIZE; i++) {
+                const INPUT3_TYPE mask_val = attn_mask_offset + i < max_mask_offset ? attn_mask[attn_mask_offset + i] : NAN;
+                mask_vec[i] = mask_val;
+            }
+        }
+    }
+#endif
+
+#if IS_CAUSAL
+    for (uint i = 0; i < SUBGROUP_SIZE; i++) {
+        if (source_seq_idx + i > target_seq_idx)
+            mask_vec[i] = INPUT0_VAL_MIN;
+    }
+#endif
+
+#if HAS_SCALE_INPUT
+    const OUTPUT_TYPE scale_val = OUTPUT_VAL_ONE / *scale;
+#else
+    const INPUT0_TYPE scale_val = TO_INPUT0_TYPE(STATIC_SCALE_VALUE_INV);
+#endif
+
+    // Apply scale to attn_mask
+    mask_vec *= scale_val;
+
+    return mask_vec;
+}
+
 REQD_SUB_GROUP_SIZE(SUBGROUP_SIZE)
 KERNEL(sdpa_opt)(
     OPTIONAL_SHAPE_INFO_ARG
@@ -583,22 +661,19 @@ KERNEL(sdpa_opt)(
 #else
     const uint target_seq_idx = get_global_id(1);
 #endif
+#if 0
     const uint lid = get_local_id(2);
-    const uint head_size_idx = lid;
+#else
+    #define lid (uint)get_local_id(2)
+    #define head_size_idx (uint)get_local_id(2)
+#endif
 
+#if 0
     const uint sgid = get_sub_group_id();
+#else
+    #define sgid (uint)get_sub_group_id()
+#endif
     const uint sglid = get_sub_group_local_id();
-
-    const uint partition_idx = get_group_id(2);
-    const uint num_of_partitions = get_num_groups(2);
-    const uint wi_num_per_partition = get_local_size(2);
-
-    const uint start_partition_idx = partition_idx * SEQ_LEN_PARTITION_SIZE;
-    const uint partition_seq_len =
-        ((partition_idx + 1) < num_of_partitions) ? (SEQ_LEN_PARTITION_SIZE)
-                                                  : (SOURCE_SEQ_LEN - partition_idx * SEQ_LEN_PARTITION_SIZE);
-
-    const uint target_seq_len_bs = min(TARGET_SEQ_LEN - target_seq_idx, (uint)TARGET_SEQ_LEN_BLOCK_SIZE);
 
     // SLM for query inputs
     __local INPUT0_TYPE query_local[HEAD_SIZE * TARGET_SEQ_LEN_BLOCK_SIZE];
@@ -606,73 +681,100 @@ KERNEL(sdpa_opt)(
     __local OUTPUT_TYPE qk_local[SEQ_LEN_PARTITION_SIZE * TARGET_SEQ_LEN_BLOCK_SIZE];
     // SLM buffers for SoftMax calculation and qk_max/qk_sums results aggregation across all WG
     __local SOFTMAX_ACCUMULATOR_TYPE qk_max_vals[SUBGROUPS_PER_WG * TARGET_SEQ_LEN_BLOCK_SIZE];
-    __local SOFTMAX_ACCUMULATOR_TYPE qk_sum_vals[SUBGROUPS_PER_WG * TARGET_SEQ_LEN_BLOCK_SIZE];
+    // __local SOFTMAX_ACCUMULATOR_TYPE qk_max_vals_prev[TARGET_SEQ_LEN_BLOCK_SIZE];
+    // __local SOFTMAX_ACCUMULATOR_TYPE qk_exp_sum_vals_prev[TARGET_SEQ_LEN_BLOCK_SIZE];
+    // __local SOFTMAX_ACCUMULATOR_TYPE qk_exp_sum_prev_updated_slm[TARGET_SEQ_LEN_BLOCK_SIZE];
+
+
+    __local SOFTMAX_ACCUMULATOR_TYPE slm_exp_sum_cur[TARGET_SEQ_LEN_BLOCK_SIZE];
+    __local SOFTMAX_ACCUMULATOR_TYPE slm_max_val_cur[TARGET_SEQ_LEN_BLOCK_SIZE];
+
+    __local SOFTMAX_ACCUMULATOR_TYPE slm_exp_sum_prev[TARGET_SEQ_LEN_BLOCK_SIZE];
+    __local SOFTMAX_ACCUMULATOR_TYPE slm_max_val_prev[TARGET_SEQ_LEN_BLOCK_SIZE];
+
+    // Gemm1 calculation
+    {
+        // Load Query input to SLM and transpose it
+#ifdef INPUT0_DIMS_ORDER
+        uint query_offset = FUNC_CALL(get_input0_index)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, target_seq_idx, (sgid * SUBGROUP_SIZE));
+        uint query_offset_next_seq = FUNC_CALL(get_input0_index)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, target_seq_idx + 1, (sgid * SUBGROUP_SIZE));
+        const uint query_pitch = query_offset_next_seq - query_offset;
+#else
+        uint query_offset = INPUT0_GET_INDEX(b0_idx, b1_idx, target_seq_idx, (sgid * SUBGROUP_SIZE));
+        const uint query_pitch = SUBGROUP_SIZE * SUBGROUPS_PER_WG;
+#endif
+        uint query_local_offset = (sgid * SUBGROUP_SIZE + sglid) * TARGET_SEQ_LEN_BLOCK_SIZE;
+        const uint target_seq_len_bs = min(TARGET_SEQ_LEN - target_seq_idx, (uint)TARGET_SEQ_LEN_BLOCK_SIZE);
+
+        if (target_seq_len_bs != TARGET_SEQ_LEN_BLOCK_SIZE) {
+            for (uint seq_idx = 0; seq_idx < target_seq_len_bs; seq_idx++) {
+                INPUT0_TYPE val = BLOCK_READN(INPUT0_TYPE, 1, query_input, query_offset);
+
+                query_local[query_local_offset] = val;
+                query_offset += query_pitch;
+                query_local_offset++;
+            }
+        } else {
+            unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
+                INPUT0_TYPE val = BLOCK_READN(INPUT0_TYPE, 1, query_input, query_offset);
+
+                query_local[query_local_offset] = val;
+                query_offset += query_pitch;
+                query_local_offset++;
+            }
+        }
+    }
+
+    barrier(CLK_LOCAL_MEM_FENCE);
 
     {
-        // Gemm1 and SoftMax calculation
+        #if TARGET_SEQ_LEN_BLOCK_SIZE <= SUBGROUP_SIZE
+            // Initialize qk_max_vals_prev with MIN values
+            if (sgid == 0 && sglid < TARGET_SEQ_LEN_BLOCK_SIZE) {
+                slm_max_val_prev[sglid] = SOFTMAX_ACCUMULATOR_VAL_MIN;
+                slm_exp_sum_prev[sglid] = SOFTMAX_ACCUMULATOR_VAL_ZERO;
+            }
+        #else
+            #error sdpa_opt.cl: unsupported TARGET_SEQ_LEN_BLOCK_SIZE
+        #endif
+    }
 
+    // Main Gemm1 calculation loop
+    const uint aligned_seq_len = CEIL_DIV(SOURCE_SEQ_LEN, (uint)SEQ_LEN_PARTITION_SIZE);
+    uint start_partition_idx = 0;
+
+    __attribute__((opencl_unroll_hint(1)))
+    for (; start_partition_idx < aligned_seq_len; start_partition_idx++) {
         SOFTMAX_ACCUMULATOR_TYPE qk_max = SOFTMAX_ACCUMULATOR_VAL_MIN;
 
+        const uint partition_seq_len = min((uint)SOURCE_SEQ_LEN - (start_partition_idx * SEQ_LEN_PARTITION_SIZE), (uint)SEQ_LEN_PARTITION_SIZE);
         {
-            // Gemm1 calculation
-#if HAS_SCALE_INPUT
-            const OUTPUT_TYPE scale_val = *scale;
-#else
-            const OUTPUT_TYPE scale_val = OUTPUT_VAL_ONE / sqrt(TO_OUTPUT_TYPE(HEAD_SIZE));
-#endif
-            {
-                // Load Query input to SLM and transpose it
-#ifdef INPUT0_DIMS_ORDER
-                uint query_offset = FUNC_CALL(get_input0_index)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, target_seq_idx, (sgid * SUBGROUP_SIZE));
-                uint query_offset_next_seq = FUNC_CALL(get_input0_index)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, target_seq_idx + 1, (sgid * SUBGROUP_SIZE));
-                const uint query_pitch = query_offset_next_seq - query_offset;
-#else
-                uint query_offset = INPUT0_GET_INDEX(b0_idx, b1_idx, target_seq_idx, (sgid * SUBGROUP_SIZE));
-                const uint query_pitch = SUBGROUP_SIZE * SUBGROUPS_PER_WG;
-#endif
-                uint query_local_offset = (sgid * SUBGROUP_SIZE + sglid) * TARGET_SEQ_LEN_BLOCK_SIZE;
-                if (target_seq_len_bs != TARGET_SEQ_LEN_BLOCK_SIZE) {
-                    for (uint seq_idx = 0; seq_idx < target_seq_len_bs; seq_idx++) {
-                        INPUT0_TYPE val = BLOCK_READN(INPUT0_TYPE, 1, query_input, query_offset);
-
-                        query_local[query_local_offset] = val;
-                        query_offset += query_pitch;
-                        query_local_offset++;
-                    }
-                } else {
-                    unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
-                        INPUT0_TYPE val = BLOCK_READN(INPUT0_TYPE, 1, query_input, query_offset);
-
-                        query_local[query_local_offset] = val;
-                        query_offset += query_pitch;
-                        query_local_offset++;
-                    }
-                }
-            }
-
-            {
-                barrier(CLK_LOCAL_MEM_FENCE);
-            }
-
-            // Main Gemm1 calculation loop
-            uint seq_len = sgid * TARGET_SEQ_LEN_BLOCK_SIZE;
-            for (; seq_len < partition_seq_len; seq_len += SUBGROUPS_PER_WG * SUBGROUP_SIZE) {
+            __attribute__((opencl_unroll_hint(1)))
+            for (uint seq_len = sgid * SUBGROUP_SIZE; seq_len < partition_seq_len; seq_len += SUBGROUPS_PER_WG * SUBGROUP_SIZE) {
 #ifdef BEAM_TABLE_TYPE
-                const uint b_idx = beam_table[FUNC_CALL(get_bt_index_key)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, start_partition_idx + seq_len + sglid, 0)];
-                const uint key_offset = FUNC_CALL(get_input1_index)(OPTIONAL_SHAPE_INFO_TENSOR b_idx, b1_idx, 0, 0, start_partition_idx + seq_len + sglid, 0);
+                const uint b_idx = beam_table[FUNC_CALL(get_bt_index_key)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, (start_partition_idx * SEQ_LEN_PARTITION_SIZE) + seq_len + sglid, 0)];
+                const uint key_offset = FUNC_CALL(get_input1_index)(OPTIONAL_SHAPE_INFO_TENSOR b_idx, b1_idx, 0, 0, (start_partition_idx * SEQ_LEN_PARTITION_SIZE) + seq_len + sglid, 0);
 #else
 #ifdef INPUT1_DIMS_ORDER
-                uint key_offset = FUNC_CALL(get_input1_index)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, start_partition_idx + seq_len, 0);
-                uint key_offset_next_seq = FUNC_CALL(get_input1_index)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, start_partition_idx + seq_len + 1, 0);
+                uint key_offset = FUNC_CALL(get_input1_index)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, (start_partition_idx * SEQ_LEN_PARTITION_SIZE) + seq_len, 0);
+                uint key_offset_next_seq = FUNC_CALL(get_input1_index)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, (start_partition_idx * SEQ_LEN_PARTITION_SIZE) + seq_len + 1, 0);
                 const uint key_pitch = key_offset_next_seq - key_offset;
 #else
-                uint key_offset = INPUT1_GET_INDEX(b0_idx, b1_idx, start_partition_idx + seq_len, 0);
+                uint key_offset = INPUT1_GET_INDEX(b0_idx, b1_idx, (start_partition_idx * SEQ_LEN_PARTITION_SIZE) + seq_len, 0);
                 const uint key_pitch = HEAD_SIZE;
 #endif
 #endif
 
-                INPUT0_TYPE acc[TARGET_SEQ_LEN_BLOCK_SIZE] = {INPUT0_VAL_ZERO};
 
+                MAKE_VECTOR_TYPE(INPUT0_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) acc;
+                acc = FUNC_CALL(load_attn_mask)(OPTIONAL_SHAPE_INFO_TENSOR
+                                                b0_idx,
+                                                b1_idx,
+                                                target_seq_idx + sglid,
+                                                (start_partition_idx * SEQ_LEN_PARTITION_SIZE) + seq_len
+                                                ATTN_MASK_BUFFER);
+
+                __attribute__((opencl_unroll_hint(1)))
                 for (uint head_idx_index = 0; head_idx_index < HEAD_SIZE; head_idx_index += SUBGROUP_SIZE) {
                     #define KEY_BLOCK_READ(ptr, offset) BLOCK_READN(INPUT1_TYPE, 1, ptr, offset);
                     #define QUERY_VEC MAKE_VECTOR_TYPE(INPUT1_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE)
@@ -698,58 +800,47 @@ KERNEL(sdpa_opt)(
                 }
 
                 {
-#if !IS_CAUSAL && HAS_ATTN_MASK_INPUT
-                    const uint attn_mask_offset = INPUT3_GET_INDEX_SAFE(b0_idx, b1_idx, target_seq_idx + sglid, start_partition_idx + seq_len);
-                    MAKE_VECTOR_TYPE(INPUT3_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) attn_mask_vec = INPUT3_VAL_MIN;
-                    for (uint i = 0; i < min(partition_seq_len - seq_len, (uint)TARGET_SEQ_LEN_BLOCK_SIZE); i++) {
-                        attn_mask_vec[i] = attn_mask[attn_mask_offset + i];
-                    }
+                    unroll_for (uint i = 0; i < SUBGROUP_SIZE; i++) {
+#if HAS_SCALE_INPUT
+                        const OUTPUT_TYPE scale_val = *scale;
+#else
+                        const OUTPUT_TYPE scale_val = TO_OUTPUT_TYPE(STATIC_SCALE_VALUE);
 #endif
-                    unroll_for (uint i = 0; i < TARGET_SEQ_LEN_BLOCK_SIZE; i++) {
                         acc[i] *= scale_val;
-#if IS_CAUSAL
-                        if (start_partition_idx + seq_len + i > target_seq_idx + sglid)
-                            acc[i] += INPUT0_VAL_MIN;
-#elif !IS_CAUSAL && HAS_ATTN_MASK_INPUT
-                        acc[i] += attn_mask_vec[i];
-#endif
 #if INPUT0_TYPE_SIZE ==  2
                         /* Adding this clamp improves performance for some reason */
                         acc[i] = INPUT0_MIN_FUNC(INPUT0_MAX_FUNC(acc[i], INPUT0_VAL_MIN), INPUT0_VAL_MAX);
 #endif
-                        if (seq_len + i >= partition_seq_len) {
-                            acc[i] = INPUT0_VAL_MIN;
-                        }
+                        // if (seq_len + i >= partition_seq_len) {
+                        //     acc[i] = INPUT0_VAL_MIN;
+                        // }
 
                         qk_max = SOFTMAX_ACCUMULATOR_MAX_FUNC(qk_max, TO_SOFTMAX_ACCUMULATOR_TYPE(acc[i]));
                         qk_local[sglid * SEQ_LEN_PARTITION_SIZE + seq_len + i] = acc[i];
                     }
                 }
             }
-        } // Gemm1 calculation end
 
-        {
-            // Save QK max to SLM
-            qk_max_vals[sglid * SUBGROUPS_PER_WG + sgid] = qk_max;
+            {
+                qk_max_vals[sglid * SUBGROUPS_PER_WG + sgid] = qk_max;
+            }
         }
 
+        barrier(CLK_LOCAL_MEM_FENCE);
+
+        // SoftMax calculation
         {
-            // SoftMax calculation
-#if TARGET_SEQ_LEN_BLOCK_SIZE > 1
-            const uint seq_idx_end = target_seq_len_bs;
-#else
-            const uint seq_idx_end = 1;
-#endif
             #define QK_MAX_NUMS_PER_SG CEIL_DIV(TARGET_SEQ_LEN_BLOCK_SIZE, SUBGROUPS_PER_WG)
             #if (TARGET_SEQ_LEN_BLOCK_SIZE % SUBGROUPS_PER_WG != 0)
-                /* /* If TARGET_SEQ_LEN_BLOCK_SIZE is not divisible by SUBGROUPS_PER_WG, then some subgroups will have to handle more QK rows than others */
+                /* If TARGET_SEQ_LEN_BLOCK_SIZE is not divisible by SUBGROUPS_PER_WG, then some subgroups will have to handle more QK rows than others */
                 #define QK_ITERS_END \
                     (TARGET_SEQ_LEN_BLOCK_SIZE / SUBGROUPS_PER_WG + (sgid < TARGET_SEQ_LEN_BLOCK_SIZE % SUBGROUPS_PER_WG ? 1 : 0))
             #else
                 #define QK_ITERS_END QK_MAX_NUMS_PER_SG
             #endif
 
-            OUTPUT_TYPE qk_max[QK_MAX_NUMS_PER_SG];
+
+            SOFTMAX_ACCUMULATOR_TYPE qk_max[QK_MAX_NUMS_PER_SG];
             for (uint i = 0; i < QK_MAX_NUMS_PER_SG; i++)
                 qk_max[i] = SOFTMAX_ACCUMULATOR_VAL_MIN;
 
@@ -759,10 +850,15 @@ KERNEL(sdpa_opt)(
                 for (uint i = 0; i < QK_ITERS_END; i++)
                     qk_max[i] = qk_max_vals[(i * SUBGROUPS_PER_WG * SUBGROUPS_PER_WG) + sgid * SUBGROUPS_PER_WG + sglid];
 
+            // TODO: Can be removed?
             sub_group_barrier(CLK_LOCAL_MEM_FENCE);
 
             for (uint i = 0; i < QK_ITERS_END; i++) {
                 qk_max[i] = sub_group_reduce_max(qk_max[i]);
+
+                if (sglid == 0) {
+                    slm_max_val_cur[i * SUBGROUPS_PER_WG + sgid] = qk_max[i];
+                }
             }
 
             SOFTMAX_ACCUMULATOR_TYPE exp_sum[QK_MAX_NUMS_PER_SG];
@@ -770,7 +866,6 @@ KERNEL(sdpa_opt)(
                 exp_sum[i] = SOFTMAX_ACCUMULATOR_VAL_ZERO;
 
             for (uint i = 0; i < QK_ITERS_END; i++) {
-                // TODO: Try full loop, with ternary operator
                 for (uint qk_idx = sglid; qk_idx < partition_seq_len; qk_idx += SUBGROUP_SIZE) {
                     const uint qk_offset = i * SUBGROUPS_PER_WG * SEQ_LEN_PARTITION_SIZE + sgid * SEQ_LEN_PARTITION_SIZE + qk_idx;
                     SOFTMAX_ACCUMULATOR_TYPE qk_val = qk_local[qk_offset];
@@ -784,228 +879,226 @@ KERNEL(sdpa_opt)(
                 exp_sum[i] = sub_group_reduce_add(exp_sum[i]);
             }
 
+
+            // TODO: Need to add SG barrier?
+            // sub_group_barrier(CLK_LOCAL_MEM_FENCE);
+
+
             for (uint i = 0; i < QK_ITERS_END; i++) {
+                if (sglid == 0) {
+                    slm_exp_sum_cur[i * SUBGROUPS_PER_WG + sgid] = exp_sum[i];
+                }
+
                 for (uint qk_idx = sglid; qk_idx < partition_seq_len; qk_idx += SUBGROUP_SIZE) {
                     const uint qk_offset = i * SUBGROUPS_PER_WG * SEQ_LEN_PARTITION_SIZE + sgid * SEQ_LEN_PARTITION_SIZE + qk_idx;
                     SOFTMAX_ACCUMULATOR_TYPE qk_val = TO_SOFTMAX_ACCUMULATOR_TYPE(qk_local[qk_offset]);
                     SOFTMAX_ACCUMULATOR_TYPE qk_new = qk_val / exp_sum[i];
+                    // SOFTMAX_ACCUMULATOR_TYPE qk_new = qk_val * exp_sum_updated / exp_sum_total;
+
                     qk_local[qk_offset] = qk_new;
                 }
             }
 
-            {
-                // If the number of partitions is greater than 1, save exm_sums and max_logits to the temporary buffers
-                // Use single WI in the WG, since all the WIs have the same value
-                if (num_of_partitions > 1 && sglid == 0) {
-                    for (uint i = 0; i < QK_MAX_NUMS_PER_SG; i++) {
-                        if (target_seq_idx + sgid + (i * SUBGROUPS_PER_WG) < TARGET_SEQ_LEN) {
-                            const uint exp_sums_offset = b0_idx * (NUM_HEADS * TARGET_SEQ_LEN * num_of_partitions) +
-                                                        b1_idx * (TARGET_SEQ_LEN * num_of_partitions) +
-                                                        (target_seq_idx + sgid + (i * SUBGROUPS_PER_WG)) * (num_of_partitions) +
-                                                        partition_idx;
-                            exp_sums[exp_sums_offset] = exp_sum[i];
+            barrier(CLK_LOCAL_MEM_FENCE);
+        }
 
-                            const uint max_logits_offset = exp_sums_offset;
-                            max_logits[max_logits_offset] = qk_max[i];
+
+        {
+            const uint seq_len_leftovers_start = (partition_seq_len / SUBGROUP_SIZE) * SUBGROUP_SIZE;
+            MAKE_VECTOR_TYPE(OUTPUT_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) acc_output_res = OUTPUT_VAL_ZERO;
+            MAKE_VECTOR_TYPE(OUTPUT_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) qk_val;
+            if (/* seq_len_leftovers_start != partition_seq_len */ 1) {
+                // Gemm2 calculation
+
+#ifdef INPUT2_DIMS_ORDER
+                uint value_offset = FUNC_CALL(get_input2_index)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, 0, 0);
+                uint value_offset_next_seq = FUNC_CALL(get_input2_index)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, 1, 0);
+                const uint value_pitch = value_offset_next_seq - value_offset;
+#else
+                const uint value_pitch = HEAD_SIZE;
+#endif
+                for (uint seq_len = 0; seq_len < partition_seq_len / SUBGROUP_SIZE; seq_len++) {
+#ifdef BEAM_TABLE_TYPE
+                    const uint b_idx = beam_table[FUNC_CALL(get_bt_index_value)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, (start_partition_idx * SEQ_LEN_PARTITION_SIZE) + (seq_len * SUBGROUP_SIZE) + sglid, sgid * SUBGROUP_SIZE)];
+                    const uint value_offset = FUNC_CALL(get_input2_index)(OPTIONAL_SHAPE_INFO_TENSOR b_idx, b1_idx, 0, 0, (start_partition_idx * SEQ_LEN_PARTITION_SIZE) + (seq_len * SUBGROUP_SIZE) + sglid, sgid * SUBGROUP_SIZE);
+#else
+#ifdef INPUT2_DIMS_ORDER
+                    uint value_offset = FUNC_CALL(get_input2_index)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, (start_partition_idx * SEQ_LEN_PARTITION_SIZE) + (seq_len * SUBGROUP_SIZE), head_size_idx);
+#else
+                    uint value_offset = INPUT2_GET_INDEX(b0_idx, b1_idx, (start_partition_idx * SEQ_LEN_PARTITION_SIZE) + (seq_len * SUBGROUP_SIZE), head_size_idx);
+#endif
+#endif
+
+                    unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
+                        qk_val[seq_idx] = qk_local[seq_idx * SEQ_LEN_PARTITION_SIZE + seq_len * SUBGROUP_SIZE + sglid];
+                    }
+
+                    unroll_for (uint i = 0; i < SUBGROUP_SIZE; i++) {
+#ifdef BEAM_TABLE_TYPE
+                        INPUT2_TYPE value_val = VALUE_BLOCK_READ(value_input, sub_group_broadcast(value_offset, i));
+#else
+                        INPUT2_TYPE value_val = VALUE_BLOCK_READ(value_input, value_offset);
+#endif
+                        unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
+                            acc_output_res[seq_idx] = mad(sub_group_broadcast(qk_val[seq_idx], i), value_val, acc_output_res[seq_idx]);
                         }
+
+#ifndef BEAM_TABLE_TYPE
+                        value_offset += value_pitch;
+#endif
                     }
                 }
-            }
 
-            barrier(CLK_LOCAL_MEM_FENCE);
-        } // SoftMax calculation end
-    } // Gemm1 + SoftMax calculations end
 
-    const uint seq_len_leftovers_start = (partition_seq_len / SUBGROUP_SIZE) * SUBGROUP_SIZE;
-    if (seq_len_leftovers_start != partition_seq_len) {
-        // Gemm2 calculation
-        OUTPUT_TYPE acc[TARGET_SEQ_LEN_BLOCK_SIZE] = {OUTPUT_VAL_ZERO};
-
-#ifdef INPUT2_DIMS_ORDER
-        uint value_offset = FUNC_CALL(get_input2_index)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, 0, 0);
-        uint value_offset_next_seq = FUNC_CALL(get_input2_index)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, 1, 0);
-        const uint value_pitch = value_offset_next_seq - value_offset;
-#else
-        const uint value_pitch = HEAD_SIZE;
-#endif
-
-        for (uint seq_len = 0; seq_len < partition_seq_len / SUBGROUP_SIZE; seq_len++) {
+                /* The handling of leftovers causes significantly worse assembly code generation for the above main calculation loop.
+                Therefore, there are two independent branches for the calculation of QK*V matrices:
+                one with leftovers handling (when seq_len_leftovers_start != partition_seq_len) and one without. */
+                {
+                    uint qk_offset = min(seq_len_leftovers_start + sglid, partition_seq_len);
+                    unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
+                        qk_val[seq_idx] = qk_local[qk_offset];
+                        qk_offset += SEQ_LEN_PARTITION_SIZE;
+                    }
 #ifdef BEAM_TABLE_TYPE
-            const uint b_idx = beam_table[FUNC_CALL(get_bt_index_value)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, sgid * SUBGROUP_SIZE)];
-            const uint value_offset = FUNC_CALL(get_input2_index)(OPTIONAL_SHAPE_INFO_TENSOR b_idx, b1_idx, 0, 0, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, sgid * SUBGROUP_SIZE);
+                    const uint b_idx = beam_table[FUNC_CALL(get_bt_index_value)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, (start_partition_idx * SEQ_LEN_PARTITION_SIZE) + seq_len_leftovers_start + sglid, sgid * SUBGROUP_SIZE)];
+                    const uint value_offset = FUNC_CALL(get_input2_index)(OPTIONAL_SHAPE_INFO_TENSOR b_idx, b1_idx, 0, 0, (start_partition_idx * SEQ_LEN_PARTITION_SIZE) + seq_len_leftovers_start + sglid, sgid * SUBGROUP_SIZE);
 #else
 #ifdef INPUT2_DIMS_ORDER
-            uint value_offset = FUNC_CALL(get_input2_index)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, start_partition_idx + (seq_len * SUBGROUP_SIZE), head_size_idx);
+                    uint value_offset = FUNC_CALL(get_input2_index)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, (start_partition_idx * SEQ_LEN_PARTITION_SIZE) + seq_len_leftovers_start, head_size_idx);
 #else
-            uint value_offset = INPUT2_GET_INDEX(b0_idx, b1_idx, start_partition_idx + (seq_len * SUBGROUP_SIZE), head_size_idx);
+                    uint value_offset = INPUT2_GET_INDEX(b0_idx, b1_idx, (start_partition_idx * SEQ_LEN_PARTITION_SIZE) + seq_len_leftovers_start, head_size_idx);
 #endif
 #endif
 
-            OUTPUT_TYPE qk_val[TARGET_SEQ_LEN_BLOCK_SIZE];
-            unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
-                qk_val[seq_idx] = qk_local[seq_idx * SEQ_LEN_PARTITION_SIZE + seq_len * SUBGROUP_SIZE + sglid];
-            }
-
-            unroll_for (uint i = 0; i < SUBGROUP_SIZE; i++) {
+                    for (uint seq_len_idx = 0; seq_len_idx < partition_seq_len - seq_len_leftovers_start; seq_len_idx++) {
 #ifdef BEAM_TABLE_TYPE
-                INPUT2_TYPE value_val = VALUE_BLOCK_READ(value_input, sub_group_broadcast(value_offset, i));
+                        INPUT2_TYPE value_val = VALUE_BLOCK_READ(value_input, sub_group_broadcast(value_offset, seq_len_idx));
 #else
-                INPUT2_TYPE value_val = VALUE_BLOCK_READ(value_input, value_offset);
+                        INPUT2_TYPE value_val = VALUE_BLOCK_READ(value_input, value_offset);
 #endif
-                unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
-                    acc[seq_idx] = mad(sub_group_broadcast(qk_val[seq_idx], i), value_val, acc[seq_idx]);
-                }
+
+                        for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
+                            acc_output_res[seq_idx] = mad(sub_group_broadcast(qk_val[seq_idx], seq_len_idx), value_val, acc_output_res[seq_idx]);
+                        }
 
 #ifndef BEAM_TABLE_TYPE
-                value_offset += value_pitch;
+                        value_offset += value_pitch;
 #endif
-            }
-        }
-
-
-        /* The handling of leftovers causes significantly worse assembly code generation for the above main calculation loop.
-           Therefore, there are two independent branches for the calculation of QK*V matrices:
-           one with leftovers handling (when seq_len_leftovers_start != partition_seq_len) and one without. */
-        {
-            OUTPUT_TYPE qk_val[TARGET_SEQ_LEN_BLOCK_SIZE];
-            uint qk_offset = min(seq_len_leftovers_start + sglid, partition_seq_len);
-            unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
-                qk_val[seq_idx] = qk_local[qk_offset];
-                qk_offset += SEQ_LEN_PARTITION_SIZE;
-            }
-#ifdef BEAM_TABLE_TYPE
-            const uint b_idx = beam_table[FUNC_CALL(get_bt_index_value)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, start_partition_idx + seq_len_leftovers_start + sglid, sgid * SUBGROUP_SIZE)];
-            const uint value_offset = FUNC_CALL(get_input2_index)(OPTIONAL_SHAPE_INFO_TENSOR b_idx, b1_idx, 0, 0, start_partition_idx + seq_len_leftovers_start + sglid, sgid * SUBGROUP_SIZE);
-#else
-#ifdef INPUT2_DIMS_ORDER
-            uint value_offset = FUNC_CALL(get_input2_index)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, start_partition_idx + seq_len_leftovers_start, head_size_idx);
-#else
-            uint value_offset = INPUT2_GET_INDEX(b0_idx, b1_idx, start_partition_idx + seq_len_leftovers_start, head_size_idx);
-#endif
-#endif
-
-            for (uint seq_len_idx = 0; seq_len_idx < partition_seq_len - seq_len_leftovers_start; seq_len_idx++) {
-#ifdef BEAM_TABLE_TYPE
-                INPUT2_TYPE value_val = VALUE_BLOCK_READ(value_input, sub_group_broadcast(value_offset, seq_len_idx));
-#else
-                INPUT2_TYPE value_val = VALUE_BLOCK_READ(value_input, value_offset);
-#endif
-
-                for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
-                    acc[seq_idx] = mad(sub_group_broadcast(qk_val[seq_idx], seq_len_idx), value_val, acc[seq_idx]);
+                    }
                 }
 
+                // Rescale acc_output_res values
+                {
+                    SOFTMAX_ACCUMULATOR_TYPE exp_sum_prev = slm_exp_sum_prev[sglid];
+                    SOFTMAX_ACCUMULATOR_TYPE exp_sum_cur = slm_exp_sum_cur[sglid];
+                    SOFTMAX_ACCUMULATOR_TYPE max_val_prev = slm_max_val_prev[sglid];
+                    SOFTMAX_ACCUMULATOR_TYPE max_val_cur = slm_max_val_cur[sglid];
+
+                    // barrier(CLK_LOCAL_MEM_FENCE);
+
+                    const uint seq_idx_end = min(TARGET_SEQ_LEN - target_seq_idx, (uint)TARGET_SEQ_LEN_BLOCK_SIZE);
+                    for (uint seq_idx = 0; seq_idx < seq_idx_end; seq_idx++) {
+                        SOFTMAX_ACCUMULATOR_TYPE total_max = SOFTMAX_ACCUMULATOR_MAX_FUNC(sub_group_broadcast(max_val_prev, seq_idx), sub_group_broadcast(max_val_cur, seq_idx));
+                        SOFTMAX_ACCUMULATOR_TYPE updated_exp_sum_prev = sub_group_broadcast(exp_sum_prev, seq_idx) * native_exp(sub_group_broadcast(max_val_prev, seq_idx) - total_max);
+                        SOFTMAX_ACCUMULATOR_TYPE updated_exp_sum_cur = sub_group_broadcast(max_val_cur, seq_idx) * native_exp(sub_group_broadcast(max_val_cur, seq_idx) - total_max);
+                        SOFTMAX_ACCUMULATOR_TYPE updated_total_exp_sum = updated_exp_sum_prev + updated_exp_sum_cur;
+
+                        const uint output_offset = OUTPUT_GET_INDEX(b0_idx, b1_idx, target_seq_idx + seq_idx, head_size_idx);
+
+                        if (start_partition_idx != 0) {
+                            OUTPUT_TYPE updated_prev_res = output[output_offset] * updated_exp_sum_prev / updated_total_exp_sum;
+                            acc_output_res[seq_idx] *= updated_exp_sum_cur / updated_total_exp_sum;
+                            acc_output_res[seq_idx] += updated_prev_res;
+                        }
+
+                        output[output_offset] = acc_output_res[seq_idx];
+
+                        if (sgid == 0 && sglid == 0) {
+                            slm_exp_sum_prev[seq_idx] = updated_total_exp_sum;
+                            slm_max_val_prev[seq_idx] = total_max;
+                        }
+                    }
+
+                    barrier(CLK_LOCAL_MEM_FENCE);
+                }
+            } else {
+                // Gemm2 calculation
+#ifdef INPUT2_DIMS_ORDER
+                uint value_offset = FUNC_CALL(get_input2_index)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, 0, 0);
+                uint value_offset_next_seq = FUNC_CALL(get_input2_index)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, 1, 0);
+                const uint value_pitch = value_offset_next_seq - value_offset;
+#else
+                const uint value_pitch = HEAD_SIZE;
+#endif
+
+                __attribute__((opencl_unroll_hint(1)))
+                for (uint seq_len = 0; seq_len < partition_seq_len / SUBGROUP_SIZE; seq_len++) {
+#ifdef BEAM_TABLE_TYPE
+                    const uint b_idx = beam_table[FUNC_CALL(get_bt_index_value)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, (start_partition_idx * SEQ_LEN_PARTITION_SIZE) + (seq_len * SUBGROUP_SIZE) + sglid, sgid * SUBGROUP_SIZE)];
+                    const uint value_offset = FUNC_CALL(get_input2_index)(OPTIONAL_SHAPE_INFO_TENSOR b_idx, b1_idx, 0, 0, (start_partition_idx * SEQ_LEN_PARTITION_SIZE) + (seq_len * SUBGROUP_SIZE) + sglid, sgid * SUBGROUP_SIZE);
+#else
+#ifdef INPUT2_DIMS_ORDER
+                    uint value_offset = FUNC_CALL(get_input2_index)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, (start_partition_idx * SEQ_LEN_PARTITION_SIZE) + (seq_len * SUBGROUP_SIZE), head_size_idx);
+#else
+                    uint value_offset = INPUT2_GET_INDEX(b0_idx, b1_idx, (start_partition_idx * SEQ_LEN_PARTITION_SIZE) + (seq_len * SUBGROUP_SIZE), head_size_idx);
+#endif
+#endif
+
+                    unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
+                        qk_val[seq_idx] = qk_local[seq_idx * SEQ_LEN_PARTITION_SIZE + seq_len * SUBGROUP_SIZE + sglid];
+                    }
+
+                    unroll_for (uint i = 0; i < SUBGROUP_SIZE; i++) {
+#ifdef BEAM_TABLE_TYPE
+                        INPUT2_TYPE value_val = VALUE_BLOCK_READ(value_input, sub_group_broadcast(value_offset, i));
+#else
+                        INPUT2_TYPE value_val = VALUE_BLOCK_READ(value_input, value_offset);
+#endif
+                        unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
+                            acc_output_res[seq_idx] = mad(sub_group_broadcast(qk_val[seq_idx], i), value_val, acc_output_res[seq_idx]);
+                        }
+
 #ifndef BEAM_TABLE_TYPE
-                value_offset += value_pitch;
+                        value_offset += value_pitch;
 #endif
-            }
-        }
-
-        // If the number of partitions is greater than 1, save results to the temporary buffer;
-        // otherwise, save results directly to the main output.
-        if (num_of_partitions > 1) {
-#if TARGET_SEQ_LEN_BLOCK_SIZE > 1
-            const uint seq_idx_end = min(TARGET_SEQ_LEN - target_seq_idx, (uint)TARGET_SEQ_LEN_BLOCK_SIZE);
-#else
-            const uint seq_idx_end = 1;
-#endif
-            for (uint seq_idx = 0; seq_idx < seq_idx_end; seq_idx++) {
-                // Data layout of tmp_output buf: [batch, heads_num, q_len, partition_idx, head_size]
-                const uint tmp_out_offset = b0_idx * (NUM_HEADS * TARGET_SEQ_LEN * num_of_partitions * HEAD_SIZE) +
-                                            b1_idx * (TARGET_SEQ_LEN * num_of_partitions * HEAD_SIZE) +
-                                            (target_seq_idx + seq_idx) * (num_of_partitions * HEAD_SIZE) +
-                                            partition_idx * (HEAD_SIZE) +
-                                            head_size_idx;
-
-                tmp_out[tmp_out_offset] = acc[seq_idx];
-            }
-        } else {
-#if TARGET_SEQ_LEN_BLOCK_SIZE > 1
-            const uint seq_idx_end = min(TARGET_SEQ_LEN - target_seq_idx, (uint)TARGET_SEQ_LEN_BLOCK_SIZE);
-#else
-            const uint seq_idx_end = 1;
-#endif
-            for (uint seq_idx = 0; seq_idx < seq_idx_end; seq_idx++) {
-                    const uint output_offset = OUTPUT_GET_INDEX(b0_idx, b1_idx, target_seq_idx + seq_idx, head_size_idx);
-
-                    output[output_offset] = acc[seq_idx];
-            }
-        }
-    } else {
-        // Gemm2 calculation
-        OUTPUT_TYPE acc[TARGET_SEQ_LEN_BLOCK_SIZE] = {OUTPUT_VAL_ZERO};
-
-#ifdef INPUT2_DIMS_ORDER
-        uint value_offset = FUNC_CALL(get_input2_index)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, 0, 0);
-        uint value_offset_next_seq = FUNC_CALL(get_input2_index)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, 1, 0);
-        const uint value_pitch = value_offset_next_seq - value_offset;
-#else
-        const uint value_pitch = HEAD_SIZE;
-#endif
-
-        for (uint seq_len = 0; seq_len < partition_seq_len / SUBGROUP_SIZE; seq_len++) {
-#ifdef BEAM_TABLE_TYPE
-            const uint b_idx = beam_table[FUNC_CALL(get_bt_index_value)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, sgid * SUBGROUP_SIZE)];
-            const uint value_offset = FUNC_CALL(get_input2_index)(OPTIONAL_SHAPE_INFO_TENSOR b_idx, b1_idx, 0, 0, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, sgid * SUBGROUP_SIZE);
-#else
-#ifdef INPUT2_DIMS_ORDER
-            uint value_offset = FUNC_CALL(get_input2_index)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, start_partition_idx + (seq_len * SUBGROUP_SIZE), head_size_idx);
-#else
-            uint value_offset = INPUT2_GET_INDEX(b0_idx, b1_idx, start_partition_idx + (seq_len * SUBGROUP_SIZE), head_size_idx);
-#endif
-#endif
-
-            OUTPUT_TYPE qk_val[TARGET_SEQ_LEN_BLOCK_SIZE];
-            unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
-                qk_val[seq_idx] = qk_local[seq_idx * SEQ_LEN_PARTITION_SIZE + seq_len * SUBGROUP_SIZE + sglid];
-            }
-
-            unroll_for (uint i = 0; i < SUBGROUP_SIZE; i++) {
-#ifdef BEAM_TABLE_TYPE
-                INPUT2_TYPE value_val = VALUE_BLOCK_READ(value_input, sub_group_broadcast(value_offset, i));
-#else
-                INPUT2_TYPE value_val = VALUE_BLOCK_READ(value_input, value_offset);
-#endif
-                unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
-                    acc[seq_idx] = mad(sub_group_broadcast(qk_val[seq_idx], i), value_val, acc[seq_idx]);
+                    }
                 }
 
-#ifndef BEAM_TABLE_TYPE
-                value_offset += value_pitch;
-#endif
-            }
-        }
+                // Rescale acc_output_res values
+                {
+                    SOFTMAX_ACCUMULATOR_TYPE exp_sum_prev = slm_exp_sum_prev[sglid];
+                    SOFTMAX_ACCUMULATOR_TYPE exp_sum_cur = slm_exp_sum_cur[sglid];
+                    SOFTMAX_ACCUMULATOR_TYPE max_val_prev = slm_max_val_prev[sglid];
+                    SOFTMAX_ACCUMULATOR_TYPE max_val_cur = slm_max_val_cur[sglid];
 
-        // If the number of partitions is greater than 1, save results to the temporary buffer;
-        // otherwise, save results directly to the main output.
-        if (num_of_partitions > 1) {
-#if TARGET_SEQ_LEN_BLOCK_SIZE > 1
-            const uint seq_idx_end = min(TARGET_SEQ_LEN - target_seq_idx, (uint)TARGET_SEQ_LEN_BLOCK_SIZE);
-#else
-            const uint seq_idx_end = 1;
-#endif
-            for (uint seq_idx = 0; seq_idx < seq_idx_end; seq_idx++) {
-                // Data layout of tmp_output buf: [batch, heads_num, q_len, partition_idx, head_size]
-                const uint tmp_out_offset = b0_idx * (NUM_HEADS * TARGET_SEQ_LEN * num_of_partitions * HEAD_SIZE) +
-                                            b1_idx * (TARGET_SEQ_LEN * num_of_partitions * HEAD_SIZE) +
-                                            (target_seq_idx + seq_idx) * (num_of_partitions * HEAD_SIZE) +
-                                            partition_idx * (HEAD_SIZE) +
-                                            head_size_idx;
-                tmp_out[tmp_out_offset] = acc[seq_idx];
-            }
-        } else {
-#if TARGET_SEQ_LEN_BLOCK_SIZE > 1
-            const uint seq_idx_end = min(TARGET_SEQ_LEN - target_seq_idx, (uint)TARGET_SEQ_LEN_BLOCK_SIZE);
-#else
-            const uint seq_idx_end = 1;
-#endif
-            for (uint seq_idx = 0; seq_idx < seq_idx_end; seq_idx++) {
-                    const uint output_offset = OUTPUT_GET_INDEX(b0_idx, b1_idx, target_seq_idx + seq_idx, head_size_idx);
+                    const uint seq_idx_end = min(TARGET_SEQ_LEN - target_seq_idx, (uint)TARGET_SEQ_LEN_BLOCK_SIZE);
+                    for (uint seq_idx = 0; seq_idx < seq_idx_end; seq_idx++) {
+                        SOFTMAX_ACCUMULATOR_TYPE total_max = SOFTMAX_ACCUMULATOR_MAX_FUNC(sub_group_broadcast(max_val_prev, seq_idx), sub_group_broadcast(max_val_cur, seq_idx));
+                        SOFTMAX_ACCUMULATOR_TYPE updated_exp_sum_prev = sub_group_broadcast(exp_sum_prev, seq_idx) * native_exp(sub_group_broadcast(max_val_prev, seq_idx) - total_max);
+                        SOFTMAX_ACCUMULATOR_TYPE updated_exp_sum_cur = sub_group_broadcast(max_val_cur, seq_idx) * native_exp(sub_group_broadcast(max_val_cur, seq_idx) - total_max);
+                        SOFTMAX_ACCUMULATOR_TYPE updated_total_exp_sum = updated_exp_sum_prev + updated_exp_sum_cur;
 
-                    output[output_offset] = acc[seq_idx];
-            }
+                        const uint output_offset = OUTPUT_GET_INDEX(b0_idx, b1_idx, target_seq_idx + seq_idx, head_size_idx);
+
+                        if (start_partition_idx != 0) {
+                            OUTPUT_TYPE updated_prev_res = output[output_offset] * updated_exp_sum_prev / updated_total_exp_sum;
+                            acc_output_res[seq_idx] *= updated_exp_sum_cur / updated_total_exp_sum;
+                            acc_output_res[seq_idx] += updated_prev_res;
+                        }
+
+                        output[output_offset] = acc_output_res[seq_idx];
+
+                        if (sgid == 0 && sglid == 0) {
+                            slm_exp_sum_prev[seq_idx] = updated_total_exp_sum;
+                            slm_max_val_prev[seq_idx] = total_max;
+                        }
+                    }
+
+                    barrier(CLK_LOCAL_MEM_FENCE);
+                }
+            } // Gemm2 calculation end
         }
-    } // Gemm2 calculation end
+    }
 }
 
 #endif // TARGET_SEQ_LEN_BLOCK_SIZE != 1
