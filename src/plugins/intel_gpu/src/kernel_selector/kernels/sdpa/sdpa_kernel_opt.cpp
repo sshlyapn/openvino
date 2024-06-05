@@ -241,11 +241,11 @@ void SDPAKernelOpt::GetUpdateDispatchDataFunc(KernelData& kd) const {
         auto num_of_partitions = CeilDiv(source_seq_len, get_seq_len_partition_size());
 
         auto buf_dt_size = BytesPerElement(get_softmax_acc_type());
-        auto buf_elements_count = (num_of_partitions == 1) ? 1 : output.LogicalSize() / head_size * num_of_partitions;
+        auto buf_elements_count = (num_of_partitions == 1 || target_seq_len > 1) ? 1 : output.LogicalSize() / head_size * num_of_partitions;
         auto buf_size = buf_elements_count * buf_dt_size;
 
         auto tmp_out_dt_size = output.ElementSize();
-        auto tmp_out_elements_count = (num_of_partitions == 1) ? 1 : output.LogicalSize() * num_of_partitions;
+        auto tmp_out_elements_count = (num_of_partitions == 1 || target_seq_len > 1) ? 1 : output.LogicalSize() * num_of_partitions;
         auto tmp_out_size = tmp_out_elements_count * tmp_out_dt_size;
 
         auto dispatch_data1 = SetDefault(prim_params, KernelsTypes::SINGLE_TOKEN);
