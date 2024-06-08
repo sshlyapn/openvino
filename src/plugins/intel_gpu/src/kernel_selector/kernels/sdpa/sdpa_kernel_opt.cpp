@@ -4,6 +4,7 @@
 
 #include "sdpa_kernel_opt.h"
 #include "kernel_selector_utils.h"
+#include "common_types.h"
 #include <string>
 #include <vector>
 
@@ -126,6 +127,7 @@ static std::string GetKernelName(std::string base_name, KernelsTypes type, const
 
 ParamsKey SDPAKernelOpt::GetSupportedKey() const {
     ParamsKey k;
+    k.EnableInputDataType(Datatype::INT8);  // For KV cache compression
     k.EnableInputDataType(Datatype::F16);
     k.EnableInputDataType(Datatype::F32);
     k.EnableInputDataType(Datatype::INT32);

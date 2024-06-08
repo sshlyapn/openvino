@@ -4,6 +4,7 @@
 
 #include "sdpa_kernel_base.h"
 #include "kernel_selector_utils.h"
+#include "intel_gpu/runtime/debug_configuration.hpp"
 
 namespace kernel_selector {
 
@@ -66,6 +67,7 @@ static std::string GetBroadcastInputStr(const size_t input_rank, const int64_t a
 }
 
 JitConstants SDPAKernelBase::GetJitConstants(const sdpa_params& params) const {
+    GPU_DEBUG_GET_INSTANCE(debug_config);
     auto jit = MakeBaseParamsJitConstants(params);
 
     if (params.conf.broadcast_axis != -1) {
@@ -76,9 +78,16 @@ JitConstants SDPAKernelBase::GetJitConstants(const sdpa_params& params) const {
     }
 
     jit.AddConstant(MakeJitConstant("IS_CAUSAL", params.conf.is_causal));
+    size_t port_for_kv_scale = params.conf.is_kv_compressed ? 2 : 0;
     if (!params.conf.is_paged_attention) {
-        jit.AddConstant(MakeJitConstant("HAS_ATTN_MASK_INPUT", params.inputs.size() > 3));
-        jit.AddConstant(MakeJitConstant("HAS_SCALE_INPUT", params.inputs.size() > 4));
+        jit.AddConstant(MakeJitConstant("HAS_ATTN_MASK_INPUT", params.inputs.size() > 3 + port_for_kv_scale));
+        jit.AddConstant(MakeJitConstant("HAS_SCALE_INPUT", params.inputs.size() > 4 + port_for_kv_scale));
+    }
+
+    jit.AddConstant(MakeJitConstant("IS_KV_COMPRESSED", params.conf.is_kv_compressed));
+
+    GPU_DEBUG_IF(debug_config->enable_kv_cache_compression == 1) { // FIXME: it should be placed in params
+        jit.AddConstant(MakeJitConstant("COMPRESSED_PER_HEAD", 1));
     }
 
     auto is_default_order = [](const std::vector<int64_t>& order) {
@@ -140,6 +149,7 @@ bool SDPAKernelBase::Validate(const Params& p) const {
     if (params.outputs[0].Dimentions() != 4)
         return false;
 
+    // FIXME: i8 input is supported only when kv cache is compressed
     return true;
 }
 }  // namespace kernel_selector

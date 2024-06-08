@@ -24,6 +24,7 @@
 #include "openvino/pass/pattern/op/or.hpp"
 #include "openvino/pass/visualize_tree.hpp"
 #include "transformations/utils/utils.hpp"
+#include "intel_gpu/op/dynamic_quantize.hpp"
 
 namespace ov {
 namespace intel_gpu {
@@ -81,7 +82,6 @@ KVCacheFusionMatcher::KVCacheFusionMatcher() {
         new_read_value_node->set_friendly_name(past_node->get_friendly_name());
         ov::copy_runtime_info(past_node, new_read_value_node);
         ov::replace_node(past_node, new_read_value_node);
-
         if (pattern_map.count(gather_past) > 0) {
             kv_cache_node = std::make_shared<op::KVCache>(pattern_map.at(gather_past).get_node_shared_ptr(),
                                                           concat_node->input(1).get_source_output(),

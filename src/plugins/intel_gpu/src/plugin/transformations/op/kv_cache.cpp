@@ -8,6 +8,7 @@
 #include "openvino/core/partial_shape.hpp"
 #include "openvino/core/validation_util.hpp"
 #include "openvino/op/concat.hpp"
+#include "intel_gpu/runtime/debug_configuration.hpp"
 
 namespace ov {
 namespace intel_gpu {
@@ -24,6 +25,7 @@ KVCache::KVCache(const Output<Node>& past,
     , m_concat_axis(concat_axis)
     , m_gather_axis(gather_axis)
     , m_indirect(true)
+    , m_compressed(false)
     , m_output_type(output_type) {
     m_variable = past_variable;
     if (m_indirect)
@@ -40,8 +42,32 @@ KVCache::KVCache(const Output<Node>& past,
     , m_concat_axis(concat_axis)
     , m_gather_axis(0)
     , m_indirect(false)
+    , m_compressed(false)
     , m_output_type(output_type) {
     m_variable = past_variable;
+    validate_and_infer_types();
+}
+
+KVCache::KVCache(const Output<Node>& past,
+                 const Output<Node>& new_token_data,
+                 const Output<Node>& beam_idx,
+                 const Output<Node>& new_token_scale,
+                 const std::shared_ptr<ov::op::util::Variable>& past_variable,
+                 int64_t concat_axis,
+                 int64_t gather_axis,
+                 const ov::element::Type output_type)
+    : Op({past, new_token_data, beam_idx, new_token_scale})
+    , m_concat_axis(concat_axis)
+    , m_gather_axis(gather_axis)
+    , m_indirect(true)
+    , m_compressed(true)
+    , m_output_type(output_type) {
+    m_variable = past_variable;
+    size_t out_ports = 1;
+    if (m_indirect)
+        set_output_size(++out_ports);
+    if (m_compressed)
+        set_output_size(++out_ports);
     validate_and_infer_types();
 }
 
@@ -50,18 +76,24 @@ bool KVCache::visit_attributes(ov::AttributeVisitor& visitor) {
     visitor.on_attribute("gather_axis", m_gather_axis);
     visitor.on_attribute("indirect", m_indirect);
     visitor.on_attribute("output_type", m_output_type);
+    visitor.on_attribute("compressed", m_compressed);
     return true;
 }
 
 void KVCache::validate_and_infer_types() {
     auto output_type = m_output_type == ov::element::undefined ? get_input_element_type(0) : m_output_type;
     std::vector<ov::PartialShape> input_shapes = {m_variable->get_info().data_shape, get_input_partial_shape(1)};
-    if (get_output_size() == 2)
+    if (m_indirect)
         input_shapes.push_back(get_input_partial_shape(2));
     auto shapes = shape_infer(this, input_shapes);
-    set_output_type(0, output_type, shapes[0]);
+    size_t out_ports = 0;
+    set_output_type(out_ports++, output_type, shapes[0]);
+    // TODO: kv-cache compression is not supported for indirect kv cache
     if (m_indirect) {
-        set_output_type(1, get_input_element_type(2), shapes[1]);
+        set_output_type(out_ports++, get_input_element_type(2), shapes[1]);
+    }
+    if (m_compressed) {
+        set_output_type(out_ports++, get_input_element_type(2), shapes[1]);
     }
 }
 
@@ -74,10 +106,19 @@ std::shared_ptr<Node> KVCache::clone_with_new_inputs(const ov::OutputVector& new
                                          m_concat_axis,
                                          m_output_type);
 
+    } else if (new_args.size() == 3) {
+        return std::make_shared<KVCache>(new_args.at(0),
+                                         new_args.at(1),
+                                         new_args.at(2),
+                                         m_variable,
+                                         m_concat_axis,
+                                         m_gather_axis,
+                                         m_output_type);
     } else {
         return std::make_shared<KVCache>(new_args.at(0),
                                          new_args.at(1),
                                          new_args.at(2),
+                                         new_args.at(3),
                                          m_variable,
                                          m_concat_axis,
                                          m_gather_axis,
@@ -100,6 +141,18 @@ std::vector<ov::PartialShape> shape_infer(const KVCache* op, std::vector<ov::Par
         dims[gather_axis] = out_shapes[0][gather_axis];
         dims[concat_axis] = out_shapes[0][concat_axis];
         out_shapes[1] = dims;
+
+        // FIXME: indirect kv cache and compression are orthogonal feature. it can be selective.
+        // If KV cache is compressed
+        if (op->get_output_size() == 3){
+            ov::PartialShape scale_shape(std::vector<size_t>(out_shapes[0].size(), 1));
+            scale_shape[0] = out_shapes[0][0];
+            scale_shape[1] = out_shapes[0][1];
+            GPU_DEBUG_IF(debug_config->enable_kv_cache_compression == 1) { // per-head compression
+                scale_shape[2] = out_shapes[0][2];
+            }
+            out_shapes.push_back(scale_shape);
+        }
     } else {
         out_shapes[0] = input_shapes[0];
         out_shapes[0][concat_axis] += input_shapes[1][concat_axis];
