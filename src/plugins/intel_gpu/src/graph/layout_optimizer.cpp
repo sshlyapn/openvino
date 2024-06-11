@@ -928,6 +928,12 @@ static bool is_node_for_onednn(fully_connected_node const& node) {
 
     if (fc_prim->compressed_weights) {
         auto weights_dt = node.weights().get_output_layout().data_type;
+        if (node.get_input_layout().data_type == data_types::f32 &&
+            node.get_output_layout().data_type == data_types::f32 &&
+            (node.weights().get_output_layout().data_type == data_types::u4 || node.weights().get_output_layout().data_type == data_types::u8)) {
+            std::cout << "Fallback to ocl\n";
+            return false;
+        }
         if (!fc_prim->decompression_zero_point.empty()) {
             auto decompression_zp_idx = fc_prim->bias.empty() ? 3 : 4;
             auto decompression_zp_dt = node.get_input_layout(decompression_zp_idx).data_type;
