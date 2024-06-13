@@ -102,6 +102,12 @@ JitConstants SDPAKernelOpt::GetJitConstants(const sdpa_params& params, size_t ke
         jit.AddConstant(MakeJitConstant("STATIC_SCALE_VALUE", 1.0f / std::sqrt(static_cast<float>(params.conf.head_size))));
     }
 
+    if (kernel_idx == KernelsTypes::MULTI_TOKENS) {
+        jit.AddConstant(MakeJitConstant("SG_COUNT_SCALE", 2));
+    } else {
+        jit.AddConstant(MakeJitConstant("SG_COUNT_SCALE", 1));
+    }
+
     return jit;
 }
 
@@ -123,11 +129,17 @@ CommonDispatchData SDPAKernelOpt::SetDefault(const sdpa_params& params, size_t k
         const size_t num_of_partitions = kernel_idx == KernelsTypes::MULTI_TOKENS ? 1 : CeilDiv(source_seq_len, get_seq_len_partition_size());
         const size_t target_seq_len_block_size = kernel_idx == 1 ? get_target_seq_len_block_size() : 1;
 
-        if (kernel_idx == KernelsTypes::SINGLE_TOKEN || kernel_idx == KernelsTypes::MULTI_TOKENS) {
+        if (kernel_idx == KernelsTypes::SINGLE_TOKEN) {
             dispatch_data.gws = { batch_size * heads_num,
                                   CeilDiv(target_seq_len, target_seq_len_block_size),
                                   head_size * num_of_partitions };
             dispatch_data.lws = { 1, 1, head_size };
+        } else if (kernel_idx == KernelsTypes::MULTI_TOKENS) {
+            const auto sg_scale = 2;
+            dispatch_data.gws = { batch_size * heads_num,
+                                  CeilDiv(target_seq_len, target_seq_len_block_size),
+                                  head_size * num_of_partitions * sg_scale };
+            dispatch_data.lws = { 1, 1, head_size * sg_scale };
         } else if (kernel_idx == KernelsTypes::FINALIZATION) {
             dispatch_data.gws = { batch_size * heads_num,
                                   target_seq_len,

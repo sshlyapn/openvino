@@ -118,7 +118,7 @@ inline uint FUNC(get_bt_index_value)(OPTIONAL_SHAPE_INFO_ARG uint b, uint f, uin
 #define OUTPUT_BLOCK_READ(ptr, offset) BLOCK_READN(OUTPUT_TYPE, 1, ptr, offset)
 #define OUTPUT_BLOCK_WRITE(ptr, offset, val) BLOCK_WRITEN(OUTPUT_TYPE, 1, ptr, offset, val)
 #define VALUE_BLOCK_READ(ptr, offset) BLOCK_READN(INPUT2_TYPE, 1, ptr, offset)
-#define SUBGROUPS_PER_WG (HEAD_SIZE / SUBGROUP_SIZE)
+#define SUBGROUPS_PER_WG (HEAD_SIZE * SG_COUNT_SCALE / SUBGROUP_SIZE)
 
 #ifdef SDPA_STAGE_0
 
@@ -670,8 +670,7 @@ KERNEL(sdpa_opt)(
 #if 0
     const uint lid = get_local_id(2);
 #else
-    #define lid (uint)get_local_id(2)
-    #define head_size_idx (uint)get_local_id(2)
+    #define head_size_idx ((uint)get_local_id(2) % HEAD_SIZE)
 #endif
 
 #if 0
@@ -714,26 +713,28 @@ KERNEL(sdpa_opt)(
         const uint query_pitch = query_offset_next_seq - query_offset;
 #else
         uint query_offset = INPUT0_GET_INDEX(b0_idx, b1_idx, target_seq_idx, (sgid * SUBGROUP_SIZE));
-        const uint query_pitch = SUBGROUP_SIZE * SUBGROUPS_PER_WG;
+        const uint query_pitch = HEAD_SIZE;
 #endif
         uint query_local_offset = (sgid * SUBGROUP_SIZE + sglid) * TARGET_SEQ_LEN_BLOCK_SIZE;
         const uint target_seq_len_bs = min(TARGET_SEQ_LEN - target_seq_idx, (uint)TARGET_SEQ_LEN_BLOCK_SIZE);
 
-        if (target_seq_len_bs != TARGET_SEQ_LEN_BLOCK_SIZE) {
-            for (uint seq_idx = 0; seq_idx < target_seq_len_bs; seq_idx++) {
-                INPUT0_TYPE val = BLOCK_READN(INPUT0_TYPE, 1, query_input, query_offset);
+        if (sgid * SUBGROUP_SIZE < HEAD_SIZE) {
+            if (target_seq_len_bs != TARGET_SEQ_LEN_BLOCK_SIZE) {
+                for (uint seq_idx = 0; seq_idx < target_seq_len_bs; seq_idx++) {
+                    INPUT0_TYPE val = BLOCK_READN(INPUT0_TYPE, 1, query_input, query_offset);
 
-                query_local[query_local_offset] = val;
-                query_offset += query_pitch;
-                query_local_offset++;
-            }
-        } else {
-            unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
-                INPUT0_TYPE val = BLOCK_READN(INPUT0_TYPE, 1, query_input, query_offset);
+                    query_local[query_local_offset] = val;
+                    query_offset += query_pitch;
+                    query_local_offset++;
+                }
+            } else {
+                unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
+                    INPUT0_TYPE val = BLOCK_READN(INPUT0_TYPE, 1, query_input, query_offset);
 
-                query_local[query_local_offset] = val;
-                query_offset += query_pitch;
-                query_local_offset++;
+                    query_local[query_local_offset] = val;
+                    query_offset += query_pitch;
+                    query_local_offset++;
+                }
             }
         }
     }
@@ -886,15 +887,6 @@ KERNEL(sdpa_opt)(
 
         // SoftMax calculation
         {
-            #define QK_MAX_NUMS_PER_SG CEIL_DIV(TARGET_SEQ_LEN_BLOCK_SIZE, SUBGROUPS_PER_WG)
-            #if (TARGET_SEQ_LEN_BLOCK_SIZE % SUBGROUPS_PER_WG != 0)
-                /* If TARGET_SEQ_LEN_BLOCK_SIZE is not divisible by SUBGROUPS_PER_WG, then some subgroups will have to handle more QK rows than others */
-                #define QK_ITERS_END \
-                    (TARGET_SEQ_LEN_BLOCK_SIZE / SUBGROUPS_PER_WG + (sgid < TARGET_SEQ_LEN_BLOCK_SIZE % SUBGROUPS_PER_WG ? 1 : 0))
-            #else
-                #define QK_ITERS_END QK_MAX_NUMS_PER_SG
-            #endif
-
             SOFTMAX_ACCUMULATOR_TYPE qk_max_new = SOFTMAX_ACCUMULATOR_VAL_MIN;
 
             for (uint i = 0; i < SUBGROUPS_PER_WG; i++) {
@@ -944,14 +936,36 @@ KERNEL(sdpa_opt)(
             }
 
             barrier(CLK_LOCAL_MEM_FENCE);
+
+            // if (b0_idx == 0 && b1_idx == 0 && target_seq_idx == 512 && get_local_id(2) == 0) {
+            //     printf("%d %d %d %d; %d. qk_local[block=0] vals first: %f %f %f %f  %f %f %f %f  %f %f %f %f  %f %f %f %f, last %f %f %f %f %f %f\n",
+            //         b0_idx, b1_idx, target_seq_idx, head_size_idx, start_partition_idx,
+            //         qk_local[0], qk_local[1], qk_local[2], qk_local[3],
+            //         qk_local[4], qk_local[5], qk_local[6], qk_local[7],
+            //         qk_local[8], qk_local[9], qk_local[10], qk_local[11],
+            //         qk_local[12], qk_local[13], qk_local[14], qk_local[15],
+            //         qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE - 6], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE - 5],
+            //         qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE - 4], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE - 3], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE - 2], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE - 1]);
+            //     printf("%d %d %d %d; %d. qk_local[block=15] vals first: %f %f %f %f  %f %f %f %f  %f %f %f %f  %f %f %f %f, last %f %f %f %f %f %f\n",
+            //         b0_idx, b1_idx, target_seq_idx, head_size_idx, start_partition_idx,
+            //         qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 0], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 1], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 2], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 3],
+            //         qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 4], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 5], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 6], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 7],
+            //         qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 8], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 9], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 10], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 11],
+            //         qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 12], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 13], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 14], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 15],
+            //         qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + CUSTOM_SEQ_LEN_PARTITION_SIZE - 6], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + CUSTOM_SEQ_LEN_PARTITION_SIZE - 5],
+            //         qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + CUSTOM_SEQ_LEN_PARTITION_SIZE - 4], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + CUSTOM_SEQ_LEN_PARTITION_SIZE - 3], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + CUSTOM_SEQ_LEN_PARTITION_SIZE - 2], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + CUSTOM_SEQ_LEN_PARTITION_SIZE - 1]);
+            // }
+
         }
 
 
         {
-            const uint seq_len_leftovers_start = (partition_seq_len / SUBGROUP_SIZE) * SUBGROUP_SIZE;
             MAKE_VECTOR_TYPE(OUTPUT_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) acc_output_res = OUTPUT_VAL_ZERO;
             MAKE_VECTOR_TYPE(OUTPUT_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) qk_val;
-            if (/* seq_len_leftovers_start != partition_seq_len */ 1) {
+
+            const uint seq_len_start = (sgid / (SUBGROUPS_PER_WG / SG_COUNT_SCALE)) * (CUSTOM_SEQ_LEN_PARTITION_SIZE / SG_COUNT_SCALE);
+
+            if (1) {
                 // Gemm2 calculation
 
 #ifdef INPUT2_DIMS_ORDER
@@ -961,7 +975,12 @@ KERNEL(sdpa_opt)(
 #else
                 const uint value_pitch = HEAD_SIZE;
 #endif
-                for (uint seq_len = 0; seq_len < partition_seq_len / SUBGROUP_SIZE; seq_len++) {
+
+                uint seq_len_end = 0;
+                if (seq_len_start < partition_seq_len)
+                    seq_len_end = seq_len_start + min(partition_seq_len - seq_len_start, (uint)(CUSTOM_SEQ_LEN_PARTITION_SIZE / SG_COUNT_SCALE));;
+
+                for (uint seq_len = seq_len_start / SUBGROUP_SIZE; seq_len < seq_len_end / SUBGROUP_SIZE; seq_len++) {
 #ifdef BEAM_TABLE_TYPE
                     const uint b_idx = beam_table[FUNC_CALL(get_bt_index_value)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, (start_partition_idx * CUSTOM_SEQ_LEN_PARTITION_SIZE) + (seq_len * SUBGROUP_SIZE) + sglid, sgid * SUBGROUP_SIZE)];
                     const uint value_offset = FUNC_CALL(get_input2_index)(OPTIONAL_SHAPE_INFO_TENSOR b_idx, b1_idx, 0, 0, (start_partition_idx * CUSTOM_SEQ_LEN_PARTITION_SIZE) + (seq_len * SUBGROUP_SIZE) + sglid, sgid * SUBGROUP_SIZE);
@@ -994,9 +1013,10 @@ KERNEL(sdpa_opt)(
                 }
 
                 // TODO: try to add if?
-                {
+                const uint seq_len_leftovers_start = ((seq_len_end / SUBGROUP_SIZE) * SUBGROUP_SIZE);
+                if (seq_len_leftovers_start != seq_len_end) {
                     // TODO: shouldn't be (partition_seq_len - 1) ?
-                    uint qk_offset = min(seq_len_leftovers_start + sglid, partition_seq_len);
+                    uint qk_offset = min(seq_len_leftovers_start + sglid, seq_len_end - 1);
                     unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
                         qk_val[seq_idx] = qk_local[qk_offset];
                         qk_offset += CUSTOM_SEQ_LEN_PARTITION_SIZE;
@@ -1065,7 +1085,6 @@ KERNEL(sdpa_opt)(
                         const uint output_offset = OUTPUT_GET_INDEX(b0_idx, b1_idx, target_seq_idx + seq_idx, sgid * SUBGROUP_SIZE);
                         // const uint output_offset = OUTPUT_GET_INDEX(b0_idx, b1_idx, target_seq_idx + seq_idx, head_size_idx);
 
-
                         if (start_partition_idx > 0) {
                             // OUTPUT_TYPE tmp_prev = OUTPUT_BLOCK_READ(output, output_offset);
                             // OUTPUT_TYPE updated_prev_res = TO_SOFTMAX_ACCUMULATOR_TYPE(OUTPUT_BLOCK_READ(output, output_offset)) * updated_exp_sum_prev / updated_total_exp_sum;
@@ -1102,9 +1121,26 @@ KERNEL(sdpa_opt)(
     }
 
     const uint seq_idx_end = min((uint)TARGET_SEQ_LEN - target_seq_idx, (uint)TARGET_SEQ_LEN_BLOCK_SIZE);
-    for (uint seq_idx = 0; seq_idx < seq_idx_end; seq_idx++) {
-        const uint output_offset = OUTPUT_GET_INDEX(b0_idx, b1_idx, target_seq_idx + seq_idx, sgid * SUBGROUP_SIZE);
-        OUTPUT_BLOCK_WRITE(output, output_offset, qk_acc_total[seq_idx]);
+    if (sgid / (SUBGROUPS_PER_WG / SG_COUNT_SCALE) > 0) {
+        unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
+            qk_local[seq_idx * HEAD_SIZE + head_size_idx] = qk_acc_total[seq_idx];
+        }
+    }
+
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    if (sgid / (SUBGROUPS_PER_WG / SG_COUNT_SCALE) == 0) {
+        unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
+            qk_acc_total[seq_idx] += qk_local[seq_idx * HEAD_SIZE + head_size_idx];
+        }
+
+        uint output_offset = OUTPUT_GET_INDEX(b0_idx, b1_idx, target_seq_idx, sgid * SUBGROUP_SIZE);
+        for (uint seq_idx = 0; seq_idx < seq_idx_end; seq_idx++) {
+            // OUTPUT_TYPE second_res = qk_local[seq_idx * HEAD_SIZE + head_size_idx];
+            // qk_acc_total[seq_idx] += second_res;
+            OUTPUT_BLOCK_WRITE(output, output_offset, qk_acc_total[seq_idx]);
+            output_offset += HEAD_SIZE;
+        }
     }
 }
 
