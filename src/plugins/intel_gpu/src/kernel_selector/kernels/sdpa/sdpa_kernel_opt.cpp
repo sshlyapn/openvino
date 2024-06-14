@@ -48,6 +48,8 @@ static std::string GetKernelName(std::string base_name, KernelsTypes type, bool 
     return kernel_name;
 }
 
+constexpr size_t sg_scale = 2;
+
 ParamsKey SDPAKernelOpt::GetSupportedKey() const {
     ParamsKey k;
     k.EnableInputDataType(Datatype::F16);
@@ -103,7 +105,7 @@ JitConstants SDPAKernelOpt::GetJitConstants(const sdpa_params& params, size_t ke
     }
 
     if (kernel_idx == KernelsTypes::MULTI_TOKENS) {
-        jit.AddConstant(MakeJitConstant("SG_COUNT_SCALE", 2));
+        jit.AddConstant(MakeJitConstant("SG_COUNT_SCALE", sg_scale));
     } else {
         jit.AddConstant(MakeJitConstant("SG_COUNT_SCALE", 1));
     }
@@ -135,7 +137,6 @@ CommonDispatchData SDPAKernelOpt::SetDefault(const sdpa_params& params, size_t k
                                   head_size * num_of_partitions };
             dispatch_data.lws = { 1, 1, head_size };
         } else if (kernel_idx == KernelsTypes::MULTI_TOKENS) {
-            const auto sg_scale = 2;
             dispatch_data.gws = { batch_size * heads_num,
                                   CeilDiv(target_seq_len, target_seq_len_block_size),
                                   head_size * num_of_partitions * sg_scale };

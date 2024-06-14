@@ -755,7 +755,7 @@ KERNEL(sdpa_opt)(
                 }
             } else {
                 #if SG_COUNT_SCALE == 2
-                    if ((sgid / (SUBGROUPS_PER_WG / SG_COUNT_SCALE)) == 0) {
+                    if ((sgid < (SUBGROUPS_PER_WG / SG_COUNT_SCALE))) {
                         unroll_for (uint seq_idx = 0; seq_idx < (TARGET_SEQ_LEN_BLOCK_SIZE / SG_COUNT_SCALE); seq_idx++) {
                             INPUT0_TYPE val = BLOCK_READN(INPUT0_TYPE, 1, query_input, query_offset);
 
@@ -773,6 +773,16 @@ KERNEL(sdpa_opt)(
                             query_offset += query_pitch;
                             query_local_offset++;
                         }
+                    }
+                #elif SG_COUNT_SCALE == 4
+                    query_local_offset += (sgid / (SUBGROUPS_PER_WG / SG_COUNT_SCALE)) * (TARGET_SEQ_LEN_BLOCK_SIZE / SG_COUNT_SCALE);
+                    query_offset += query_pitch * (sgid / (SUBGROUPS_PER_WG / SG_COUNT_SCALE)) * (TARGET_SEQ_LEN_BLOCK_SIZE / SG_COUNT_SCALE);
+                    unroll_for (uint seq_idx = 0; seq_idx < (TARGET_SEQ_LEN_BLOCK_SIZE / SG_COUNT_SCALE); seq_idx++) {
+                        INPUT0_TYPE val = BLOCK_READN(INPUT0_TYPE, 1, query_input, query_offset);
+
+                        query_local[query_local_offset] = val;
+                        query_offset += query_pitch;
+                        query_local_offset++;
                     }
                 #else
                 unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
@@ -1221,7 +1231,7 @@ KERNEL(sdpa_opt)(
 
     if (sgid >= (SUBGROUPS_PER_WG / SG_COUNT_SCALE)) {
         unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
-            qk_local[seq_idx * HEAD_SIZE + head_size_idx] = qk_acc_total[seq_idx];
+            qk_local[seq_idx * CUSTOM_SEQ_LEN_PARTITION_SIZE + (uint)get_local_id(2)] = qk_acc_total[seq_idx];
         }
     }
 
@@ -1229,7 +1239,9 @@ KERNEL(sdpa_opt)(
 
     if (sgid < (SUBGROUPS_PER_WG / SG_COUNT_SCALE)) {
         unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
-            qk_acc_total[seq_idx] += qk_local[seq_idx * HEAD_SIZE + head_size_idx];
+            unroll_for (uint i = 1; i < SG_COUNT_SCALE; i++) {
+                qk_acc_total[seq_idx] += qk_local[seq_idx * CUSTOM_SEQ_LEN_PARTITION_SIZE + (i * HEAD_SIZE) + head_size_idx];
+            }
         }
 
         uint output_offset = OUTPUT_GET_INDEX(b0_idx, b1_idx, target_seq_idx, sgid * SUBGROUP_SIZE);
