@@ -589,7 +589,7 @@ inline MAKE_VECTOR_TYPE(INPUT0_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) FUNC(load_attn_m
                                                                                      uint target_seq_idx,
                                                                                      uint source_seq_idx
                                                                                      ATTN_MASK_BUFFER_ARG) {
-    MAKE_VECTOR_TYPE(INPUT0_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) mask_vec;
+    MAKE_VECTOR_TYPE(INPUT0_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) mask_vec = 0;
 #if !IS_CAUSAL && HAS_ATTN_MASK_INPUT
     // TODO: move inside else?
     const uint attn_mask_offset = INPUT3_GET_INDEX_SAFE(b0_idx, b1_idx, target_seq_idx, source_seq_idx);
@@ -614,6 +614,20 @@ inline MAKE_VECTOR_TYPE(INPUT0_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) FUNC(load_attn_m
     }
 #endif
 
+#if !IS_CAUSAL && !HAS_ATTN_MASK_INPUT
+    if (target_seq_idx >= (uint)TARGET_SEQ_LEN) {
+        unroll_for (uint i = 0; i < SUBGROUP_SIZE; i++) {
+            mask_vec[i] = NAN;
+        }
+    } else {
+        const uint max_mask_offset = min(source_seq_idx + SUBGROUP_SIZE, (uint)SOURCE_SEQ_LEN);
+        for (uint i = 0; i < SUBGROUP_SIZE; i++) {
+            mask_vec[i] = source_seq_idx + i < max_mask_offset ? 0 : NAN;
+        }
+    }
+#endif
+
+
 #if IS_CAUSAL
     for (uint i = 0; i < SUBGROUP_SIZE; i++) {
         if (source_seq_idx + i > target_seq_idx)
@@ -629,7 +643,9 @@ inline MAKE_VECTOR_TYPE(INPUT0_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) FUNC(load_attn_m
 #endif
 
     // Apply scale to attn_mask
+#if IS_CAUSAL || HAS_ATTN_MASK_INPUT
     mask_vec *= scale_val;
+#endif
 
     return mask_vec;
 }
@@ -991,6 +1007,27 @@ KERNEL(sdpa_opt)(
             }
 
             barrier(CLK_LOCAL_MEM_FENCE);
+
+
+            // if (b0_idx == 0 && b1_idx == 0 && target_seq_idx == 0 && get_local_id(2) == 0) {
+            //     printf("%d %d %d %d; %d. qk_local[block=0] vals first: %f %f %f %f  %f %f %f %f  %f %f %f %f  %f %f %f %f, last %f %f %f %f %f %f\n",
+            //         b0_idx, b1_idx, target_seq_idx, head_size_idx, start_partition_idx,
+            //         qk_local[0], qk_local[1], qk_local[2], qk_local[3],
+            //         qk_local[4], qk_local[5], qk_local[6], qk_local[7],
+            //         qk_local[8], qk_local[9], qk_local[10], qk_local[11],
+            //         qk_local[12], qk_local[13], qk_local[14], qk_local[15],
+            //         qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE - 6], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE - 5],
+            //         qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE - 4], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE - 3], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE - 2], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE - 1]);
+            //     printf("%d %d %d %d; %d. qk_local[block=15] vals first: %f %f %f %f  %f %f %f %f  %f %f %f %f  %f %f %f %f, last %f %f %f %f %f %f\n",
+            //         b0_idx, b1_idx, target_seq_idx, head_size_idx, start_partition_idx,
+            //         qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 0], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 1], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 2], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 3],
+            //         qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 4], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 5], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 6], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 7],
+            //         qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 8], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 9], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 10], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 11],
+            //         qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 12], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 13], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 14], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + 15],
+            //         qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + CUSTOM_SEQ_LEN_PARTITION_SIZE - 6], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + CUSTOM_SEQ_LEN_PARTITION_SIZE - 5],
+            //         qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + CUSTOM_SEQ_LEN_PARTITION_SIZE - 4], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + CUSTOM_SEQ_LEN_PARTITION_SIZE - 3], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + CUSTOM_SEQ_LEN_PARTITION_SIZE - 2], qk_local[CUSTOM_SEQ_LEN_PARTITION_SIZE * 15 + CUSTOM_SEQ_LEN_PARTITION_SIZE - 1]);
+            // }
+
 
         }
 
