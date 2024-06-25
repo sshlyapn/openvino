@@ -669,45 +669,19 @@ KERNEL(sdpa_opt)(
     __global OUTPUT_TYPE* tmp_out
 )
 {
-
-
-
-    // TODO: MTL showed good perf with defines instead of these variables
-    // need to test it as is, or replace these variables
-    const uint batch_idx = get_global_id(0);
-    const uint b0_idx = batch_idx / NUM_HEADS; /* BATCH dim */
-    const uint b1_idx = batch_idx % NUM_HEADS; /* HEADS_NUM dim */
-
 #if TARGET_SEQ_LEN_BLOCK_SIZE != 1 && TARGET_SEQ_LEN_BLOCK_SIZE != 16
     #error TARGET_SEQ_LEN_BLOCK_SIZE unexpected size
 #endif
 
-#if TARGET_SEQ_LEN_BLOCK_SIZE > 1
-    const uint target_seq_idx = (uint)get_global_id(1) * TARGET_SEQ_LEN_BLOCK_SIZE;
-#else
-    const uint target_seq_idx = get_global_id(1);
-#endif
-#if 0
-    const uint lid = get_local_id(2);
-#else
+    #define batch_idx (get_global_id(0))
+    #define b0_idx (batch_idx / NUM_HEADS)
+    #define b1_idx (batch_idx % NUM_HEADS)
+    #define target_seq_idx ((uint)get_global_id(1) * TARGET_SEQ_LEN_BLOCK_SIZE)
     #define head_size_idx ((uint)get_local_id(2) % HEAD_SIZE)
-#endif
-
-#if 0
-    const uint sgid = get_sub_group_id();
-#else
-    #define sgid (uint)get_sub_group_id()
-#endif
-
-#if 0
-    const uint sglid = get_sub_group_local_id();
-#else
     #define sglid (uint)get_sub_group_local_id()
-#endif
-
+    #define sgid (uint)get_sub_group_id()
 
     #define CUSTOM_SEQ_LEN_PARTITION_SIZE (SUBGROUPS_PER_WG * SUBGROUP_SIZE)
-
 
     // SLM for query inputs
     __local INPUT0_TYPE query_local[HEAD_SIZE * TARGET_SEQ_LEN_BLOCK_SIZE];
