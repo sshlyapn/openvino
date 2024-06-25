@@ -18,6 +18,14 @@ enum KernelsTypes {
     TOTAL_KERNELS_NUM
 };
 
+static size_t get_sg_number_scale_factor(const Params& p, size_t head_size) {
+    const size_t optimal_scale_factor = 2;
+    if (head_size * optimal_scale_factor <= p.engineInfo.maxWorkGroupSize)
+        return optimal_scale_factor;
+
+    return 1;
+}
+
 static size_t get_target_seq_len_block_size() {
     const size_t block_size = 16;
     return block_size;
@@ -47,8 +55,6 @@ static std::string GetKernelName(std::string base_name, KernelsTypes type, bool 
 
     return kernel_name;
 }
-
-constexpr size_t sg_scale = 2;
 
 ParamsKey SDPAKernelOpt::GetSupportedKey() const {
     ParamsKey k;
@@ -105,9 +111,9 @@ JitConstants SDPAKernelOpt::GetJitConstants(const sdpa_params& params, size_t ke
     }
 
     if (kernel_idx == KernelsTypes::MULTI_TOKENS) {
-        jit.AddConstant(MakeJitConstant("SG_COUNT_SCALE", sg_scale));
+        jit.AddConstant(MakeJitConstant("SG_SCALE_FACTOR", get_sg_number_scale_factor(params, static_cast<size_t>(config.head_size))));
     } else {
-        jit.AddConstant(MakeJitConstant("SG_COUNT_SCALE", 1));
+        jit.AddConstant(MakeJitConstant("SG_SCALE_FACTOR", 1));
     }
 
     return jit;
@@ -139,8 +145,8 @@ CommonDispatchData SDPAKernelOpt::SetDefault(const sdpa_params& params, size_t k
         } else if (kernel_idx == KernelsTypes::MULTI_TOKENS) {
             dispatch_data.gws = { batch_size * heads_num,
                                   CeilDiv(target_seq_len, target_seq_len_block_size),
-                                  head_size * num_of_partitions * sg_scale };
-            dispatch_data.lws = { 1, 1, head_size * sg_scale };
+                                  head_size * num_of_partitions * get_sg_number_scale_factor(params, head_size) };
+            dispatch_data.lws = { 1, 1, head_size * get_sg_number_scale_factor(params, head_size) };
         } else if (kernel_idx == KernelsTypes::FINALIZATION) {
             dispatch_data.gws = { batch_size * heads_num,
                                   target_seq_len,

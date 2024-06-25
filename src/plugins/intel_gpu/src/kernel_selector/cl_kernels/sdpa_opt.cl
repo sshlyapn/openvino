@@ -119,7 +119,7 @@ inline uint FUNC(get_bt_index_value)(OPTIONAL_SHAPE_INFO_ARG uint b, uint f, uin
 #define OUTPUT_BLOCK_READ(ptr, offset) BLOCK_READN(OUTPUT_TYPE, 1, ptr, offset)
 #define OUTPUT_BLOCK_WRITE(ptr, offset, val) BLOCK_WRITEN(OUTPUT_TYPE, 1, ptr, offset, val)
 #define VALUE_BLOCK_READ(ptr, offset) BLOCK_READN(INPUT2_TYPE, 1, ptr, offset)
-#define SUBGROUPS_PER_WG (HEAD_SIZE * SG_COUNT_SCALE / SUBGROUP_SIZE)
+#define SUBGROUPS_PER_WG (HEAD_SIZE * SG_SCALE_FACTOR / SUBGROUP_SIZE)
 
 #ifdef SDPA_STAGE_0
 
@@ -731,9 +731,9 @@ KERNEL(sdpa_opt)(
                     }
                 }
             } else {
-                #if SG_COUNT_SCALE == 2
-                    if ((sgid < (SUBGROUPS_PER_WG / SG_COUNT_SCALE))) {
-                        unroll_for (uint seq_idx = 0; seq_idx < (TARGET_SEQ_LEN_BLOCK_SIZE / SG_COUNT_SCALE); seq_idx++) {
+                #if SG_SCALE_FACTOR == 2
+                    if ((sgid < (SUBGROUPS_PER_WG / SG_SCALE_FACTOR))) {
+                        unroll_for (uint seq_idx = 0; seq_idx < (TARGET_SEQ_LEN_BLOCK_SIZE / SG_SCALE_FACTOR); seq_idx++) {
                             INPUT0_TYPE val = BLOCK_READN(INPUT0_TYPE, 1, query_input, query_offset);
 
                             query_local[query_local_offset] = val;
@@ -741,9 +741,9 @@ KERNEL(sdpa_opt)(
                             query_local_offset++;
                         }
                     } else {
-                        query_local_offset += (TARGET_SEQ_LEN_BLOCK_SIZE / SG_COUNT_SCALE);
-                        query_offset += query_pitch * (TARGET_SEQ_LEN_BLOCK_SIZE / SG_COUNT_SCALE);
-                        unroll_for (uint seq_idx = 0; seq_idx < (TARGET_SEQ_LEN_BLOCK_SIZE / SG_COUNT_SCALE); seq_idx++) {
+                        query_local_offset += (TARGET_SEQ_LEN_BLOCK_SIZE / SG_SCALE_FACTOR);
+                        query_offset += query_pitch * (TARGET_SEQ_LEN_BLOCK_SIZE / SG_SCALE_FACTOR);
+                        unroll_for (uint seq_idx = 0; seq_idx < (TARGET_SEQ_LEN_BLOCK_SIZE / SG_SCALE_FACTOR); seq_idx++) {
                             INPUT0_TYPE val = BLOCK_READN(INPUT0_TYPE, 1, query_input, query_offset);
 
                             query_local[query_local_offset] = val;
@@ -751,10 +751,10 @@ KERNEL(sdpa_opt)(
                             query_local_offset++;
                         }
                     }
-                #elif SG_COUNT_SCALE == 4
-                    query_local_offset += (sgid / (SUBGROUPS_PER_WG / SG_COUNT_SCALE)) * (TARGET_SEQ_LEN_BLOCK_SIZE / SG_COUNT_SCALE);
-                    query_offset += query_pitch * (sgid / (SUBGROUPS_PER_WG / SG_COUNT_SCALE)) * (TARGET_SEQ_LEN_BLOCK_SIZE / SG_COUNT_SCALE);
-                    unroll_for (uint seq_idx = 0; seq_idx < (TARGET_SEQ_LEN_BLOCK_SIZE / SG_COUNT_SCALE); seq_idx++) {
+                #elif SG_SCALE_FACTOR == 4
+                    query_local_offset += (sgid / (SUBGROUPS_PER_WG / SG_SCALE_FACTOR)) * (TARGET_SEQ_LEN_BLOCK_SIZE / SG_SCALE_FACTOR);
+                    query_offset += query_pitch * (sgid / (SUBGROUPS_PER_WG / SG_SCALE_FACTOR)) * (TARGET_SEQ_LEN_BLOCK_SIZE / SG_SCALE_FACTOR);
+                    unroll_for (uint seq_idx = 0; seq_idx < (TARGET_SEQ_LEN_BLOCK_SIZE / SG_SCALE_FACTOR); seq_idx++) {
                         INPUT0_TYPE val = BLOCK_READN(INPUT0_TYPE, 1, query_input, query_offset);
 
                         query_local[query_local_offset] = val;
@@ -1043,8 +1043,8 @@ KERNEL(sdpa_opt)(
 #endif
 
                 if (partition_seq_len == CUSTOM_SEQ_LEN_PARTITION_SIZE) {
-                        uint seq_len_start = (sgid / (SUBGROUPS_PER_WG / SG_COUNT_SCALE)) * (CUSTOM_SEQ_LEN_PARTITION_SIZE / SG_COUNT_SCALE);
-                        for (uint seq_len = seq_len_start; seq_len < seq_len_start + (CUSTOM_SEQ_LEN_PARTITION_SIZE / SG_COUNT_SCALE); seq_len += SUBGROUP_SIZE) {
+                        uint seq_len_start = (sgid / (SUBGROUPS_PER_WG / SG_SCALE_FACTOR)) * (CUSTOM_SEQ_LEN_PARTITION_SIZE / SG_SCALE_FACTOR);
+                        for (uint seq_len = seq_len_start; seq_len < seq_len_start + (CUSTOM_SEQ_LEN_PARTITION_SIZE / SG_SCALE_FACTOR); seq_len += SUBGROUP_SIZE) {
         #ifdef BEAM_TABLE_TYPE
                             const uint b_idx = beam_table[FUNC_CALL(get_bt_index_value)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, start_partition_idx + (seq_len) + sglid, sgid * SUBGROUP_SIZE)];
                             const uint value_offset = FUNC_CALL(get_input2_index)(OPTIONAL_SHAPE_INFO_TENSOR b_idx, b1_idx, 0, 0, start_partition_idx + (seq_len) + sglid, sgid * SUBGROUP_SIZE);
@@ -1077,10 +1077,10 @@ KERNEL(sdpa_opt)(
                             }
                         }
                 } else {
-                    const uint seq_len_start = (sgid / (SUBGROUPS_PER_WG / SG_COUNT_SCALE)) * (CUSTOM_SEQ_LEN_PARTITION_SIZE / SG_COUNT_SCALE);
+                    const uint seq_len_start = (sgid / (SUBGROUPS_PER_WG / SG_SCALE_FACTOR)) * (CUSTOM_SEQ_LEN_PARTITION_SIZE / SG_SCALE_FACTOR);
                     uint seq_len_end = 0;
                     if (seq_len_start < partition_seq_len)
-                        seq_len_end = seq_len_start + min(partition_seq_len - seq_len_start, (uint)(CUSTOM_SEQ_LEN_PARTITION_SIZE / SG_COUNT_SCALE));;
+                        seq_len_end = seq_len_start + min(partition_seq_len - seq_len_start, (uint)(CUSTOM_SEQ_LEN_PARTITION_SIZE / SG_SCALE_FACTOR));;
 
                     for (uint seq_len = seq_len_start / SUBGROUP_SIZE; seq_len < seq_len_end / SUBGROUP_SIZE; seq_len++) {
     #ifdef BEAM_TABLE_TYPE
@@ -1206,7 +1206,7 @@ KERNEL(sdpa_opt)(
         }
     }
 
-    if (sgid >= (SUBGROUPS_PER_WG / SG_COUNT_SCALE)) {
+    if (sgid >= (SUBGROUPS_PER_WG / SG_SCALE_FACTOR)) {
         unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
             qk_local[seq_idx * CUSTOM_SEQ_LEN_PARTITION_SIZE + (uint)get_local_id(2)] = qk_acc_total[seq_idx];
         }
@@ -1214,9 +1214,9 @@ KERNEL(sdpa_opt)(
 
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    if (sgid < (SUBGROUPS_PER_WG / SG_COUNT_SCALE)) {
+    if (sgid < (SUBGROUPS_PER_WG / SG_SCALE_FACTOR)) {
         unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
-            unroll_for (uint i = 1; i < SG_COUNT_SCALE; i++) {
+            unroll_for (uint i = 1; i < SG_SCALE_FACTOR; i++) {
                 qk_acc_total[seq_idx] += qk_local[seq_idx * CUSTOM_SEQ_LEN_PARTITION_SIZE + (i * HEAD_SIZE) + head_size_idx];
             }
         }
