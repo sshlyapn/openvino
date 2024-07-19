@@ -26,6 +26,13 @@
 #include "intel_gpu/primitives/data.hpp"
 #include "intel_gpu/runtime/debug_configuration.hpp"
 
+namespace cldnn {
+template <>
+size_t hash_combine<ov::float16>(size_t seed, const ov::float16 &v) {
+    return hash_combine(seed, static_cast<float>(v));
+}
+}
+
 namespace ov {
 namespace intel_gpu {
 
@@ -70,6 +77,27 @@ struct ConstProperties {
     bool needsBatchInterpretation;
 };
 
+namespace {
+template <typename T, int arr_length>
+struct HashFunc {
+    size_t operator()(const std::array<T, arr_length> &arr) const {
+        size_t seed = 0;
+        for (auto elem : arr)
+            seed = cldnn::hash_combine(seed, elem);
+        return seed;
+    }
+};
+}
+
+#define MAX_ELEMENTS_NUM 4
+#define DEFINE_CONSTANTS_CACHE(OV_TYPE) \
+    using cache_dt##OV_TYPE = element_type_traits<element::Type_t::OV_TYPE>::value_type; \
+    static std::unordered_map<std::array<cache_dt##OV_TYPE, MAX_ELEMENTS_NUM>, cldnn::memory_ptr, HashFunc<cache_dt##OV_TYPE, MAX_ELEMENTS_NUM>> constants_cache_##OV_TYPE;
+
+DEFINE_CONSTANTS_CACHE(i32);
+DEFINE_CONSTANTS_CACHE(f16);
+DEFINE_CONSTANTS_CACHE(f32);
+
 static void create_data(ProgramBuilder& p, const ov::Shape& const_shape, const std::shared_ptr<ov::op::v0::Constant>& op, const ConstProperties& props) {
     cldnn::tensor constTensor = getConstTensor(const_shape);
     auto constFormat = cldnn::format::get_default_format(const_shape.size());
@@ -101,28 +129,81 @@ static void create_data(ProgramBuilder& p, const ov::Shape& const_shape, const s
         p.primitive_ids[initialconstPrimID] = constPrimID;
         p.profiling_ids.push_back(initialconstPrimID);
     } else {
-        cldnn::memory::ptr mem = nullptr;
-        if (constLayout.bytes_count() > 0) {
-            mem = p.get_engine().allocate_memory(constLayout, false);
+        auto allocate_new_mem = [&]() {
+            cldnn::memory::ptr mem = nullptr;
+            if (constLayout.bytes_count() > 0) {
+                mem = p.get_engine().allocate_memory(constLayout, false);
+            } else {
+                // In the case of empty const data with {0} shape, it has zero byte.
+                // To avoid zero byte memory allocation issue, reinterpret one dimension memory to zero dimension memory.
+                auto one_dim_layout = cldnn::layout(ov::PartialShape({1}), constLayout.data_type, constLayout.format);
+                auto one_dim_mem = p.get_engine().allocate_memory(one_dim_layout, false);
+                mem = p.get_engine().reinterpret_buffer(*one_dim_mem, constLayout);
+            }
+
+            GPU_DEBUG_LOG << "[" << initialconstPrimID << ": constant] layout: "
+                          << constLayout.to_short_string() << ", mem_ptr(" << mem << ", " << mem->size() << " bytes)"<< std::endl;
+            auto& stream = p.get_engine().get_service_stream();
+            cldnn::mem_lock<char> lock{mem, stream};
+            auto buf = lock.data();
+            auto bufSize = constLayout.bytes_count();
+
+            std::memcpy(&buf[0], &data[0], bufSize);
+            p.add_primitive(*op, cldnn::data(initialconstPrimID, mem));
+            p.blobMemCache[cache_key] = initialconstPrimID;
+            constPrimID = initialconstPrimID;
+
+            return mem;
+        };
+
+        auto reuse_mem = [&](cldnn::memory_ptr& mem) {
+            GPU_DEBUG_LOG << "[" << initialconstPrimID << ": constant] layout: "
+                          << constLayout.to_short_string() << ", mem_ptr(" << mem << ", " << mem->size() << " bytes)"<< std::endl;
+
+            auto updated_mem = p.get_engine().reinterpret_buffer(*mem, constLayout);
+
+            p.add_primitive(*op, cldnn::data(initialconstPrimID, updated_mem));
+            p.blobMemCache[cache_key] = initialconstPrimID;
+            constPrimID = initialconstPrimID;
+        };
+
+        size_t elements_count = ov::shape_size(const_shape);
+        if (elements_count <= MAX_ELEMENTS_NUM) {
+            switch (op->get_output_element_type(0)){
+                #define CONSTANTS_CACHE_CASE(OV_TYPE)                                                                                \
+                case ov::element::OV_TYPE: {                                                                                         \
+                    using DT = element_type_traits<element::Type_t::OV_TYPE>::value_type;                                            \
+                    std::array<DT, MAX_ELEMENTS_NUM> values{};                                                                       \
+                    std::stringstream debug_ss;                                                                                      \
+                    auto data = op->get_data_ptr<DT>();                                                                              \
+                    for (size_t i = 0; i < elements_count; i++) {                                                                    \
+                        values[i] = data[i];                                                                                         \
+                        debug_ss << " " << data[i];                                                                                  \
+                    }                                                                                                                \
+                                                                                                                                     \
+                    if (constants_cache_##OV_TYPE.find(values) != constants_cache_##OV_TYPE.end()) {                                 \
+                        GPU_DEBUG_TRACE_DETAIL << "Reuse const from cache " << initialconstPrimID << " for values:"                  \
+                                               << debug_ss.str() << "\n";                                                            \
+                        reuse_mem(constants_cache_##OV_TYPE[values]);                                                                \
+                    } else {                                                                                                         \
+                        GPU_DEBUG_TRACE_DETAIL << "Create new cache entry for " << initialconstPrimID << " for values:"              \
+                                               << debug_ss.str() << "\n";                                                            \
+                        auto allocated_mem = allocate_new_mem();                                                                     \
+                        constants_cache_##OV_TYPE.insert({values, allocated_mem});                                                   \
+                    }                                                                                                                \
+                    break;                                                                                                           \
+                }
+                CONSTANTS_CACHE_CASE(f32);
+                CONSTANTS_CACHE_CASE(f16);
+                CONSTANTS_CACHE_CASE(i32);
+                default: {
+                    allocate_new_mem();
+                    break;
+                }
+            }
         } else {
-            // In the case of empty const data with {0} shape, it has zero byte.
-            // To avoid zero byte memory allocation issue, reinterpret one dimension memory to zero dimension memory.
-            auto one_dim_layout = cldnn::layout(ov::PartialShape({1}), constLayout.data_type, constLayout.format);
-            auto one_dim_mem = p.get_engine().allocate_memory(one_dim_layout, false);
-            mem = p.get_engine().reinterpret_buffer(*one_dim_mem, constLayout);
+            allocate_new_mem();
         }
-
-        GPU_DEBUG_LOG << "[" << initialconstPrimID << ": constant] layout: "
-                        << constLayout.to_short_string() << ", mem_ptr(" << mem << ", " << mem->size() << " bytes)"<< std::endl;
-        auto& stream = p.get_engine().get_service_stream();
-        cldnn::mem_lock<char> lock{mem, stream};
-        auto buf = lock.data();
-        auto bufSize = constLayout.bytes_count();
-
-        std::memcpy(&buf[0], &data[0], bufSize);
-        p.add_primitive(*op, cldnn::data(initialconstPrimID, mem));
-        p.blobMemCache[cache_key] = initialconstPrimID;
-        constPrimID = initialconstPrimID;
     }
 }
 
