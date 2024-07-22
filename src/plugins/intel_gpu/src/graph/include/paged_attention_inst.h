@@ -23,7 +23,7 @@ public:
     program_node& key_cache() const { return get_dependency(3); }
     program_node& value_cache() const { return get_dependency(4); }
 
-    std::vector<size_t> get_shape_infer_dependencies() const override { return { 5 /* is_prompt */, 7 /* max_context_len */ }; }
+    // std::vector<size_t> get_shape_infer_dependencies() const override { return { 5 /* is_prompt */, 7 /* max_context_len */ }; }
 };
 
 using paged_attention_node = typed_program_node<paged_attention>;
@@ -48,6 +48,8 @@ public:
     std::shared_ptr<network> prefill_network;
 
 protected:
+    void on_execute() override;
+
     void update_shape_info_tensor(const kernel_impl_params& params) override;
 };
 

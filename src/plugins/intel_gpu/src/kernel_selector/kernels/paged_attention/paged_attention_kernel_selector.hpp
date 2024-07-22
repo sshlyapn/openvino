@@ -15,11 +15,11 @@ public:
     static kv_cache_update_kernel_selector& Instance();
 };
 
-class sdpa_kernel_selector : public kernel_selector_base {
+class pa_sdpa_kernel_selector : public kernel_selector_base {
 public:
-    sdpa_kernel_selector();
+    pa_sdpa_kernel_selector();
     KernelsData GetBestKernels(const Params& params) const override;
-    static sdpa_kernel_selector& Instance();
+    static pa_sdpa_kernel_selector& Instance();
 };
 
 }  // namespace kernel_selector

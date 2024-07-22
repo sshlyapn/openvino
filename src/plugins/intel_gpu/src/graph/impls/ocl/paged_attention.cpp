@@ -11,7 +11,8 @@
 #include "paged_attention_inst.h"
 #include "paged_attention/paged_attention_kernel_selector.hpp"
 #include "paged_attention/kv_cache_update_kernel_ref.hpp"
-#include "paged_attention/sdpa_kernel_ref.hpp"
+#include "sdpa/sdpa_kernel_base.h"
+#include "sdpa/sdpa_kernel_selector.h"
 
 namespace cldnn {
 namespace ocl {
@@ -66,18 +67,15 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         if (stage == Stage::KV_CACHE_UPDATE) {
             args.inputs = {  instance.input_memory_ptr(1),  /* key */
                              instance.input_memory_ptr(2),  /* value */
-                             instance.input_memory_ptr(6)   /* slot_mapping */};
+                             instance.input_memory_ptr(6)   /* subsequence_begins */};
             args.outputs = { instance.input_memory_ptr(3),  /* key_cache */
                              instance.input_memory_ptr(4)   /* value_cache */ };
         } else if (stage == Stage::SDPA) {
             if (kernel_idx == 0) {
                 args.inputs = { instance.input_memory_ptr(0), /* query */
-                                instance.input_memory_ptr(3), /* key_cache */
-                                instance.input_memory_ptr(4), /* value_cache */
-                                instance.input_memory_ptr(7), /* max_context_len */
-                                instance.input_memory_ptr(8), /* context_lens */
-                                instance.input_memory_ptr(9), /* block_tables */
-                                instance.input_memory_ptr(10) /* scale */ };
+                                instance.input_memory_ptr(1), /* key */
+                                instance.input_memory_ptr(2), /* value */
+                                instance.input_memory_ptr(6), /* subsequence_begins */ };
             } else {
                 args.inputs = { instance.input_memory_ptr(8), /* context_lens */ };
             }
@@ -86,6 +84,10 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
 
         return args;
     }
+
+    std::set<size_t> get_lockable_internal_buffers() const override {
+        return { 3, 4, 5 };
+    };
 
     void execute_stage(const std::vector<event::ptr>& events, paged_attention_inst& instance, std::vector<event::ptr>& all_events, size_t stage) {
         stream& stream = instance.get_network().get_stream();
@@ -148,53 +150,54 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         return aggregate_events(res_events, instance.get_network().get_stream(), res_events.size() > 1);
     }
 
-    static kernel_selector::sdpa_configuration get_sdpa_configuration(const kernel_impl_params& impl_param) {
-        kernel_selector::sdpa_configuration config;
 
-        const auto query_layout = impl_param.get_input_layout(0);
-        const auto key_cache_layout = impl_param.get_input_layout(3);
-        const auto value_cache_layout = impl_param.get_input_layout(4);
+    // static kernel_selector::sdpa_configuration get_sdpa_configuration_old(const kernel_impl_params& impl_param) {
+    //     kernel_selector::sdpa_configuration config;
 
-        const auto desc = impl_param.typed_desc<paged_attention>();
-        config.head_size = desc->head_size;
-        config.heads_num = desc->heads_num;
-        config.kv_heads_num = desc->kv_heads_num;
-        config.block_size = desc->block_size;
-        config.x_block_size = desc->x_block_size;
-        config.max_context_len = 1;
+    //     const auto query_layout = impl_param.get_input_layout(0);
+    //     const auto key_cache_layout = impl_param.get_input_layout(3);
+    //     const auto value_cache_layout = impl_param.get_input_layout(4);
 
-        if (!impl_param.is_dynamic()) {
-            auto query_shape = impl_param.get_input_layout(0).get_shape();
-            auto key_cache_shape = impl_param.get_input_layout(3).get_shape();
-            auto value_cache_shape = impl_param.get_input_layout(4).get_shape();
+    //     const auto desc = impl_param.typed_desc<paged_attention>();
+    //     config.head_size = desc->head_size;
+    //     config.heads_num = desc->heads_num;
+    //     config.kv_heads_num = desc->kv_heads_num;
+    //     config.block_size = desc->block_size;
+    //     config.x_block_size = desc->x_block_size;
+    //     config.max_context_len = 1;
 
-            auto actual_head_size = value_cache_shape[2];
-            auto actual_heads_num = query_shape[2] / actual_head_size;
-            auto actual_kv_heads_num = value_cache_shape[1];
-            auto actual_block_size = value_cache_shape[3];
-            auto actual_x_block_size = key_cache_shape[4];
+    //     if (!impl_param.is_dynamic()) {
+    //         auto query_shape = impl_param.get_input_layout(0).get_shape();
+    //         auto key_cache_shape = impl_param.get_input_layout(3).get_shape();
+    //         auto value_cache_shape = impl_param.get_input_layout(4).get_shape();
 
-            bool valid_params = config.head_size == actual_head_size &&
-                                config.heads_num == actual_heads_num &&
-                                config.kv_heads_num == actual_kv_heads_num &&
-                                config.block_size == actual_block_size &&
-                                config.x_block_size == actual_x_block_size;
+    //         auto actual_head_size = value_cache_shape[2];
+    //         auto actual_heads_num = query_shape[2] / actual_head_size;
+    //         auto actual_kv_heads_num = value_cache_shape[1];
+    //         auto actual_block_size = value_cache_shape[3];
+    //         auto actual_x_block_size = key_cache_shape[4];
 
-            OPENVINO_ASSERT(valid_params, "[GPU] Got unexpected parameters for PA operation. ",
-                            "Currently they need to be specified explicitly (this should be fixed soon by PA model conversion improvement). ",
-                            "Please use the following environment variables for proper PA configuration: ",
-                            "PA_HEAD_SIZE=", actual_head_size, " ",
-                            "PA_HEADS_NUM=", actual_heads_num, " ",
-                            "PA_KV_HEADS_NUM=", actual_kv_heads_num, " ",
-                            "PA_BLOCK_SIZE=", actual_block_size, " ",
-                            "PA_X_BLOCK_SIZE=", actual_x_block_size);
-        }
+    //         bool valid_params = config.head_size == actual_head_size &&
+    //                             config.heads_num == actual_heads_num &&
+    //                             config.kv_heads_num == actual_kv_heads_num &&
+    //                             config.block_size == actual_block_size &&
+    //                             config.x_block_size == actual_x_block_size;
 
-        const size_t simd_size = 16;
-        OPENVINO_ASSERT(config.head_size % simd_size == 0, "[GPU] Head size is expected to be divisible by 16");
+    //         OPENVINO_ASSERT(valid_params, "[GPU] Got unexpected parameters for PA operation. ",
+    //                         "Currently they need to be specified explicitly (this should be fixed soon by PA model conversion improvement). ",
+    //                         "Please use the following environment variables for proper PA configuration: ",
+    //                         "PA_HEAD_SIZE=", actual_head_size, " ",
+    //                         "PA_HEADS_NUM=", actual_heads_num, " ",
+    //                         "PA_KV_HEADS_NUM=", actual_kv_heads_num, " ",
+    //                         "PA_BLOCK_SIZE=", actual_block_size, " ",
+    //                         "PA_X_BLOCK_SIZE=", actual_x_block_size);
+    //     }
 
-        return config;
-    }
+    //     const size_t simd_size = 16;
+    //     OPENVINO_ASSERT(config.head_size % simd_size == 0, "[GPU] Head size is expected to be divisible by 16");
+
+    //     return config;
+    // }
 
     static kv_cache_update_kernel_params_t get_kv_cache_update_kernel_params(const kernel_impl_params& impl_param, bool is_dynamic = false) {
         kv_cache_update_kernel_params_t params;
@@ -205,20 +208,32 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         auto value = impl_param.get_input_layout(2);
         auto key_cache = impl_param.get_input_layout(3);
         auto value_cache = impl_param.get_input_layout(4);
-        auto slot_mapping = impl_param.get_input_layout(6);
+        auto subsequence_begins = impl_param.get_input_layout(6);
 
         params.is_shape_agnostic = is_dynamic;
-        params.stage_id = 0;
+        params.stage_id = 0; // TODO: can be removed
         params.inputs.resize(3);
         params.outputs.resize(2);
         params.inputs[0] = convert_data_tensor(key);
         params.inputs[1] = convert_data_tensor(value);
-        params.inputs[2] = convert_data_tensor(slot_mapping);
+        params.inputs[2] = convert_data_tensor(subsequence_begins);
         params.outputs[0] = convert_data_tensor(key_cache);
         params.outputs[1] = convert_data_tensor(value_cache);
-        params.layerID = impl_param.desc->id;
+        params.layerID = impl_param.desc->id; // TODO: can be removed
 
-        params.configuration = get_sdpa_configuration(impl_param);
+        // params.configuration = get_sdpa_configuration(impl_param);
+
+        params.configuration.block_size = 16;
+        params.configuration.x_block_size = 1;
+
+        const auto key_cache_shape = impl_param.get_input_layout(3).get_partial_shape();
+        if (key_cache_shape[2].is_static()) {
+            params.configuration.head_size = key_cache_shape[2].get_length();
+        }
+        if (key_cache_shape[1].is_static()) {
+            params.configuration.kv_heads_num = key_cache_shape[1].get_length();
+            params.configuration.heads_num = key_cache_shape[1].get_length();
+        }
 
         const auto& in_offsets_map = impl_param.in_port_to_shape_info_offset;
         std::map<size_t, size_t> in_tensor_to_offset_map = {
@@ -230,64 +245,61 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
             {0, in_offsets_map.at(3)},
             {1, in_offsets_map.at(4)},
         };
+        std::cout << "get_kv_cache_update_kernel_params[7]\n";
 
         params.set_dynamic_shape_offsets(in_tensor_to_offset_map, out_tensor_to_offset_map);
+        std::cout << "get_kv_cache_update_kernel_params[8]\n";
 
         return params;
     }
 
-    static sdpa_kernel_params_t get_sdpa_kernel_params(const kernel_impl_params& impl_param, bool is_dynamic = false) {
+    static kernel_selector::sdpa_configuration get_sdpa_configuration(const kernel_impl_params& impl_param) {
+        kernel_selector::sdpa_configuration config;
+
+        const auto key_cache_shape = impl_param.get_input_layout(3).get_partial_shape();
+        if (key_cache_shape[2].is_static())
+            config.head_size = key_cache_shape[2].get_length();
+
+        if (key_cache_shape[1].is_static())
+            config.heads_num = key_cache_shape[1].get_length();
+
+        config.is_causal = true;
+
+        const auto desc = impl_param.typed_desc<paged_attention>();
+        if (desc->scale_val.has_value()) {
+            config.has_scale_val = true;
+            config.scale_val = desc->scale_val.value();
+        }
+
+        return config;
+    }
+
+    static sdpa_kernel_params_t get_new_sdpa_kernel_params(const kernel_impl_params& impl_param, bool is_dynamic = false) {
         auto params = get_default_params<kernel_selector::sdpa_params>(impl_param, is_dynamic);
 
-        const auto inputs_count = 7;
         const auto query_layout = impl_param.get_input_layout(0);
-        const auto key_cache_layout = impl_param.get_input_layout(3);
-        const auto value_cache_layout = impl_param.get_input_layout(4);
-        const auto max_context_len_layout = impl_param.get_input_layout(7);
-        const auto context_lens_layout = impl_param.get_input_layout(8);
-        const auto block_tables_layout = impl_param.get_input_layout(9);
-        const auto scale_layout = impl_param.get_input_layout(10);
+        const auto key_layout = impl_param.get_input_layout(1);
+        const auto value_layout = impl_param.get_input_layout(2);
+        const auto subsequence_begins_layout = impl_param.get_input_layout(6);
 
+        const auto inputs_count = 4;
         params.inputs.resize(inputs_count);
-        params.inputs[1] = convert_data_tensor(key_cache_layout);
-        params.inputs[2] = convert_data_tensor(value_cache_layout);
-        params.inputs[3] = convert_data_tensor(max_context_len_layout);
-        params.inputs[4] = convert_data_tensor(context_lens_layout);
-        params.inputs[5] = convert_data_tensor(block_tables_layout);
-        params.inputs[6] = convert_data_tensor(scale_layout);
+        params.inputs[0] = convert_data_tensor(query_layout);
+        params.inputs[1] = convert_data_tensor(key_layout);
+        params.inputs[2] = convert_data_tensor(value_layout);
+        params.inputs[3] = convert_data_tensor(subsequence_begins_layout);
+        params.conf = get_sdpa_configuration(impl_param);
 
-        params.configuration = get_sdpa_configuration(impl_param);
-        if (!is_dynamic) {
-            auto& constant_mem = impl_param.memory_deps;
-
-            const auto max_context_len_mem = constant_mem.at(7);
-            mem_lock<int32_t, mem_lock_type::read> max_context_len_mem_lock(max_context_len_mem, impl_param.get_stream());
-
-            const auto is_prompt_stage_mem = constant_mem.at(5);
-            mem_lock<uint8_t, mem_lock_type::read> is_prompt_stage_mem_lock(is_prompt_stage_mem, impl_param.get_stream());
-            bool is_prompt_stage = is_prompt_stage_mem_lock[0];
-
-            if (is_prompt_stage) {
-                // Use number of slots for KV cache as a maximum context length for the first iteration
-                auto slot_mapping = impl_param.get_input_layout(6);
-                params.configuration.max_context_len = slot_mapping.get_shape()[1];
-            } else {
-                const auto max_context_len_mem = constant_mem.at(7);
-                mem_lock<int32_t, mem_lock_type::read> max_context_len_mem_lock(max_context_len_mem, impl_param.get_stream());
-                params.configuration.max_context_len = max_context_len_mem_lock[0];
-            }
-        }
+        params.is_paged_attention = true;
 
         const auto& in_offsets_map = impl_param.in_port_to_shape_info_offset;
         const auto& out_offsets_map = impl_param.out_port_to_shape_info_offset;
         std::map<size_t, size_t> in_tensor_to_offset_map = {
             {0, in_offsets_map.at(0)},
-            {1, in_offsets_map.at(3)},
-            {2, in_offsets_map.at(4)},
-            {3, in_offsets_map.at(7)},
-            {4, in_offsets_map.at(8)},
-            {5, in_offsets_map.at(9)},
-            {6, in_offsets_map.at(10)},
+            {1, in_offsets_map.at(1)},
+            {2, in_offsets_map.at(2)},
+            {3, in_offsets_map.at(6)},
+            {4, in_offsets_map.at(9)},
         };
         std::map<size_t, size_t> out_tensor_to_offset_map = {
             {0, out_offsets_map.at(0)},
@@ -298,13 +310,28 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         return params;
     }
 
+    static bool is_prefill_stage(const kernel_impl_params& impl_param) {
+        auto query_shape = impl_param.get_input_layout(0).get_partial_shape();
+        auto past_lens_shape = impl_param.get_input_layout(5).get_partial_shape();
+
+        if (query_shape.is_static() && past_lens_shape.is_static())
+            return query_shape[0].get_length() == past_lens_shape[0].get_length();
+
+        return false;
+    }
+
     static std::unique_ptr<primitive_impl> create(const typed_program_node<paged_attention>& arg, const kernel_impl_params& impl_param) {
         std::vector<kernel_selector::kernel_data> kernels_data;
+        std::cout << "Find kv cache update kernel\n";
         auto kv_cache_update_kernel_params = get_kv_cache_update_kernel_params(impl_param, impl_param.is_dynamic());
+        std::cout << "Find kv cache update kernel[2]\n";
+
         auto& kv_cache_update_kernel_selector = kv_cache_update_kernel_selector_t::Instance();
         kernels_data.push_back(kv_cache_update_kernel_selector.get_best_kernel(kv_cache_update_kernel_params));
 
-        auto sdpa_kernel_params = get_sdpa_kernel_params(impl_param, impl_param.is_dynamic());
+        std::cout << "Find sdpa kernel\n";
+        auto sdpa_kernel_params = get_new_sdpa_kernel_params(impl_param, impl_param.is_dynamic());
+        std::cout << "Find sdpa kernel[2]\n";
         auto& sdpa_kernel_selector = sdpa_kernel_selector_t::Instance();
         kernels_data.push_back(sdpa_kernel_selector.get_best_kernel(sdpa_kernel_params));
 
@@ -312,10 +339,30 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
     }
 
     void update_dispatch_data(const kernel_impl_params& impl_param) override {
+        const auto& input_mem = impl_param.memory_deps;
+
+        auto align_seq_len = [&](cldnn::mem_lock<int32_t, cldnn::mem_lock_type::read>& subsequence_begins, size_t target_seq_len_block_size = 16) {
+            int64_t aligned_seq_len = 0;
+            for (size_t i = 0; i < subsequence_begins.size() - 1; i++) {
+                auto prompt_length = subsequence_begins[i + 1] - subsequence_begins[i];
+                aligned_seq_len += align_to(prompt_length, target_seq_len_block_size);
+                std::cout << "Res: " << i << ", " << prompt_length << " " << target_seq_len_block_size << " " << align_to(prompt_length, target_seq_len_block_size) << "\n";
+            }
+
+            std::cout << "Aligned seq_len = " << aligned_seq_len << " size=" << subsequence_begins.size() << "\n";
+            return aligned_seq_len;
+        };
+
+        const auto subsequence_begins_mem = input_mem.at(6);
+        mem_lock<int32_t, mem_lock_type::read> subsequence_begins_mem_lock(subsequence_begins_mem, *impl_param.strm);
+
         auto kv_cache_update_kernel_params = get_kv_cache_update_kernel_params(impl_param, impl_param.is_dynamic());
+
         (_kernels_data[Stage::KV_CACHE_UPDATE].update_dispatch_data_func)(kv_cache_update_kernel_params, _kernels_data[Stage::KV_CACHE_UPDATE]);
 
-        auto sdpa_kernel_params = get_sdpa_kernel_params(impl_param, impl_param.is_dynamic());
+        auto sdpa_kernel_params = get_new_sdpa_kernel_params(impl_param, impl_param.is_dynamic());
+        sdpa_kernel_params.paged_attention_aligned_seq_len = align_seq_len(subsequence_begins_mem_lock);
+
         (_kernels_data[Stage::SDPA].update_dispatch_data_func)(sdpa_kernel_params, _kernels_data[Stage::SDPA]);
     }
 };

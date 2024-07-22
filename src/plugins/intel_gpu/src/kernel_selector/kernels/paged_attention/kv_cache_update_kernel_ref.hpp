@@ -17,7 +17,7 @@ enum class KernelMode {
 struct kv_cache_update_params : base_params {
     kv_cache_update_params() : base_params(KernelType::PA_KV_CACHE_UPDATE) {}
 
-    sdpa_configuration configuration;
+    pa_sdpa_configuration configuration;
 };
 
 class KVCacheUpdateKernelRef : public KernelBaseOpenCL {

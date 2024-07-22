@@ -86,6 +86,9 @@ struct sdpa_configuration {
     int64_t group_size = -1;
     int64_t broadcast_axis = -1;
 
+    bool has_scale_val = false;
+    float scale_val = 0.f;
+
     bool is_causal = false;
 };
 
@@ -100,6 +103,9 @@ struct sdpa_params : public base_params {
     std::vector<int64_t> input2_order;
     std::vector<int64_t> output_order;
     int64_t indirect_axis = -1;
+
+    bool is_paged_attention = false;
+    int64_t paged_attention_aligned_seq_len = -1;
 
     DataTensor beam_table;
 

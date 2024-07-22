@@ -35,7 +35,7 @@ std::string convert_to(const std::string &str) {
 
 void SDPAKernelRef::GetUpdateDispatchDataFunc(KernelData& kd) const {
     kd.update_dispatch_data_func = [](const Params& params, KernelData& kd) {
-        const auto& prim_params = dynamic_cast<const sdpa_params&>(params);
+        const auto& prim_params = dynamic_cast<const pa_sdpa_params&>(params);
         bool use_seq_len_split = false;
         if (const auto env_var = std::getenv("USE_SPLIT")) {
             use_seq_len_split = convert_to<bool>(env_var);
@@ -98,11 +98,11 @@ KernelsData SDPAKernelRef::GetKernelsData(const Params& params) const {
         printed = true;
     }
     const uint kernels_num = use_seq_len_split ? 2 : 1;
-    KernelData kd = KernelData::Default<sdpa_params>(params, kernels_num);
+    KernelData kd = KernelData::Default<pa_sdpa_params>(params, kernels_num);
     kd.needs_sub_kernels_sync = true;
     GetUpdateDispatchDataFunc(kd);
 
-    const auto& kernel_params = static_cast<const sdpa_params&>(params);
+    const auto& kernel_params = static_cast<const pa_sdpa_params&>(params);
 
     for (size_t i = 0; i < kernels_num; i++) {
         const auto dispatch_data = SetDefault(kernel_params);
@@ -181,7 +181,7 @@ bool SDPAKernelRef::Validate(const Params& params) const {
         return false;
     }
 
-    const auto& kernel_params = dynamic_cast<const sdpa_params&>(params);
+    const auto& kernel_params = dynamic_cast<const pa_sdpa_params&>(params);
     if (seq_len_portion_size % kernel_params.configuration.block_size != 0)
         return false;
 
@@ -195,7 +195,7 @@ bool SDPAKernelRef::Validate(const Params& params) const {
     return true;
 }
 
-JitConstants SDPAKernelRef::GetJitConstants(const sdpa_params& kernel_params) const {
+JitConstants SDPAKernelRef::GetJitConstants(const pa_sdpa_params& kernel_params) const {
     JitConstants jit = MakeBaseParamsJitConstants(kernel_params);
 
     const auto& config = kernel_params.configuration;
@@ -223,7 +223,7 @@ JitConstants SDPAKernelRef::GetJitConstants(const sdpa_params& kernel_params) co
     return jit;
 }
 
-CommonDispatchData SDPAKernelRef::SetDefault(const sdpa_params& kernel_params, size_t kernel_idx) {
+CommonDispatchData SDPAKernelRef::SetDefault(const pa_sdpa_params& kernel_params, size_t kernel_idx) {
     CommonDispatchData dispatch_data;
 
     bool use_seq_len_split = false;

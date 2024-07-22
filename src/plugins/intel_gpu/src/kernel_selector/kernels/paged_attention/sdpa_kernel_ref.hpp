@@ -8,7 +8,7 @@
 
 namespace kernel_selector {
 
-struct sdpa_configuration {
+struct pa_sdpa_configuration {
     // Configures layout of key/value cache as follow:
     // key_cache: [preallocated_blocks_num, kv_heads_num, head_size / x, block_size, x]
     // value_cache: [preallocated_blocks_num, kv_heads_num, head_size, block_size]
@@ -20,10 +20,10 @@ struct sdpa_configuration {
     size_t max_context_len;
 };
 
-struct sdpa_params : base_params {
-    sdpa_params() : base_params(KernelType::PA_SDPA) {}
+struct pa_sdpa_params : base_params {
+    pa_sdpa_params() : base_params(KernelType::PA_SDPA) {}
 
-    sdpa_configuration configuration;
+    pa_sdpa_configuration configuration;
 };
 
 class SDPAKernelRef : public KernelBaseOpenCL {
@@ -38,8 +38,8 @@ public:
 
 protected:
     bool Validate(const Params& params) const override;
-    JitConstants GetJitConstants(const sdpa_params& kernel_params) const;
-    static CommonDispatchData SetDefault(const sdpa_params& kernel_params, size_t kernel_idx = 0);
+    JitConstants GetJitConstants(const pa_sdpa_params& kernel_params) const;
+    static CommonDispatchData SetDefault(const pa_sdpa_params& kernel_params, size_t kernel_idx = 0);
     void GetUpdateDispatchDataFunc(KernelData& kd) const override;
 };
 

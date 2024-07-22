@@ -11,7 +11,7 @@ namespace kernel_selector {
 
 constexpr size_t SIMD_SIZE = 16;
 constexpr size_t BLOCK_SIZE = 16;
-constexpr size_t X_BLOCK_SIZE = 8;
+constexpr size_t X_BLOCK_SIZE = 1;
 
 void KVCacheUpdateKernelRef::GetUpdateDispatchDataFunc(KernelData& kd) const {
     kd.update_dispatch_data_func = [](const Params& params, KernelData& kd) {
@@ -30,6 +30,7 @@ void KVCacheUpdateKernelRef::GetUpdateDispatchDataFunc(KernelData& kd) const {
 
 KernelsData KVCacheUpdateKernelRef::GetKernelsData(const Params& params) const {
     if (!Validate(params)) {
+        std::cout << "False[4]\n";
         return {};
     }
 
@@ -61,6 +62,7 @@ KernelsData KVCacheUpdateKernelRef::GetKernelsData(const Params& params) const {
                          kernel_params.is_shape_agnostic);
     }
 
+    std::cout << "Ok[2]\n";
     return {kd};
 }
 
@@ -85,15 +87,20 @@ ParamsKey KVCacheUpdateKernelRef::GetSupportedKey() const {
 
 bool KVCacheUpdateKernelRef::Validate(const Params& params) const {
     if (params.GetType() != KernelType::PA_KV_CACHE_UPDATE) {
+        std::cout << "False[1]\n";
         return false;
     }
 
     const auto& kernel_params = dynamic_cast<const kv_cache_update_params&>(params);
-    if (kernel_params.inputs.size() != 3)
+    if (kernel_params.inputs.size() != 3) {
+        std::cout << "False[2]\n";
         return false;
+    }
 
-    if (kernel_params.outputs.size() != 2)
+    if (kernel_params.outputs.size() != 2) {
+        std::cout << "False[3]\n";
         return false;
+    }
 
     return true;
 }
@@ -113,16 +120,19 @@ JitConstants KVCacheUpdateKernelRef::GetJitConstants(const kv_cache_update_param
     const auto block_stride = config.block_size * config.head_size * config.kv_heads_num;
     jit.AddConstant(MakeJitConstant("CACHE_BLOCK_STRIDE", block_stride));
 
+    std::cout << "Ok[1]\n";
     return jit;
 }
 
 CommonDispatchData KVCacheUpdateKernelRef::SetDefault(const kv_cache_update_params& kernel_params) {
     CommonDispatchData dispatch_data;
 
-    const auto& input = kernel_params.inputs[0];
+    // const auto& input = kernel_params.inputs[0];
     const auto& key_cache = kernel_params.outputs[0];
     const auto& value_cache = kernel_params.outputs[1];
     if (!value_cache.is_dynamic() && !key_cache.is_dynamic()) {
+        std::cout << "False[5] " << (kernel_params.configuration.block_size == BLOCK_SIZE) << "\n";
+        std::cout << "False[6] " << (kernel_params.configuration.x_block_size == X_BLOCK_SIZE) << "\n";
         OPENVINO_ASSERT(kernel_params.configuration.block_size == BLOCK_SIZE,
                         "[GPU] Unexpected BLOCK_SIZE in kv_cache_update kernel, expected ", BLOCK_SIZE,
                         " got ", kernel_params.configuration.block_size);
@@ -130,13 +140,16 @@ CommonDispatchData KVCacheUpdateKernelRef::SetDefault(const kv_cache_update_para
                         "[GPU] Unexpected X_BLOCK_SIZE in kv_cache_update kernel, expected ", X_BLOCK_SIZE,
                         " got ", kernel_params.configuration.x_block_size);
 
-        const size_t batch_size = input.Batch().v;
-        const size_t seq_len = input.Feature().v;
-        const size_t hidden_size = kernel_params.configuration.head_size * kernel_params.configuration.kv_heads_num;
-        dispatch_data.gws = {batch_size, seq_len, hidden_size};
+        // const size_t batch_size = input.Batch().v;
+        // const size_t seq_len = input.Feature().v;
+        // const size_t hidden_size = kernel_params.configuration.head_size * kernel_params.configuration.kv_heads_num;
+        // dispatch_data.gws = {batch_size, seq_len, hidden_size};
+        // dispatch_data.lws = {1, 1, SIMD_SIZE};
+        dispatch_data.gws = {1, 1, SIMD_SIZE};
         dispatch_data.lws = {1, 1, SIMD_SIZE};
     }
 
+    std::cout << "Ok[0] " << kernel_params.is_shape_agnostic << "\n";
     return dispatch_data;
 }
 

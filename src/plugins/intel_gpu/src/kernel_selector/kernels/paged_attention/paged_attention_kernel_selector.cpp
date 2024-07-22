@@ -21,16 +21,16 @@ kv_cache_update_kernel_selector& kv_cache_update_kernel_selector::Instance() {
     return instance;
 }
 
-sdpa_kernel_selector::sdpa_kernel_selector() {
+pa_sdpa_kernel_selector::pa_sdpa_kernel_selector() {
     Attach<SDPAKernelRef>();
 }
 
-KernelsData sdpa_kernel_selector::GetBestKernels(const Params& params) const {
+KernelsData pa_sdpa_kernel_selector::GetBestKernels(const Params& params) const {
     return GetNaiveBestKernel(params, KernelType::PA_SDPA);
 }
 
-sdpa_kernel_selector& sdpa_kernel_selector::Instance() {
-    static sdpa_kernel_selector instance;
+pa_sdpa_kernel_selector& pa_sdpa_kernel_selector::Instance() {
+    static pa_sdpa_kernel_selector instance;
     return instance;
 }
 
