@@ -43,6 +43,15 @@ add_definitions(-DCL_TARGET_OPENCL_VERSION=${INTEL_GPU_TARGET_OCL_VERSION})
 set(MAIN_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 set(INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
+list(APPEND CMAKE_PREFIX_PATH "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/")
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/")
+
+find_package(LevelZero)
+if(NOT LevelZero_FOUND)
+  message(STATUS "Level zero headers not found")
+  message(STATUS "Skipping level zero")
+endif()
+
 add_subdirectory(thirdparty)
 include(thirdparty/cmake/rapidjson.cmake)
 

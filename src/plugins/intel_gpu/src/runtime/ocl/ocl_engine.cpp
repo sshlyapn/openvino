@@ -13,6 +13,9 @@
 #include <set>
 #include <stdexcept>
 
+#include <level_zero/ze_api.h>
+#include <level_zero/zes_api.h>
+
 // NOTE: Due to buggy scope transition of warnings we need to disable warning in place of use/instantation
 //       of some types (even though we already disabled them in scope of definition of these types).
 //       Moreover this warning is pretty much now only for annoyance: it is generated due to lack
@@ -45,6 +48,14 @@ OPENVINO_SUPPRESS_DEPRECATED_END
 
 ocl_engine::ocl_engine(const device::ptr dev, runtime_types runtime_type)
     : engine(dev) {
+    std::cout << "Create engine call\n";
+    if (zeInit(ze_init_flag_t::ZE_INIT_FLAG_GPU_ONLY) != ZE_RESULT_SUCCESS) {
+        std::cout << "Can't initialize the API" << "\n";
+    } else {
+        std::cout << "Level zero is initialized" << "\n";
+
+    }
+
     OPENVINO_ASSERT(runtime_type == runtime_types::ocl, "[GPU] Invalid runtime type specified for OCL engine. Only OCL runtime is supported");
 
     auto casted = dynamic_cast<ocl_device*>(dev.get());
@@ -188,6 +199,53 @@ memory::ptr ocl_engine::allocate_memory(const layout& layout, allocation_type ty
             auto ev = res->fill(get_service_stream());
             if (ev) {
                 get_service_stream().wait_for_events({ev});
+            }
+        }
+
+
+        uint32_t driversCount = 0;
+        zeDriverGet(&driversCount, nullptr);
+        std::vector<ze_driver_handle_t> allDrivers(driversCount);
+        zeDriverGet(&driversCount, allDrivers.data());
+
+        std::cout << "driversCount " << driversCount << "\n";
+
+        if (driversCount >= 1) {
+            uint32_t deviceCount = 0;
+            zeDeviceGet(allDrivers[0], &deviceCount, nullptr);
+            std::cout << "deviceCount " << deviceCount << "\n";
+
+            std::vector<ze_device_handle_t> allDevices(deviceCount);
+            zeDeviceGet(allDrivers[0], &deviceCount, allDevices.data());
+
+            for (size_t device_idx = 0; device_idx < deviceCount; device_idx++) {
+                std::cout << "Try to get prop for " << device_idx << "\n";
+
+                ze_device_properties_t device_properties;
+                zeDeviceGetProperties(allDevices[device_idx], &device_properties);
+
+                std::cout << "Device id: " << device_properties.deviceId
+                            << ", clock " << device_properties.coreClockRate
+                            << ", numThreadsPerEU " << device_properties.numThreadsPerEU << "\n";
+
+                if (22176 == device_properties.deviceId) {
+                    zes_device_handle_t hSysmanDevice = (zes_device_handle_t)allDevices[device_idx];
+
+                    uint32_t memComponentCount = 0;
+                    zesDeviceEnumMemoryModules(hSysmanDevice, &memComponentCount, nullptr);
+
+                    std::cout << "memComponentCount " << memComponentCount << "\n";
+                    std::vector<zes_mem_handle_t> memComponents(memComponentCount);
+                    zesDeviceEnumMemoryModules(hSysmanDevice, &memComponentCount, memComponents.data());
+
+                    if (memComponentCount >= 1) {
+                        zes_mem_state_t mem_stat;
+
+                        zesMemoryGetState(memComponents[0], &mem_stat);
+
+                        std::cout << "Memory stat: " << mem_stat.free << " " << mem_stat.size << " " << mem_stat.health << " " << mem_stat.stype << "\n";
+                    }
+                }
             }
         }
 

@@ -50,6 +50,7 @@ target_link_libraries(${TARGET_NAME} PRIVATE
     OpenCL::OpenCL
     openvino::itt
     openvino::runtime::dev
+    ze_loader
   )
 
 if(ENABLE_ONEDNN_FOR_GPU)
