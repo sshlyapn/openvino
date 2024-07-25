@@ -12,6 +12,10 @@
 #include "openvino/pass/constant_folding.hpp"
 #include "transformations/rt_info/disable_fp16_compression.hpp"
 
+#include "ov_ops/rotary_positional_embeddings.hpp"
+#include "ov_ops/rms.hpp"
+#include "openvino/op/scaled_dot_product_attention.hpp"
+
 using namespace ov;
 
 bool ov::pass::AlignMixedFP32FP16Types::run_on_model(const std::shared_ptr<ov::Model>& model) {
@@ -35,14 +39,20 @@ bool ov::pass::AlignMixedFP32FP16Types::run_on_model(const std::shared_ptr<ov::M
                 const auto& incoming_output = input.get_source_output();
                 const auto& incoming_node = incoming_output.get_node_shared_ptr();
 
-                if (fp16_compression_is_disabled(incoming_node))
-                    continue;  // we are in the middle
+                auto desired_type = incoming_output.get_element_type();
+                if (!m_custom_run) {
+                    if (fp16_compression_is_disabled(incoming_node))
+                        continue;  // we are in the middle
 
-                if (!incoming_output.get_element_type().is_real())
-                    continue;
+                    if (!incoming_output.get_element_type().is_real())
+                        continue;
+                } else {
+                    desired_type = ov::element::f32;
+                    std::cout << "Skip rope and add Convert before " << node->get_friendly_name() << "\n";
+                }
 
                 auto convert =
-                    std::make_shared<ov::op::v0::Convert>(incoming_output, incoming_output.get_element_type());
+                    std::make_shared<ov::op::v0::Convert>(incoming_output, desired_type);
                 auto init_name = incoming_node->get_friendly_name() + "_decompressed_to_f32";
                 convert->set_friendly_name(generate_uniq_name(init_name));
                 copy_runtime_info(incoming_node, convert);
@@ -60,10 +70,29 @@ bool ov::pass::AlignMixedFP32FP16Types::run_on_model(const std::shared_ptr<ov::M
             for (const auto& output : node->outputs()) {
                 for (const auto& out_inputs : output.get_target_inputs()) {
                     auto out_node = out_inputs.get_node()->shared_from_this();
-                    if (fp16_compression_is_disabled(out_node) || is_precision_sensitive(out_inputs))
-                        continue;
-                    if (!out_inputs.get_element_type().is_real())
-                        continue;
+
+                    auto desired_type = out_inputs.get_element_type();
+                    if (!m_custom_run) {
+                        if (fp16_compression_is_disabled(out_node) || is_precision_sensitive(out_inputs))
+                            continue;
+                        if (!out_inputs.get_element_type().is_real())
+                            continue;
+                    } else {
+                        // auto outputs_num = node->outputs().size();
+
+                        if (auto ptr = std::dynamic_pointer_cast<ov::op::internal::RMS>(node)) {
+                            ptr->set_custom_output_type(ov::element::f32);
+                        }
+                        desired_type = ov::element::f16;
+
+                        std::stringstream ss;
+
+                        for (auto& item : node->get_rt_info()) {
+                            ss << item.first << " " << item.second.as<std::string>() << "\n";
+                        }
+
+                        std::cout << "Skip rope and add Convert after " << node->get_friendly_name() << " " << ss.str() << "\n";
+                    }
 
                     // todo xxx-101766: if we don't skip Results there is an error on GPU
                     if (std::dynamic_pointer_cast<ov::op::v0::Result>(out_node))
@@ -71,7 +100,7 @@ bool ov::pass::AlignMixedFP32FP16Types::run_on_model(const std::shared_ptr<ov::M
 
                     // element_type of this convert will be changed automatically to f16 after
                     // ConvertPrecision(f32 -> f16). It's kept here f32 to keep ov::Model validatable
-                    auto convert = std::make_shared<ov::op::v0::Convert>(output, out_inputs.get_element_type());
+                    auto convert = std::make_shared<ov::op::v0::Convert>(output, desired_type);
                     copy_runtime_info(node, convert);
                     auto init_name = node->get_friendly_name() + "_compressed_to_f16";
                     convert->set_friendly_name(generate_uniq_name(init_name));
@@ -85,8 +114,13 @@ bool ov::pass::AlignMixedFP32FP16Types::run_on_model(const std::shared_ptr<ov::M
 
     bool is_changed = false;
     for (auto& node : model->get_ordered_ops()) {
-        if (!fp16_compression_is_disabled(node))
+        if (m_custom_run && !std::dynamic_pointer_cast<ov::op::internal::RoPE>(node) && !std::dynamic_pointer_cast<ov::op::internal::RMS>(node))
             continue;
+
+        if (!m_custom_run) {
+            if (!fp16_compression_is_disabled(node))
+                continue;
+        }
 
         is_changed = insert_converts_before_if_needed(node) || is_changed;
         is_changed = insert_converts_after_if_needed(node) || is_changed;

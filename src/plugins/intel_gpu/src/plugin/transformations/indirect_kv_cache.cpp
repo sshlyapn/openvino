@@ -211,11 +211,56 @@ IndirectSDPAOpt::IndirectSDPAOpt() {
                                                                                order_in2,
                                                                                order_out);
 
+        std::unordered_set<std::string> new_friendly_names;
+
+        auto generate_uniq_name = [&new_friendly_names](const std::string& initial_name) {
+            int idx = 0;
+            auto cur_name = initial_name;
+            while (new_friendly_names.find(cur_name) != new_friendly_names.end()) {
+                cur_name = initial_name + ":" + std::to_string(idx++);
+            }
+            new_friendly_names.insert(cur_name);
+            return cur_name;
+        };
+
+        for (const auto& input : indirect_sdpa->inputs()) {
+            const auto& incoming_output = input.get_source_output();
+            const auto& incoming_node = incoming_output.get_node_shared_ptr();
+
+            auto desired_type = ov::element::f32;
+            auto convert =
+                std::make_shared<ov::op::v0::Convert>(incoming_output, desired_type);
+            auto init_name = incoming_node->get_friendly_name() + "_decompressed_to_f32";
+            convert->set_friendly_name(generate_uniq_name(init_name));
+            input.replace_source_output(convert);
+            disable_fp16_compression(convert);
+            pass::disable_constant_folding(convert);
+        }
+
         OPENVINO_ASSERT(indirect_sdpa != nullptr);
 
         indirect_sdpa->set_friendly_name(sdpa->get_friendly_name());
         ov::copy_runtime_info(sdpa, indirect_sdpa);
         ov::replace_node(sdpa, indirect_sdpa);
+
+        for (const auto& output : indirect_sdpa->outputs()) {
+            for (const auto& out_inputs : output.get_target_inputs()) {
+                auto out_node = out_inputs.get_node()->shared_from_this();
+
+                auto desired_type = out_inputs.get_element_type();
+                // auto outputs_num = node->outputs().size();
+
+                desired_type = ov::element::f16;
+
+                // element_type of this convert will be changed automatically to f16 after
+                // ConvertPrecision(f32 -> f16). It's kept here f32 to keep ov::Model validatable
+                auto convert = std::make_shared<ov::op::v0::Convert>(output, desired_type);
+                auto init_name = indirect_sdpa->get_friendly_name() + "_compressed_to_f16";
+                convert->set_friendly_name(generate_uniq_name(init_name));
+                out_inputs.replace_source_output(convert);
+                pass::disable_constant_folding(convert);
+            }
+        }
 
         return true;
     };

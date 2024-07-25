@@ -43,6 +43,10 @@ public:
         m_epsilon = epsilon;
     }
 
+    void set_custom_output_type(ov::element::Type t) {
+        m_output_type = t;
+    }
+
 private:
     double m_epsilon{0};
     ov::element::Type m_output_type;

@@ -22,6 +22,9 @@ static void CreateRMSOp(ProgramBuilder& p, const std::shared_ptr<RMS>& op) {
                           inputs[1],
                           op->get_epsilon());
     rms.output_data_types = get_output_data_types(op);
+
+    std::cout << "Create RMS ops: " << op->get_output_element_type(0) << "\n";
+
     p.add_primitive(*op, rms);
 }
 
