@@ -1665,7 +1665,7 @@ event::ptr primitive_inst::execute(const std::vector<event::ptr>& events) {
     };
 
     // Output buffer may be changed under the following conditions, so we need to set args to kernel on each iteration
-    if ((is_dynamic() && need_args_update) || has_mutable_input() || is_output() || has_dynamic_dependencies_insts(this)) {
+    if (!use_cloning || (is_dynamic() && need_args_update) || has_mutable_input() || is_output() || has_dynamic_dependencies_insts(this)) {
         set_arguments();
     }
     on_execute();
@@ -1806,6 +1806,15 @@ primitive_inst::primitive_inst(network & network, program_node const& node, bool
     if (allocate_memory && node.is_dynamic() && (!engine.check_allocatable(output_layout, engine.get_lockable_preferred_memory_allocation_type(false)))) {
         allocate_memory = false;
     }
+    int DISABLE_KERNELS_CLONING = 0;
+    if (const auto env_var = std::getenv("DISABLE_KERNELS_CLONING")) {
+        std::istringstream ss(env_var);
+        ss >> DISABLE_KERNELS_CLONING;
+    }
+
+    if (DISABLE_KERNELS_CLONING)
+        use_cloning = false;
+
     _mem_allocated = allocate_memory;
     if (!_mem_allocated && (node.is_dynamic() && _outputs_memory_count > 1)) {
         auto available_allocate_memory = [&](std::vector<cldnn::layout>& layouts) -> bool {

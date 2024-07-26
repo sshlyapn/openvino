@@ -52,7 +52,10 @@ struct typed_primitive_impl_ocl : public typed_primitive_impl<PType> {
     , _kernels({}) {
         _kernels.reserve(other._kernels.size());
         for (size_t k = 0; k < other._kernels.size(); ++k) {
-            _kernels.emplace_back(other._kernels[k]->clone());
+            if (other._kernels[k]->use_cloning)
+                _kernels.emplace_back(other._kernels[k]->clone());
+            else
+                _kernels.emplace_back(other._kernels[k]);
         }
         this->can_reuse_memory = _kernel_data.can_reuse_memory;
     }

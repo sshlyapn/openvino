@@ -22,7 +22,16 @@ class ocl_kernel : public kernel {
 public:
     ocl_kernel(ocl_kernel_type compiled_kernel, const std::string& kernel_id)
         : _compiled_kernel(compiled_kernel)
-        , _kernel_id(kernel_id) { }
+        , _kernel_id(kernel_id) {
+            int DISABLE_KERNELS_CLONING = 0;
+            if (const auto env_var = std::getenv("DISABLE_KERNELS_CLONING")) {
+                std::istringstream ss(env_var);
+                ss >> DISABLE_KERNELS_CLONING;
+            }
+
+            if (DISABLE_KERNELS_CLONING)
+                use_cloning = false;
+        }
 
     std::string get_id() const override { return _kernel_id; }
     const ocl_kernel_type& get_handle() const { return _compiled_kernel; }

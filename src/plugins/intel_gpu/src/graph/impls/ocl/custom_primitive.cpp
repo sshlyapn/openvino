@@ -40,7 +40,10 @@ struct custom_gpu_primitive_impl : typed_primitive_impl<custom_gpu_primitive> {
     : cl_kernel(other.cl_kernel)
     , _kernels({}) {
         for (const auto& kernel : other._kernels) {
-            _kernels.emplace_back(kernel->clone());
+            if (kernel->use_cloning)
+                _kernels.emplace_back(kernel->clone());
+            else
+                _kernels.emplace_back(kernel);
         }
     }
 

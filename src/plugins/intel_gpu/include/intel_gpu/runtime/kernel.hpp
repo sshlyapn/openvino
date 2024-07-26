@@ -21,6 +21,8 @@ public:
     virtual ~kernel() = default;
     virtual std::string get_id() const { return ""; }
 
+    bool use_cloning = true;
+
 #ifdef GPU_DEBUG_CONFIG
     struct kernel_properties {
         uint64_t local_mem_size = 0;

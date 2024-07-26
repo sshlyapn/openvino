@@ -139,6 +139,8 @@ class primitive_inst {
     friend class typed_primitive_inst;
 
 public:
+    bool use_cloning = true;
+
     primitive_inst(network& network);
     virtual ~primitive_inst() = default;
 
