@@ -629,6 +629,14 @@ void SDPAKernelMicro::GetUpdateDispatchDataFunc(KernelData& kd) const {
 }
 
 KernelsPriority SDPAKernelMicro::GetKernelsPriority(const Params& /*params*/) const {
+    int DISABLE_MICRO = 0;
+    if (const auto env_var = std::getenv("DISABLE_MICRO")) {
+        std::istringstream ss(env_var);
+        ss >> DISABLE_MICRO;
+    }
+
+    if (DISABLE_MICRO)
+        return FORCE_PRIORITY_6;
     return FORCE_PRIORITY_1;
 }
 }  // namespace kernel_selector
