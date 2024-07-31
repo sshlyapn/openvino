@@ -1095,6 +1095,12 @@ void network::execute_impl(const std::vector<event::ptr>& events) {
                     auto input_mem = get_primitive(inst->id())->dep_memory_ptr(i);
                     auto dep = inst->dependencies().at(i);
                     auto input_layout = dep.first->get_output_layout(dep.second);
+
+                    if (dep.first->is_constant() && input_layout.count() > 1024 * 256 * 4) {
+                        std::cout << "Skip " << dep.first->id() << " as a large const\n";
+                        continue;
+                    }
+
                     GPU_DEBUG_IF(debug_config->dump_layers_binary) {
                         // Binary dump : raw
                         auto filename = get_file_path_for_binary_dump(input_layout, name);

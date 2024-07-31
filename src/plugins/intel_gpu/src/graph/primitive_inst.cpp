@@ -280,6 +280,9 @@ void primitive_inst::update_shape() {
         auto idx = _deps[i].second;
         auto new_shape = _deps[i].first->_impl_params->get_output_layout(idx);
         if (_impl_params->get_input_layout(i) != new_shape) {
+            if (_node && _node->is_type<rope>()) {
+                GPU_DEBUG_TRACE_DETAIL << "New input " << i << " (from " << _deps[i].first->id() << "): " << new_shape.to_string() << "\n";
+            }
             GPU_DEBUG_TRACE_DETAIL << id() << ": update shape dep [" << i << "] : " << _deps[i].first->id()
                                    << " was: " << _impl_params->get_input_layout(i).to_short_string()
                                    << " now: " << new_shape.to_short_string() << std::endl;
@@ -923,6 +926,16 @@ void primitive_inst::fill_shape_info_data(const layout& runtime_layout, const la
         shape_info_ptr[offset++] = static_cast<int32_t>(shape_with_max_rank[j]);
     }
     auto dynamic_pad = node_layout.data_padding.get_dynamic_pad_dims().sizes(shape_info_fmt);
+    auto print_arr = [&](std::vector<int32_t> vec, size_t max_len) {
+        std::stringstream ss;
+        for (size_t i = 0; i < std::min(max_len, vec.size()); i++) {
+            ss << vec[i] << ", ";
+        }
+        GPU_DEBUG_TRACE_DETAIL << "Original dynamic_pad (len=" << vec.size() << ") content: " << ss.str() << "\n";
+    };
+
+    print_arr(dynamic_pad, dynamic_pad.size());
+
     const auto& data_padding = runtime_layout.data_padding;
     auto lower_pads = data_padding.lower_size().sizes(shape_info_fmt);
     auto upper_pads = data_padding.upper_size().sizes(shape_info_fmt);
@@ -1490,7 +1503,7 @@ void primitive_inst::do_runtime_in_place_crop() {
                 u->update_shape_done_by_other = true;
 
                 const auto& crop_users = u->get_user_insts();
-                std::vector<layout> reshape_layouts;
+                std::pair<const program_node*, layout> user_info;
                 if (crop_users.front()->get_node().is_type<reshape>()) {
                     OPENVINO_ASSERT(crop_users.size() == 1, "[GPU] Expected number of reshape users is 1, but it is ", crop_users.size());
                     auto reshape_inst = crop_users.front();
@@ -1498,7 +1511,8 @@ void primitive_inst::do_runtime_in_place_crop() {
                         GPU_DEBUG_TRACE_DETAIL << "[In place crop] update shape for " << reshape_inst->id() << std::endl;
                         reshape_inst->update_shape();
                         reshape_inst->update_shape_done_by_other = true;
-                        reshape_layouts.push_back(reshape_inst->_impl_params->get_output_layout());
+                        user_info.first = &reshape_inst->get_node();
+                        user_info.second = reshape_inst->_impl_params->get_output_layout();
                     }
                 }
 
@@ -1515,11 +1529,24 @@ void primitive_inst::do_runtime_in_place_crop() {
                 if (crop_in_place_optimization::can_crop_be_optimized_along_feature(crop_layout, pred_layout)) {
                     crop_in_place_optimization::update_in_place_crop_padding_along_feature(u->get_node(), crop_layout, pred_layout, offsets, crop_axis, true);
                 } else if (crop_in_place_optimization::can_crop_be_optimized_simple_data_format(crop_layout, pred_layout)) {
-                    crop_in_place_optimization::update_in_place_crop_padding_simple_data_format(crop_layout, pred_layout, reshape_layouts,
-                                                                                                offsets, crop_axis, true);
-                    if (crop_users.front()->get_node().is_type<reshape>() && reshape_layouts.size() > 0) {
+                    if (user_info.first) {
+                        GPU_DEBUG_TRACE_DETAIL << "Crop axis=" << crop_axis << " pred=" << pred_layout.to_short_string() << " crop=" << crop_layout.to_short_string()
+                        << " reshape=" << user_info.second.to_short_string() << " offsets=" << offsets.to_string() << "\n";
+                    } else {
+                        GPU_DEBUG_TRACE_DETAIL << "Crop axis=" << crop_axis << " pred=" << pred_layout.to_short_string() << " crop=" << crop_layout.to_short_string()
+                        << " offsets=" << offsets.to_string() << "\n";
+                    }
+
+                    std::vector<const program_node*> user_nodes;
+                    for (auto& crop_user : crop_users) {
+                        user_nodes.push_back(&crop_user->get_node());
+                    }
+
+                    crop_in_place_optimization::update_in_place_crop_padding_simple_data_format(crop_layout, pred_layout, user_info, offsets, crop_axis, true);
+                    if (user_info.first) {
                         auto reshape_inst = crop_users.front();
-                        reshape_inst->_impl_params->output_layouts[0] = reshape_layouts[0];
+                        reshape_inst->_impl_params->output_layouts[0] = user_info.second;
+                        GPU_DEBUG_TRACE_DETAIL << "Set reshape output layout " << user_info.second.to_string() << "\n";
                         reshape_inst->set_shape_change();
                     }
                 } else {
@@ -1852,6 +1879,11 @@ primitive_inst::primitive_inst(network & network, program_node const& node, bool
             _shape_info_memory = _network.get_engine().allocate_memory(layout{{shape_elements}, data_types::i32, format::bfyx});
         }
     }
+
+    if (_node) {
+        GPU_DEBUG_TRACE_DETAIL << _node->type()->to_string(*_node) << "\n";
+    }
+
     _impl_params->strm = _network.get_stream_ptr();
     for (size_t i = 0; i < get_node().get_output_layouts().size(); ++i) {
         if (_outputs.size() > i) {

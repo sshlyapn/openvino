@@ -71,10 +71,17 @@ static void CreateCommonSplitOp(ProgramBuilder& p, const std::shared_ptr<ov::Nod
         }
 
         for (size_t i = 0; i < op->get_output_size(); i++) {
+            if (offsets.size()) {
+                std::cout << "Create crop " << get_layer_name(i) << " with offset " << offsets[i].to_string() << "\n";
+            } else {
+                std::cout << "Create crop " << get_layer_name(i) << " without offset\n";
+            }
+
             const auto& users = op->get_output_target_inputs(i);
             // don't add crop primitive if port is not used by anyone
             if (users.size() == 0)
                 continue;
+
             auto cropPrim = cldnn::crop(get_layer_name(i),
                                         inputs,
                                         cldnn::tensor(1),

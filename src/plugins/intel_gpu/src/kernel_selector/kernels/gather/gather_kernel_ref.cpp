@@ -264,6 +264,8 @@ JitConstants GatherKernelRef::GetJitConstants(const gather_params& params) const
     }
 
     if (params.compressed) {
+        std::cout << "Set FP32 acc for gather\n";
+        jit.Merge(MakeTypeJitConstants(Datatype::F32, "ACCUMULATOR"));
         jit.AddConstants({MakeJitConstant("COMPRESSED_WEIGHTS", 1)});
         if (params.inputs[0].GetDType() == Datatype::INT8 || params.inputs[0].GetDType() == Datatype::UINT8) {
             jit.AddConstants({MakeJitConstant("COMPRESSED_WEIGHTS_INT8", 1)});

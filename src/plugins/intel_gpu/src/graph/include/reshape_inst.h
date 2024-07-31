@@ -32,8 +32,10 @@ public:
 
     bool is_runtime_propagatable_padding() const {
         auto prim = typed_desc();
-        if (prim->mode == reshape::reshape_mode::squeeze || prim->mode == reshape::reshape_mode::unsqueeze)
-            return true;
+        if (prim->mode == reshape::reshape_mode::squeeze || prim->mode == reshape::reshape_mode::unsqueeze) {
+            // For proper padding propagation we need to know output pattern at model loading stage
+            return prim->output_pattern.size() > 0;
+        }
 
         // TODO: This function is to limit condition to a specific case (crop + reshape) among cases for the base mode
         if (!input().is_type<crop>())
@@ -132,6 +134,12 @@ public:
             std::unordered_map<size_t, ov::Tensor> const_data {{1, pattern_tensor}};
             const auto ta = ov::make_tensor_accessor(const_data);
 
+            auto padding = propagate_padding(input_layout, output_layout.get_partial_shape(), prim->mode, ta);
+            GPU_DEBUG_TRACE_DETAIL << id() << " propagate_padding. Input: " << input_layout.to_string() << "\n"
+                                   << "output layout: " << output_layout.to_string() << "\n"
+                                   << "lower: " << padding.lower_size().to_string() << "\n"
+                                   << "upper:" << padding.upper_size().to_string() << "\n"
+                                   << "dyn=" << padding.get_dynamic_pad_dims().to_string() << "\n";
             this->set_output_padding(propagate_padding(input_layout, output_layout.get_partial_shape(), prim->mode, ta));
             return;
         }

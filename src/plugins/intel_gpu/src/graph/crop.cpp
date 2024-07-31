@@ -150,6 +150,8 @@ std::vector<layout> crop_inst::calc_output_layouts(const crop_node& /*node*/, co
             p_param->input_offsets[0] = desc->offsets;
         }
 
+        GPU_DEBUG_TRACE_DETAIL << "Assign new offest " << ov::intel_gpu::tensor_from_dims(startOffset, 0).to_string() << "\n";
+
         p_param->input_offsets[0] = ov::intel_gpu::tensor_from_dims(startOffset, 0);
     }
     return {output_layouts[desc->output_idx]};

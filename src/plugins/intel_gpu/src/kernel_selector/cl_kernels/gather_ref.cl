@@ -63,6 +63,7 @@ KERNEL(gather_ref)(
 
 #if COMPRESSED_WEIGHTS
     OUTPUT_TYPE val = OUTPUT_VAL_ZERO;
+    ACCUMULATOR_TYPE val_cacl = ACCUMULATOR_VAL_ZERO;
 
     #if GATHER_AXIS_SHAPE_INFO_INDEX
         bool need_decompress = (INPUT_AXIS_INDEX >= 0 && INPUT_AXIS_INDEX < shape_info[GATHER_AXIS_SHAPE_INFO_INDEX]) ? true : false;
@@ -75,28 +76,30 @@ KERNEL(gather_ref)(
     if (need_decompress) {
         #if DECOMPRESSION_ZP_TERM
             #if DECOMPRESSION_ZP_SCALAR
-                OUTPUT_TYPE zp = DECOMPRESSION_ZP_VALUE;
+                ACCUMULATOR_TYPE zp = TO_ACCUMULATOR_TYPE(DECOMPRESSION_ZP_VALUE);
             #else
                 const uint zp_offset = dictionary_idx / DECOMPRESSION_ZP_GROUP_SIZE;
-                OUTPUT_TYPE zp = TO_OUTPUT_TYPE(decompression_zp[zp_offset]);
+                ACCUMULATOR_TYPE zp = TO_ACCUMULATOR_TYPE(decompression_zp[zp_offset]);
             #endif
         #else
-            OUTPUT_TYPE zp = OUTPUT_VAL_ZERO;
+            ACCUMULATOR_TYPE zp = ACCUMULATOR_VAL_ZERO;
         #endif
         const uint decomp_offset = dictionary_idx / DECOMPRESSION_SCALE_GROUP_SIZE;
-        DECOMPRESSION_SCALE_TYPE scale = decompression_scale[decomp_offset];
+        ACCUMULATOR_TYPE scale = TO_ACCUMULATOR_TYPE(decompression_scale[decomp_offset]);
 
         #if COMPRESSED_WEIGHTS_INT8
-            OUTPUT_TYPE val_compressed = dictionary[dictionary_idx];
-            val = (val_compressed - zp) * scale;
+            ACCUMULATOR_TYPE val_compressed = dictionary[dictionary_idx];
+            val_cacl = (val_compressed - zp) * scale;
         #elif COMPRESSED_WEIGHTS_INT4
             INPUT0_TYPE val_packed = dictionary[dictionary_idx / 2];
-            MAKE_VECTOR_TYPE(OUTPUT_TYPE, 2) val_unpacked = UNPACK_INT4x2(OUTPUT_TYPE, *((INT4_PACKED_TYPE*)&val_packed));
+            MAKE_VECTOR_TYPE(ACCUMULATOR_TYPE, 2) val_unpacked = UNPACK_INT4x2(ACCUMULATOR_TYPE, *((INT4_PACKED_TYPE*)&val_packed));
 
-            OUTPUT_TYPE val_compressed = ((OUTPUT_TYPE*)(&val_unpacked))[dictionary_idx % 2];
-            val = (val_compressed - zp) * scale;
+            ACCUMULATOR_TYPE val_compressed = ((ACCUMULATOR_TYPE*)(&val_unpacked))[dictionary_idx % 2];
+            val_cacl = (val_compressed - zp) * scale;
         #endif
     }
+
+    val = TO_OUTPUT_TYPE(val_cacl);
 #else
     #if GATHER_AXIS_SHAPE_INFO_INDEX
         INPUT0_TYPE val = (INPUT_AXIS_INDEX >= 0 && INPUT_AXIS_INDEX < shape_info[GATHER_AXIS_SHAPE_INFO_INDEX]) ? dictionary[dictionary_idx] : 0;
@@ -105,6 +108,12 @@ KERNEL(gather_ref)(
     #else
         INPUT0_TYPE val = dictionary[dictionary_idx];
     #endif
+#endif
+
+#if COMPRESSED_WEIGHTS
+    if ((output_idx <= 384 && output_idx > 256) || (output_idx < 128)) {
+        printf("%d. %2.8f %2.8f\n", output_idx, val, val_cacl);
+    }
 #endif
 
 #if HAS_FUSED_OPS

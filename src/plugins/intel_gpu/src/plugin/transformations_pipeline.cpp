@@ -174,17 +174,22 @@ static bool is_non_supported_decompression_op(const std::shared_ptr<const ov::No
     if (!consumer)
         return true;
 
+    if (ov::is_type<ov::op::v8::Gather>(consumer)) {
+        std::cout << "Disable for garher\n";
+        return true;
+    }
+
     if (ov::is_type<ov::opset1::MatMul>(consumer) || ov::is_type<ov::op::v8::Gather>(consumer)) {
         return false;
     } else if (ov::is_type<ov::opset1::Reshape>(consumer)) {
         consumer = get_single_consumer(consumer);
-        if (consumer != nullptr && (ov::is_type<ov::opset1::MatMul>(consumer) || ov::is_type<ov::op::v8::Gather>(consumer))) {
+        if (consumer != nullptr && (ov::is_type<ov::opset1::MatMul>(consumer))) {
             return false;
         }
     }
     if (consumer != nullptr && ov::is_type<ov::opset1::Convert>(consumer)) {
         consumer = get_single_consumer(consumer);
-        if (consumer != nullptr && (ov::is_type<ov::opset1::MatMul>(consumer) || ov::is_type<ov::op::v8::Gather>(consumer))) {
+        if (consumer != nullptr && (ov::is_type<ov::opset1::MatMul>(consumer))) {
             return false;
         }
     }

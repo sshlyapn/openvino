@@ -459,6 +459,11 @@ bool crop_in_place_optimization::match(const program_node& node,
                                        kernel_impl_params& crop_params,
                                        layout& input_layout,
                                        bool is_runtime) {
+    GPU_DEBUG_GET_INSTANCE(debug_config);
+    GPU_DEBUG_IF(debug_config->disable_runtime_buffer_fusing) {
+        return false;
+    }
+
     if (!node.is_valid_output_layout())
         return false;
     // if the node is marked as network output, prevent optimizations which would affect a form of its output,
@@ -545,18 +550,22 @@ bool crop_in_place_optimization::optimize(crop_node& node) {
                                                    node.get_primitive()->axis,
                                                    false);
     } else if (can_crop_be_optimized_simple_data_format(crop_layout, input_layout)) {
-        std::vector<layout> reshape_layouts;
-        if (node.get_users().front()->is_type<reshape>() && node.get_users().front()->as<reshape>().is_runtime_propagatable_padding()) {
-            reshape_layouts.push_back(node.get_users().front()->get_output_layout());
+        std::pair<const program_node*, layout> user_info;
+        if (node.get_users().front()->is_type<reshape>()) {
+            auto& reshape_node = node.get_users().front()->as<reshape>();
+            if (reshape_node.is_runtime_propagatable_padding()) {
+                user_info.first = &reshape_node;
+                user_info.second = reshape_node.get_output_layout();
+            }
         }
         update_in_place_crop_padding_simple_data_format(crop_layout,
                                                         input_layout,
-                                                        reshape_layouts,
+                                                        user_info,
                                                         crop_params->input_offsets[0],
                                                         node.get_primitive()->axis,
                                                         false);
-        if (reshape_layouts.size() > 0) {
-            node.get_users().front()->set_output_layout(reshape_layouts[0]);
+        if (user_info.first) {
+            node.get_users().front()->set_output_layout(user_info.second);
         }
     }
     node.set_output_layout(crop_layout);
@@ -624,24 +633,73 @@ void crop_in_place_optimization::update_in_place_crop_padding_along_feature(cons
 
 void crop_in_place_optimization::update_in_place_crop_padding_simple_data_format(layout& crop_layout,
                                                                                  layout& input_layout,
-                                                                                 std::vector<layout>& user_layouts,
+                                                                                 std::pair<const program_node*, layout>& user_info,
                                                                                  const tensor offsets,
                                                                                  size_t crop_axis,
                                                                                  bool is_runtime) {
-    auto crop_axis_legacy = crop_axis;
-    if (crop_axis_legacy >= 2) {
-        auto spatial_axis = crop_axis_legacy - 2;
-        // Default and minimum number of dimensions is 4
-        auto spatial_size = std::max<size_t>(crop_layout.get_partial_shape().size(), 4) - 2;
-        crop_axis_legacy = spatial_size - spatial_axis - 1 + 2;
-    }
+    auto convert_axis_to_legacy = [](size_t axis, size_t rank) {
+        auto axis_legacy = axis;
+
+        if (axis_legacy >= 2) {
+            auto spatial_axis = axis_legacy - 2;
+            // Default and minimum number of dimensions is 4
+            auto spatial_size = std::max<size_t>(rank, 4) - 2;
+            axis_legacy = spatial_size - spatial_axis - 1 + 2;
+        }
+
+        return axis_legacy;
+    };
+
+    auto crop_axis_legacy = convert_axis_to_legacy(crop_axis, crop_layout.get_partial_shape().size());
+
+
+    auto print_arr = [&](std::vector<int32_t> vec, size_t max_len) {
+        std::stringstream ss;
+        for (size_t i = 0; i < std::min(max_len, vec.size()); i++) {
+            ss << vec[i] << ", ";
+        }
+
+        return ss.str();
+    };
+
+    auto print_arr2 = [&](std::vector<int64_t> vec, size_t max_len) {
+        std::stringstream ss;
+        for (size_t i = 0; i < std::min(max_len, vec.size()); i++) {
+            ss << vec[i] << ", ";
+        }
+
+        return ss.str();
+    };
+
+
     // If it's build-time and node is dynamic, only dynamic padding is set first
     if ((crop_layout.is_dynamic() || input_layout.is_dynamic()) && !is_runtime) {
         auto dyn_pad_sizes = tensor(0).sizes();
         dyn_pad_sizes[crop_axis_legacy] = 1;
         crop_layout.data_padding.set_dynamic_pad(tensor(dyn_pad_sizes));
-        for (auto& user_layout : user_layouts) {
-            user_layout.data_padding.set_dynamic_pad(tensor(dyn_pad_sizes));
+
+        if (user_info.first && user_info.first->is_type<reshape>()) {
+            auto reshape_desc = user_info.first->as<reshape>().get_primitive();
+            auto reshape_mode = reshape_desc->mode;
+            if (reshape_mode == reshape::reshape_mode::base) {
+                user_info.second.data_padding.set_dynamic_pad(tensor(dyn_pad_sizes));
+            } else if (reshape_mode == reshape::reshape_mode::unsqueeze || reshape_mode == reshape::reshape_mode::squeeze) {
+                auto reshape_ps = user_info.second.get_partial_shape();
+                auto output_pattern = reshape_desc->output_pattern;
+
+                auto reshape_axis = crop_axis;
+                for (size_t i = 0; i < output_pattern.size(); i++) {
+                    if (output_pattern[i] <= static_cast<int64_t>(reshape_axis)) {
+                        reshape_axis += reshape_mode == reshape::reshape_mode::unsqueeze ? 1 : -1;
+                    }
+                }
+
+                auto dyn_pad_sizes = tensor(0).sizes();
+                dyn_pad_sizes[convert_axis_to_legacy(reshape_axis, reshape_ps.size())] = 1;
+                user_info.second.data_padding.set_dynamic_pad(tensor(dyn_pad_sizes));
+
+                GPU_DEBUG_TRACE_DETAIL << "set_dynamic_pad for reshape " << print_arr(dyn_pad_sizes, dyn_pad_sizes.size()) << " [axis=" << convert_axis_to_legacy(reshape_axis, reshape_ps.size()) << ", " << reshape_axis << "\n";
+            }
         }
         return;
     }
@@ -661,18 +719,71 @@ void crop_in_place_optimization::update_in_place_crop_padding_simple_data_format
         upper_sizes.push_back(input_layout.spatial(i) - offsets.spatial[i] - crop_size.spatial[i]);
     }
 
+    GPU_DEBUG_TRACE_DETAIL << "lower_sizes=" << print_arr(lower_sizes, lower_sizes.size()) << "\n";
+    GPU_DEBUG_TRACE_DETAIL << "upper_sizes=" << print_arr(upper_sizes, upper_sizes.size()) << "\n";
+
+    //  variadicsplit:__module.model.layers.9.self_attn.rotary_emb/prim::ListUnpack/VariadicSplit.out1 input tensor: f16:bfyx:1x4096x256:nopad
+    //  variadicsplit:__module.model.layers.9.self_attn.rotary_emb/prim::ListUnpack/VariadicSplit.out1 input tensor: i32:bfyx::nopad
+    //  variadicsplit:__module.model.layers.9.self_attn.rotary_emb/prim::ListUnpack/VariadicSplit.out1 input tensor: i32:bfyx:2:nopad
+    //  variadicsplit:__module.model.layers.9.self_attn.rotary_emb/prim::ListUnpack/VariadicSplit.out1 output tensor: f16:bfyx:1x4096x128:nopad
+    //  Assign new offest [b:0, f:0, x:0, y:128, z:1, w:1, u:1, v:1, g:1]
+    //  axis = 2, legacy_axis = 3
+    //
+    // unsqueeze:__module.model.layers.9.self_attn/aten::unsqueeze/Unsqueeze input tensor: f16:bfyx:1x4096x(+128) 128 (+0):nopad
+    // unsqueeze:__module.model.layers.9.self_attn/aten::unsqueeze/Unsqueeze output tensor: f16:bfyx:1x1x4096x128:nopad
+    // special zero : 0,
+    // output pattern : 1,
+    // output pshape : [?,1,?,128],
+
+
+
     if (is_runtime) {
         auto dyn_pad_sizes = lower_sizes;
         dyn_pad_sizes[crop_axis_legacy] = 1;
         crop_layout.data_padding = padding(lower_sizes, upper_sizes, 0.f, tensor(dyn_pad_sizes));
-        for (auto& user_layout : user_layouts) {
-            auto reshape_rank = user_layout.get_partial_shape().size();
-            auto reshape_last_dim = user_layout.get_partial_shape().to_shape()[reshape_rank - 1];
-            if (lower_sizes[crop_axis_legacy])
-                lower_sizes[crop_axis_legacy] /= reshape_last_dim;
-            if (upper_sizes[crop_axis_legacy])
-                upper_sizes[crop_axis_legacy] /= reshape_last_dim;
-            user_layout.data_padding = padding(lower_sizes, upper_sizes, 0.f, tensor(dyn_pad_sizes));
+        if (user_info.first) {
+            auto reshape_desc = user_info.first->as<reshape>().get_primitive();
+            auto reshape_mode = reshape_desc->mode;
+            if (reshape_mode == reshape::reshape_mode::base) {
+                auto reshape_rank = user_info.second.get_partial_shape().size();
+                auto reshape_last_dim = user_info.second.get_partial_shape().to_shape()[reshape_rank - 1];
+                if (lower_sizes[crop_axis_legacy])
+                    lower_sizes[crop_axis_legacy] /= reshape_last_dim;
+                if (upper_sizes[crop_axis_legacy])
+                    upper_sizes[crop_axis_legacy] /= reshape_last_dim;
+                user_info.second.data_padding = padding(lower_sizes, upper_sizes, 0.f, tensor(dyn_pad_sizes));
+            } else {
+                // Considering that squeeze/unsqueeze changes only 1 size dimensions,
+                // we can find corresponding reshape dimension by it's value
+                auto reshape_ps = user_info.second.get_partial_shape();
+                auto output_pattern = reshape_desc->output_pattern;
+
+                auto reshape_axis = crop_axis;
+                for (size_t i = 0; i < output_pattern.size(); i++) {
+                    if (output_pattern[i] <= static_cast<int64_t>(reshape_axis)) {
+                        reshape_axis += reshape_mode == reshape::reshape_mode::unsqueeze ? 1 : -1;
+                    }
+                }
+
+                const auto output_rank = std::max(reshape_ps.size(), static_cast<size_t>(4));
+                std::vector<int32_t> reshape_dyn_pad_sizes(output_rank, 0);
+                std::vector<int32_t> reshape_lower_sizes(output_rank, 0);
+                std::vector<int32_t> reshape_upper_sizes(output_rank, 0);
+
+                const auto reshape_axis_legacy = convert_axis_to_legacy(reshape_axis, reshape_ps.size());
+                reshape_lower_sizes[reshape_axis_legacy] = lower_sizes[crop_axis_legacy];
+                reshape_upper_sizes[reshape_axis_legacy] = upper_sizes[crop_axis_legacy];
+                reshape_dyn_pad_sizes[reshape_axis_legacy] = 1;
+
+                GPU_DEBUG_TRACE_DETAIL << "reshape_axis=" << reshape_axis << " (legacy=" << reshape_axis_legacy << "), crop_axis=" << crop_axis
+                                       << " (legacy=" << crop_axis_legacy << ")\n";
+                GPU_DEBUG_TRACE_DETAIL << "output_pattern=" << print_arr2(output_pattern, output_pattern.size()) << "\n";
+                GPU_DEBUG_TRACE_DETAIL << "reshape_dyn_pad_sizes=" << print_arr(reshape_dyn_pad_sizes, reshape_dyn_pad_sizes.size()) << "\n";
+                GPU_DEBUG_TRACE_DETAIL << "reshape_lower_sizes=" << print_arr(reshape_lower_sizes, reshape_lower_sizes.size()) << "\n";
+                GPU_DEBUG_TRACE_DETAIL << "reshape_upper_sizes=" << print_arr(reshape_upper_sizes, upper_sizes.size()) << "\n";
+
+                user_info.second.data_padding = padding(reshape_lower_sizes, reshape_upper_sizes, 0.f, tensor(reshape_dyn_pad_sizes));
+            }
         }
     } else {
         crop_layout.data_padding = padding(lower_sizes, upper_sizes);

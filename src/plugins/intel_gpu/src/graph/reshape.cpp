@@ -46,10 +46,35 @@ padding propagate_padding(const layout& in_layout, const ov::PartialShape& out_s
     std::vector<int32_t> update_pad_upper;
     std::vector<int32_t> update_pad_mask;
 
+    auto print_arr = [&](std::vector<int32_t> vec, size_t max_len) {
+        std::stringstream ss;
+        for (size_t i = 0; i < std::min(max_len, vec.size()); i++) {
+            ss << vec[i] << ", ";
+        }
+        return ss.str();
+    };
+
+    auto print_arr2 = [&](std::vector<int64_t> vec, size_t max_len) {
+        std::stringstream ss;
+        for (size_t i = 0; i < std::min(max_len, vec.size()); i++) {
+            ss << vec[i] << ", ";
+        }
+        return ss.str();
+    };
+
+    GPU_DEBUG_TRACE_DETAIL << "pad_lower = " << print_arr(pad_lower, pad_lower.size()) << "\n";
+    GPU_DEBUG_TRACE_DETAIL << "pad_upper = " << print_arr(pad_upper, pad_upper.size()) << "\n";
+    GPU_DEBUG_TRACE_DETAIL << "pad_mask = " << print_arr(pad_mask, pad_mask.size()) << "\n";
+    GPU_DEBUG_TRACE_DETAIL << "axes = " << print_arr2(axes, axes.size()) << "\n";
+
     if (mode == reshape::reshape_mode::unsqueeze) {
         update_pad_lower = pad_lower;
         update_pad_upper = pad_upper;
         update_pad_mask = pad_mask;
+
+        update_pad_lower.resize(rank);
+        update_pad_upper.resize(rank);
+        update_pad_mask.resize(rank);
 
         std::unordered_set<int64_t> tmp(axes.begin(), axes.end());
         std::vector<int64_t> unique_axes;
@@ -61,15 +86,23 @@ padding propagate_padding(const layout& in_layout, const ov::PartialShape& out_s
         // Normalize then remove repeated axes after normalization.
         for (const auto& axis : axes) {
             if (static_cast<size_t>(axis) <= out_shape.size()) {
-                pad_lower.insert(std::next(std::begin(pad_lower), axis), 0);
-                pad_upper.insert(std::next(std::begin(pad_upper), axis), 0);
-                pad_mask.insert(std::next(std::begin(pad_mask), axis), 0);
+                update_pad_lower.insert(std::next(std::begin(update_pad_lower), axis), 0);
+                update_pad_upper.insert(std::next(std::begin(update_pad_upper), axis), 0);
+                update_pad_mask.insert(std::next(std::begin(update_pad_mask), axis), 0);
             } else {
-                pad_lower.push_back(0);
-                pad_upper.push_back(0);
-                pad_mask.push_back(0);
+                update_pad_lower.push_back(0);
+                update_pad_upper.push_back(0);
+                update_pad_mask.push_back(0);
             }
         }
+        GPU_DEBUG_TRACE_DETAIL << "pad_lower updated = " << print_arr(pad_lower, pad_lower.size()) << "\n";
+        GPU_DEBUG_TRACE_DETAIL << "pad_upper updated = " << print_arr(pad_upper, pad_upper.size()) << "\n";
+        GPU_DEBUG_TRACE_DETAIL << "pad_mask updated = " << print_arr(pad_mask, pad_mask.size()) << "\n";
+
+        GPU_DEBUG_TRACE_DETAIL << "update_pad_lower = " << print_arr(update_pad_lower, update_pad_lower.size()) << "\n";
+        GPU_DEBUG_TRACE_DETAIL << "update_pad_upper = " << print_arr(update_pad_upper, update_pad_upper.size()) << "\n";
+        GPU_DEBUG_TRACE_DETAIL << "update_pad_mask = " << print_arr(update_pad_mask, update_pad_mask.size()) << "\n";
+
     } else {
         std::unordered_set<int64_t> unique_axes;
         std::transform(axes.begin(), axes.end(), std::inserter(unique_axes, unique_axes.end()), [=](int64_t axis) {
@@ -253,6 +286,8 @@ std::string reshape_inst::to_string(reshape_node const& node) {
     reshape_info.add("output pshape", desc->output_partial_shape);
     reshape_info.add("output pattern", desc->output_pattern);
     reshape_info.add("special zero", desc->special_zero);
+    reshape_info.add("reshape mode", desc->mode);
+    reshape_info.add("node's output layout: ", node.get_output_layout().to_string());
 
     node_info->add("reshape info", reshape_info);
     node_info->dump(primitive_description);

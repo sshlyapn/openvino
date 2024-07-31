@@ -192,6 +192,17 @@ void ExecutionConfig::apply_debug_options(const cldnn::device_info& info) {
     GPU_DEBUG_IF(debug_config->disable_dynamic_impl == 1) {
         set_property(ov::intel_gpu::use_only_static_kernels_for_dynamic_shape(true));
     }
+
+    int USE_FP32 = 0;
+    if (const auto env_var = std::getenv("USE_FP32")) {
+        std::istringstream ss(env_var);
+        ss >> USE_FP32;
+
+        if (USE_FP32) {
+            std::cout << "Use FP32 inference precision\n";
+            set_property(ov::hint::inference_precision(ov::element::f32));
+        }
+    }
 }
 
 void ExecutionConfig::apply_hints(const cldnn::device_info& info) {
