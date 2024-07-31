@@ -38,6 +38,11 @@
 #include "openvino/op/util/broadcast_base.hpp"
 #include "openvino/op/util/pad_base.hpp"
 #include "openvino/op/variadic_split.hpp"
+#include "openvino/op/matmul.hpp"
+#include "openvino/op/sin.hpp"
+#include "openvino/op/cos.hpp"
+#include "openvino/op/gather.hpp"
+#include "openvino/op/parameter.hpp"
 #include "openvino/pass/manager.hpp"
 #include "openvino/pass/pattern/op/optional.hpp"
 #include "openvino/pass/pattern/op/or.hpp"
@@ -359,6 +364,77 @@ public:
     }
 };
 
+
+class MarkCompressedGather : public MatcherPass {
+public:
+    OPENVINO_RTTI("MarkCompressedGather", "0");
+    MarkCompressedGather() {
+        MATCHER_SCOPE(MarkCompressedGather);
+
+        auto input = pattern::wrap_type<ov::op::v0::Parameter>();
+
+        auto input_0 = pattern::any_input();
+        auto input_1 = pattern::wrap_type<ov::op::v0::Convert>({input});
+        auto input_2 = pattern::any_input();
+        auto gather = pattern::wrap_type<ov::op::v8::Gather>({input_0, input_1, input_2});
+
+        matcher_pass_callback callback = [=](pattern::Matcher& m) {
+            const auto& pattern_to_output = m.get_pattern_map();
+            if (!m.get_match_root())
+                return false;
+
+            const auto& pattern_map = m.get_pattern_value_map();
+            const auto gather_op = as_type_ptr<ov::op::v8::Gather>(pattern_map.at(gather).get_node_shared_ptr());
+
+            if (pattern_map.at(input).get_node_shared_ptr()->get_friendly_name().find("position_ids") != std::string::npos) {
+                std::cout << "Found gather: " << gather_op->get_friendly_name() << "\n";
+                std::cout << "Gather input_0: " << pattern_map.at(input_0).get_node_shared_ptr()->get_friendly_name() << "\n";
+                std::cout << "Gather input_2: " << pattern_map.at(input_2).get_node_shared_ptr()->get_friendly_name() << "\n";
+                disable_fp16_compression(pattern_map.at(input_0).get_node_shared_ptr());
+
+                return true;
+            }
+
+            return false;
+        };
+
+        auto m = make_shared<pattern::Matcher>(gather, matcher_name);
+        register_matcher(m, callback);
+    }
+};
+
+
+class MarkPositionIds : public MatcherPass {
+public:
+    OPENVINO_RTTI("MarkPositionIds", "0");
+    MarkPositionIds() {
+        MATCHER_SCOPE(MarkPositionIds);
+
+        auto input_1 = pattern::wrap_type<ov::op::v0::Convert, op::util::BroadcastBase>();
+        auto input_2 = pattern::wrap_type<op::util::BroadcastBase, ov::op::v0::Convert>();
+        auto matmul = pattern::wrap_type<ov::op::v0::MatMul>({input_1, input_2});
+        auto concat = pattern::wrap_type<ov::op::v0::Concat>({matmul, matmul});
+        auto sin_or_cost = pattern::wrap_type<ov::op::v0::Sin, ov::op::v0::Cos>({concat});
+
+        matcher_pass_callback callback = [=](pattern::Matcher& m) {
+            const auto& pattern_to_output = m.get_pattern_map();
+            if (!m.get_match_root())
+                return false;
+
+            const auto& pattern_map = m.get_pattern_value_map();
+            const auto matmul_op = as_type_ptr<ov::op::v0::MatMul>(pattern_map.at(matmul).get_node_shared_ptr());
+
+            std::cout << "Found matmul: " << matmul_op->get_friendly_name() << "\n";
+
+            disable_fp16_compression(matmul_op);
+            return true;
+        };
+
+        auto m = make_shared<pattern::Matcher>(matmul, matcher_name);
+        register_matcher(m, callback);
+    }
+};
+
 class PropagateDownDisableSensitivityForQuantized : public pass::MatcherPass {
 public:
     OPENVINO_RTTI("DisableMarkingForQuantizedNodes", "0");
@@ -423,7 +499,27 @@ public:
 bool MarkSugraphsToKeepInMixedPrecision::run_on_model(const shared_ptr<ov::Model>& m) {
     RUN_ON_MODEL_SCOPE(MarkSugraphsToKeepInMixedPrecision);
 
+    std::cout << "MarkSugraphsToKeepInMixedPrecision" << "\n";
+
     Manager manager(get_pass_config());
+    int MARK_MATMUL = 0;
+    if (const auto env_var = std::getenv("MARK_MATMUL")) {
+        std::istringstream ss(env_var);
+        ss >> MARK_MATMUL;
+    }
+
+    if (MARK_MATMUL)
+        REGISTER_PASS(manager, MarkPositionIds)
+
+    int MARK_GATHER = 0;
+    if (const auto env_var = std::getenv("MARK_GATHER")) {
+        std::istringstream ss(env_var);
+        ss >> MARK_GATHER;
+    }
+
+    if (MARK_GATHER)
+        REGISTER_PASS(manager, MarkCompressedGather)
+
     // Mark root of Division with eps pattern to keep in FP32
     REGISTER_PASS(manager, MarkDivWithEps)
     REGISTER_PASS(manager, MarkExpInReduceOpPath)

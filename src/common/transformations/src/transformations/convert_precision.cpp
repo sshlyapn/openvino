@@ -412,7 +412,9 @@ bool ov::pass::ConvertPrecision::run_on_model(const std::shared_ptr<ov::Model>& 
 
     bool has_fp16_compression = m_precisions.count(element::f32) > 0 && m_precisions[element::f32] == element::f16;
 
+    std::cout << "ConvertPrecision: " << m_keep_precision_sensitive_in_fp32 << " " << has_fp16_compression << "\n";
     if (m_keep_precision_sensitive_in_fp32 && has_fp16_compression) {
+        std::cout << "MarkSugraphsToKeepInMixedPrecision\n";
         pass::Manager manager(get_pass_config());
         // Mark subgraphs with disable_fp16_compression to keep them in FP32
         manager.register_pass<pass::MarkSugraphsToKeepInMixedPrecision>();
