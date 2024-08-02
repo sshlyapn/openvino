@@ -5,19 +5,14 @@
 #pragma once
 
 #include "kernel_base_opencl.h"
-#include "sdpa_kernel_ref.hpp"
+#include "sdpa_kernel_base.h"
 
 namespace kernel_selector {
-
-enum class KernelMode {
-    key_cache_update,
-    value_cache_update
-};
 
 struct kv_cache_update_params : base_params {
     kv_cache_update_params() : base_params(KernelType::PA_KV_CACHE_UPDATE) {}
 
-    pa_sdpa_configuration configuration;
+    sdpa_configuration conf;
 };
 
 class KVCacheUpdateKernelRef : public KernelBaseOpenCL {
@@ -28,7 +23,7 @@ public:
 
 protected:
     bool Validate(const Params& params) const override;
-    JitConstants GetJitConstants(const kv_cache_update_params& kernel_params, KernelMode mode) const;
+    JitConstants GetJitConstants(const kv_cache_update_params& kernel_params) const;
     static CommonDispatchData SetDefault(const kv_cache_update_params& kernel_params);
     void GetUpdateDispatchDataFunc(KernelData& kd) const override;
 };

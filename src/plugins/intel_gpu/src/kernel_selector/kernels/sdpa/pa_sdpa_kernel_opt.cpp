@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include "sdpa_kernel_ref.hpp"
+#include "pa_sdpa_kernel_opt.h"
 
 #include "kernel_selector_params.h"
 #include "kernel_selector_utils.h"
@@ -12,7 +12,7 @@ namespace kernel_selector {
 // For kernel w/o split
 constexpr size_t max_sequence_length = 3072;
 
-constexpr size_t seq_len_portion_size = 256;
+constexpr size_t seq_len_partition_size = 256;
 constexpr size_t subgroup_size = 16;
 
 const Datatype softmax_acc_dt = Datatype::F32;
@@ -20,7 +20,7 @@ const Datatype softmax_acc_dt = Datatype::F32;
 // Use flash attention or not
 const bool use_seq_len_split = true;
 
-void SDPAKernelRef::GetUpdateDispatchDataFunc(KernelData& kd) const {
+void PagedAttentionSDPAKernelOpt::GetUpdateDispatchDataFunc(KernelData& kd) const {
     kd.update_dispatch_data_func = [](const Params& params, KernelData& kd) {
         const auto& prim_params = dynamic_cast<const pa_sdpa_params&>(params);
 
@@ -33,11 +33,13 @@ void SDPAKernelRef::GetUpdateDispatchDataFunc(KernelData& kd) const {
         kd.kernels[0].skip_execution = false;
 
         if (expected_kernels_num == 2) {
-            const auto& input = prim_params.inputs[0];
-            const size_t batch_size = input.Batch().v;
-            const size_t seq_len = input.Feature().v;
-            const size_t tokens_num = batch_size * seq_len;
-            const size_t num_of_portions = CeilDiv(prim_params.configuration.max_context_len, seq_len_portion_size);
+            // const auto& input = prim_params.inputs[0];
+            // const size_t batch_size = input.Batch().v;
+            // const size_t seq_len = input.Feature().v;
+            // const size_t tokens_num = batch_size * seq_len;
+            // const size_t num_of_portions = CeilDiv(prim_params.configuration.max_context_len, seq_len_partition_size);
+
+            const size_t num_of_portions = 1;
 
             auto dispatchData = SetDefault(prim_params, 1);
             kd.kernels[1].params.workGroups.global = dispatchData.gws;
@@ -46,11 +48,13 @@ void SDPAKernelRef::GetUpdateDispatchDataFunc(KernelData& kd) const {
             kd.kernels[1].skip_execution = num_of_portions == 1;
 
             auto buf_dt_size = 4;
-            auto buf_elements_count = tokens_num * prim_params.configuration.heads_num * num_of_portions;
+            // auto buf_elements_count = tokens_num * prim_params.configuration.heads_num * num_of_portions;
+            auto buf_elements_count = 1;
             auto buf_size = buf_elements_count * buf_dt_size;
 
             auto tmp_out_dt_size = 4;
-            auto tmp_out_elements_count = tokens_num * prim_params.configuration.heads_num * num_of_portions * prim_params.configuration.head_size;
+            // auto tmp_out_elements_count = tokens_num * prim_params.configuration.heads_num * num_of_portions * prim_params.configuration.head_size;
+            auto tmp_out_elements_count = 1;
             auto tmp_out_size = tmp_out_elements_count * tmp_out_dt_size;
 
             kd.internalBufferSizes.clear();
@@ -69,7 +73,7 @@ void SDPAKernelRef::GetUpdateDispatchDataFunc(KernelData& kd) const {
     };
 }
 
-KernelsData SDPAKernelRef::GetKernelsData(const Params& params) const {
+KernelsData PagedAttentionSDPAKernelOpt::GetKernelsData(const Params& params) const {
     if (!Validate(params)) {
         return {};
     }
@@ -133,7 +137,7 @@ KernelsData SDPAKernelRef::GetKernelsData(const Params& params) const {
     return {kd};
 }
 
-ParamsKey SDPAKernelRef::GetSupportedKey() const {
+ParamsKey PagedAttentionSDPAKernelOpt::GetSupportedKey() const {
     ParamsKey key;
     key.EnableInputDataType(Datatype::F16);
     key.EnableInputDataType(Datatype::F32);
@@ -153,42 +157,42 @@ ParamsKey SDPAKernelRef::GetSupportedKey() const {
     return key;
 }
 
-bool SDPAKernelRef::Validate(const Params& params) const {
+bool PagedAttentionSDPAKernelOpt::Validate(const Params& params) const {
     if (params.GetType() != KernelType::PA_SDPA) {
         return false;
     }
 
-    const auto& kernel_params = dynamic_cast<const pa_sdpa_params&>(params);
-    if (seq_len_portion_size % kernel_params.configuration.block_size != 0)
-        return false;
+    // const auto& kernel_params = dynamic_cast<const pa_sdpa_params&>(params);
+    // if (seq_len_partition_size % kernel_params.configuration.block_size != 0)
+    //     return false;
 
-    if (kernel_params.configuration.head_size % subgroup_size != 0)
-        return false;
+    // if (kernel_params.configuration.head_size % subgroup_size != 0)
+    //     return false;
 
-    const auto subgroups_per_wg = kernel_params.configuration.head_size / subgroup_size;
-    if (subgroups_per_wg > subgroup_size)
-        return false;
+    // const auto subgroups_per_wg = kernel_params.configuration.head_size / subgroup_size;
+    // if (subgroups_per_wg > subgroup_size)
+    //     return false;
 
     return true;
 }
 
-JitConstants SDPAKernelRef::GetJitConstants(const pa_sdpa_params& kernel_params) const {
+JitConstants PagedAttentionSDPAKernelOpt::GetJitConstants(const pa_sdpa_params& kernel_params) const {
     JitConstants jit = MakeBaseParamsJitConstants(kernel_params);
 
-    const auto& config = kernel_params.configuration;
+    const auto& config = kernel_params.conf;
     jit.AddConstant(MakeJitConstant("HEAD_SIZE", config.head_size));
     jit.AddConstant(MakeJitConstant("HEADS_NUM", config.heads_num));
     jit.AddConstant(MakeJitConstant("KV_HEADS_NUM", config.kv_heads_num));
     jit.AddConstant(MakeJitConstant("NUM_QUERIES_PER_KV_HEAD", config.heads_num / config.kv_heads_num));
-    jit.AddConstant(MakeJitConstant("BLOCK_SIZE", config.block_size));
-    jit.AddConstant(MakeJitConstant("X_BLOCK_SIZE", config.x_block_size));
-    jit.Merge(MakeTypeJitConstants(softmax_acc_dt, "ACCUMULATOR"));
+    jit.AddConstant(MakeJitConstant("BLOCK_SIZE", 16));
+    jit.AddConstant(MakeJitConstant("X_BLOCK_SIZE", 1));
+    jit.Merge(MakeTypeJitConstants(softmax_acc_dt, "SOFTMAX_ACCUMULATOR"));
 
 
     if (use_seq_len_split) {
         jit.AddConstant(MakeJitConstant("USE_SEQ_LEN_SPLIT", true));
-        jit.AddConstant(MakeJitConstant("SEQ_LEN_PORTION_SIZE", seq_len_portion_size));
-        jit.AddConstant(MakeJitConstant("SHARED_MEM_SIZE", seq_len_portion_size));
+        jit.AddConstant(MakeJitConstant("SEQ_LEN_PARTITION_SIZE", seq_len_partition_size));
+        jit.AddConstant(MakeJitConstant("SHARED_MEM_SIZE", seq_len_partition_size));
     } else {
         jit.AddConstant(MakeJitConstant("SHARED_MEM_SIZE", max_sequence_length));
     }
@@ -196,8 +200,9 @@ JitConstants SDPAKernelRef::GetJitConstants(const pa_sdpa_params& kernel_params)
     return jit;
 }
 
-CommonDispatchData SDPAKernelRef::SetDefault(const pa_sdpa_params& kernel_params, size_t kernel_idx) {
+CommonDispatchData PagedAttentionSDPAKernelOpt::SetDefault(const pa_sdpa_params& kernel_params, size_t kernel_idx) {
     CommonDispatchData dispatch_data;
+
 
     const auto& input = kernel_params.inputs[0];
     if (!input.is_dynamic()) {
@@ -205,18 +210,22 @@ CommonDispatchData SDPAKernelRef::SetDefault(const pa_sdpa_params& kernel_params
         const size_t seq_len = input.Feature().v;
         const size_t tokens_num = batch_size * seq_len;
 
-        const size_t num_of_portions =
-            use_seq_len_split ? CeilDiv(kernel_params.configuration.max_context_len, seq_len_portion_size) : 1;
+        // const size_t num_of_portions =
+        //     use_seq_len_split ? CeilDiv(kernel_params.configuration.max_context_len, seq_len_partition_size) : 1;
+
+        const size_t num_of_portions = 1;
+        const size_t heads_num = static_cast<size_t>(kernel_params.conf.heads_num);
+        const size_t head_size = static_cast<size_t>(kernel_params.conf.head_size);
 
         if (kernel_idx == 0) {
             dispatch_data.gws = { tokens_num,
-                                  kernel_params.configuration.heads_num,
-                                  kernel_params.configuration.head_size * num_of_portions };
-            dispatch_data.lws = { 1, 1, kernel_params.configuration.head_size };
+                                  heads_num,
+                                  head_size * num_of_portions };
+            dispatch_data.lws = { 1, 1, head_size };
         } else {
             dispatch_data.gws = { batch_size,
                                   seq_len,
-                                  kernel_params.configuration.head_size * kernel_params.configuration.heads_num };
+                                  head_size * heads_num };
             dispatch_data.lws = { 1, 1, subgroup_size };
         }
     }

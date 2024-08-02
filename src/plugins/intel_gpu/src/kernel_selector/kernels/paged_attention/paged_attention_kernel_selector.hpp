@@ -8,18 +8,5 @@
 
 namespace kernel_selector {
 
-class kv_cache_update_kernel_selector : public kernel_selector_base {
-public:
-    kv_cache_update_kernel_selector();
-    KernelsData GetBestKernels(const Params& params) const override;
-    static kv_cache_update_kernel_selector& Instance();
-};
-
-class pa_sdpa_kernel_selector : public kernel_selector_base {
-public:
-    pa_sdpa_kernel_selector();
-    KernelsData GetBestKernels(const Params& params) const override;
-    static pa_sdpa_kernel_selector& Instance();
-};
 
 }  // namespace kernel_selector

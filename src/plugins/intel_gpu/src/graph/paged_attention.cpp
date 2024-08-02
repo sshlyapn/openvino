@@ -47,6 +47,11 @@ void paged_attention_inst::on_execute() {
     GPU_DEBUG_TRACE_DETAIL << "Internal buffers layouts: " << ibuf_layouts.size() << "\n";
     GPU_DEBUG_TRACE_DETAIL << "Internal buffers: " << _intermediates_memory.size() << "\n";
 
+    if (_intermediates_memory.size() < 5) {
+        std::cout << "Number of intermediate buffers is less than expected\n";
+        return;
+    }
+
     for (size_t i = 0; i < ibuf_layouts.size(); i++) {
         std::cout << "Layout " << ibuf_layouts[i].to_short_string() << " mem = " << _intermediates_memory[i]->buffer_ptr() << ", " << _intermediates_memory[i]->get_layout().to_short_string() << "\n";
     }
