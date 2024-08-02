@@ -378,7 +378,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         auto past_lens_shape = impl_param.get_input_layout(5).get_partial_shape();
 
         if (query_shape.is_static() && past_lens_shape.is_static()) {
-            std::cout << "Prefill stage: " << (query_shape[0].get_length() != past_lens_shape[0].get_length()) << "\n";
+            std::cout << "Prefill stage: " << (query_shape[0].get_length() != past_lens_shape[0].get_length()) << " " << query_shape[0].get_length() << " " << past_lens_shape[0].get_length() << "\n";
             return query_shape[0].get_length() != past_lens_shape[0].get_length();
         }
 

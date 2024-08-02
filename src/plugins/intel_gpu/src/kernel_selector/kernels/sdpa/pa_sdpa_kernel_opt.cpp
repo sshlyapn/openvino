@@ -184,8 +184,13 @@ JitConstants PagedAttentionSDPAKernelOpt::GetJitConstants(const pa_sdpa_params& 
     jit.AddConstant(MakeJitConstant("HEADS_NUM", config.heads_num));
     jit.AddConstant(MakeJitConstant("KV_HEADS_NUM", config.kv_heads_num));
     jit.AddConstant(MakeJitConstant("NUM_QUERIES_PER_KV_HEAD", config.heads_num / config.kv_heads_num));
-    jit.AddConstant(MakeJitConstant("BLOCK_SIZE", 16));
+    jit.AddConstant(MakeJitConstant("VLLM_BLOCK_SIZE", 16));
     jit.AddConstant(MakeJitConstant("X_BLOCK_SIZE", 1));
+
+    if (config.has_scale_val) {
+        jit.AddConstant(MakeJitConstant("SCALE_VAL", config.scale_val));
+    }
+
     jit.Merge(MakeTypeJitConstants(softmax_acc_dt, "SOFTMAX_ACCUMULATOR"));
 
 
@@ -206,9 +211,9 @@ CommonDispatchData PagedAttentionSDPAKernelOpt::SetDefault(const pa_sdpa_params&
 
     const auto& input = kernel_params.inputs[0];
     if (!input.is_dynamic()) {
-        const size_t batch_size = input.Batch().v;
-        const size_t seq_len = input.Feature().v;
-        const size_t tokens_num = batch_size * seq_len;
+        const size_t seq_num = input.Batch().v;
+        // const size_t seq_len = input.Feature().v;
+        // const size_t tokens_num = batch_size * seq_len;
 
         // const size_t num_of_portions =
         //     use_seq_len_split ? CeilDiv(kernel_params.configuration.max_context_len, seq_len_partition_size) : 1;
@@ -218,13 +223,13 @@ CommonDispatchData PagedAttentionSDPAKernelOpt::SetDefault(const pa_sdpa_params&
         const size_t head_size = static_cast<size_t>(kernel_params.conf.head_size);
 
         if (kernel_idx == 0) {
-            dispatch_data.gws = { tokens_num,
+            dispatch_data.gws = { seq_num,
                                   heads_num,
                                   head_size * num_of_portions };
             dispatch_data.lws = { 1, 1, head_size };
         } else {
-            dispatch_data.gws = { batch_size,
-                                  seq_len,
+            dispatch_data.gws = { seq_num,
+                                  1 /* seq_len */,
                                   head_size * heads_num };
             dispatch_data.lws = { 1, 1, subgroup_size };
         }

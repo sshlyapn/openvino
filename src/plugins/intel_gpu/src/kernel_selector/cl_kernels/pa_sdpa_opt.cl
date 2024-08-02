@@ -22,10 +22,13 @@
 
 ulong __attribute__((overloadable)) intel_get_cycle_counter( void );
 
+#define VLLM_BLOCKS_PER_PARTITION SEQ_LEN_PARTITION_SIZE / VLLM_BLOCK_SIZE
+
+
 #ifdef SDPA_STAGE_0
 
-// key shape   [num_blocks, NUM_HEADS, head_size, block_size]
-// value shape [num_blocks, NUM_HEADS, block_size, head_size]
+// key shape   [num_blocks, NUM_HEADS, head_size, VLLM_BLOCK_SIZE]
+// value shape [num_blocks, NUM_HEADS, VLLM_BLOCK_SIZE, head_size]
 
 #if SEQ_LEN_PARTITION_SIZE % VLLM_BLOCK_SIZE != 0
     #error pa_sdpa_opt.cl
@@ -47,11 +50,9 @@ KERNEL(pa_sdpa_opt)(
     const __global INPUT5_TYPE* block_indices,
     const __global INPUT6_TYPE* block_indices_begins,
     __global OUTPUT_TYPE* output
-#ifdef USE_SEQ_LEN_SPLIT
     , __global SOFTMAX_ACCUMULATOR_TYPE* exp_sums
     , __global SOFTMAX_ACCUMULATOR_TYPE* max_logits
     , __global OUTPUT_TYPE* tmp_out
-#endif
 ) {
     const uint seq_idx = get_global_id(0);
     const uint head_num_idx = get_global_id(1);
@@ -75,9 +76,13 @@ KERNEL(pa_sdpa_opt)(
     const uint total_blocks_num = CEIL_DIV(seq_len, VLLM_BLOCK_SIZE);
 
     __local OUTPUT_TYPE qk_vals_local[SHARED_MEM_SIZE];
+    __local SOFTMAX_ACCUMULATOR_TYPE qk_max_vals[SUBGROUPS_PER_WG];
+    __local SOFTMAX_ACCUMULATOR_TYPE qk_sum_vals[SUBGROUPS_PER_WG];
+
     SOFTMAX_ACCUMULATOR_TYPE qk_max = SOFTMAX_ACCUMULATOR_VAL_MIN;
 
     {
+
         INPUT0_TYPE q_val[HEAD_SIZE / SUBGROUP_SIZE];
         unroll_for (uint i = 0; i < HEAD_SIZE / SUBGROUP_SIZE; i++) {
             const uint query_idx = seq_idx * HEAD_SIZE * HEADS_NUM +
@@ -91,106 +96,62 @@ KERNEL(pa_sdpa_opt)(
 
         // blocks_num = blocks_num / SEQ_LEN_PARTITION_SIZE / VLLM_BLOCK_SIZE;
 
-        const uint blocks_per_sg = SEQ_LEN_PARTITION_SIZE / SUBGROUP_SIZE / SUBGROUPS_PER_WG;
-        const uint blocks_num =
+        // const uint blocks_per_sg = SEQ_LEN_PARTITION_SIZE / SUBGROUP_SIZE / SUBGROUPS_PER_WG;
+        const uint blocks_num_per_partition = min(total_blocks_num - partition_idx * VLLM_BLOCKS_PER_PARTITION, (uint)VLLM_BLOCKS_PER_PARTITION);
 
-        uint token_idx_debug = 0;
+        uint blocks_num = blocks_num_per_partition / SUBGROUPS_PER_WG;
+        if (sgid < blocks_num_per_partition % SUBGROUPS_PER_WG)
+            blocks_num++;
 
-        uint seq_start_block_idx = block_indices_begins[seq_idx] + partition_idx * (SEQ_LEN_PARTITION_SIZE / VLLM_BLOCK_SIZE) + ;
+        const uint start_block_idx = block_indices_begins[seq_idx] + partition_idx * VLLM_BLOCKS_PER_PARTITION + sgid;
         for (uint block_num = 0; block_num < blocks_num; block_num++) {
-            const uint block_offset = block_indices[seq_start_block_idx + block_num] * KV_CACHE_BLOCK_STRIDE;
+            const uint block_offset = block_indices[start_block_idx + block_num * SUBGROUPS_PER_WG] * HEAD_SIZE * HEADS_NUM * VLLM_BLOCK_SIZE + head_num_idx * HEAD_SIZE * VLLM_BLOCK_SIZE;
 
             INPUT0_TYPE qk_acc = INPUT0_VAL_ZERO;
 
-            #define KEY_VEC_SIZE 8
-            #define KEY_BLOCK_READ(ptr, offset) BLOCK_READN(INPUT1_TYPE, KEY_VEC_SIZE, ptr, offset);
+            #define KEY_VEC_SIZE 16
+            #define KEY_BLOCK_READ(ptr, offset) BLOCK_READN(INPUT1_TYPE, 1, ptr, offset);
             #define KEY_VEC MAKE_VECTOR_TYPE(INPUT1_TYPE, KEY_VEC_SIZE)
             unroll_for (uint qk_idx = 0; qk_idx < HEAD_SIZE / KEY_VEC_SIZE; qk_idx++) {
-                KEY_VEC key_vals = 0;
-                key_vals = BLOCK_READN(key_cache, block_offset + qk_idx * SUBGROUP_SIZE * KEY_VEC_SIZE);
+                KEY_VEC k_vals = 0;
+                unroll_for (uint i = 0; i < KEY_VEC_SIZE; i++) {
+                    k_vals[i] = KEY_BLOCK_READ(key_cache, block_offset + qk_idx * VLLM_BLOCK_SIZE * KEY_VEC_SIZE + i * SUBGROUP_SIZE);
+                }
 
                 unroll_for (uint i = 0; i < KEY_VEC_SIZE; i++) {
-                    qk_acc = mad(sub_group_broadcast(q_val[qk_idx / 2], (qk_idx & 1) * KEY_VEC_SIZE + i), key_vals, qk_acc);
+                    qk_acc = mad(sub_group_broadcast(q_val[qk_idx], i), k_vals[i], qk_acc);
                 }
+
+                // KEY_VEC_SIZE 16
+                // KEY_VEC k_vals = 0;
+                // k_vals = BLOCK_READN(key_cache, block_offset + qk_idx * VLLM_BLOCK_SIZE * KEY_VEC_SIZE);
+
+                // unroll_for (uint i = 0; i < KEY_VEC_SIZE; i++) {
+                //     qk_acc = mad(sub_group_broadcast(q_val[qk_idx / 2], (qk_idx % 2 /* qk_idx & 1 */) * KEY_VEC_SIZE + i), k_vals, qk_acc);
+                // }
             }
 
+#ifdef SCALE_VAL
+            qk_acc = TO_INPUT0_TYPE(SCALE_VAL) * qk_acc;
+#endif
+
+            if (partition_idx * SEQ_LEN_PARTITION_SIZE + block_num * SUBGROUPS_PER_WG * VLLM_BLOCK_SIZE + sgid * VLLM_BLOCK_SIZE + sglid >= seq_len)
+                qk_acc = INPUT0_VAL_MIN;
+
+            qk_max = SOFTMAX_ACCUMULATOR_MAX_FUNC(qk_max, TO_SOFTMAX_ACCUMULATOR_TYPE(qk_acc));
+
+            qk_vals_local[block_num * SUBGROUPS_PER_WG * VLLM_BLOCK_SIZE + sgid * VLLM_BLOCK_SIZE + sglid] = qk_acc;
         }
 
-            for (uint q_idx = 0; q_idx < Q_LOAD_ITERS; q_idx++) {
-                for (uint qk_idx = 0; qk_idx < QK_VALS_PER_SG_PER_ITER; qk_idx++) {
-                    uint current_token = (block_start_idx + block_num) * VLLM_BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + qk_idx;
-#if VLLM_BLOCK_SIZE % SUBGROUPS_PER_WG != 0
-                    // TODO: Optimize for VLLM_BLOCK_SIZE % SUBGROUPS_PER_WG != 0 case
-                    if (current_token >= context_len || sgid >= VLLM_BLOCK_SIZE / QK_VALS_PER_SG_PER_ITER)
-#else
-                    if (current_token >= context_len)
-#endif
-                        continue;
+        qk_max = sub_group_reduce_max(qk_max);
 
-                    const uint key_idx = block_offset +
-                                        (head_num_idx / NUM_QUERIES_PER_KV_HEAD) * (HEAD_SIZE / X_BLOCK_SIZE * VLLM_BLOCK_SIZE * X_BLOCK_SIZE) +
-                                        (X_BLOCK_SIZE * QK_VALS_PER_SG_PER_ITER) * sgid +
-                                        (SUBGROUP_SIZE / X_BLOCK_SIZE * VLLM_BLOCK_SIZE * X_BLOCK_SIZE) * q_idx +
-                                        (sglid / X_BLOCK_SIZE) * X_BLOCK_SIZE * VLLM_BLOCK_SIZE +
-                                        (sglid % X_BLOCK_SIZE) + qk_idx * X_BLOCK_SIZE;
-
-#if X_BLOCK_SIZE == 16
-                    #define KEY_BLOCK_READ(ptr, offset) BLOCK_READN(INPUT1_TYPE, 1, ptr, offset)
-                    INPUT1_TYPE k_val = KEY_BLOCK_READ(key_cache, key_idx);
-#else
-                    INPUT1_TYPE k_val = key_cache[key_idx];
-#endif
-
-                    qk[qk_idx] = mad(q_val[q_idx], k_val, qk[qk_idx]);
-                }
-            }
-
-            // Summurize qk calculation across all WIs and apply scale
-            for (uint qk_idx = 0; qk_idx < QK_VALS_PER_SG_PER_ITER; qk_idx++) {
-                const uint current_token = (block_start_idx + block_num) * VLLM_BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + qk_idx;
-#if VLLM_BLOCK_SIZE % SUBGROUPS_PER_WG != 0
-                if (current_token < context_len && sgid < VLLM_BLOCK_SIZE / QK_VALS_PER_SG_PER_ITER) {
-#else
-                if (current_token < context_len) {
-#endif
-                    qk[qk_idx] = sub_group_reduce_add(qk[qk_idx]);
-
-                    // Apply scale
-                    qk[qk_idx] = scale[0] * qk[qk_idx];
-
-                    // Apply attention mask for context processing stage
-                    const bool is_prefill_stage = INPUT0_FEATURE_NUM > 1;
-                    if (is_prefill_stage && current_token > token_idx) {
-                        qk[qk_idx] = qk[qk_idx] + OUTPUT_VAL_MIN;
-                    }
-
-                    qk_max = SOFTMAX_ACCUMULATOR_MAX_FUNC(qk_max, TO_SOFTMAX_ACCUMULATOR_TYPE(qk[qk_idx]));
-                }
-            }
-
-            // Save QK results to local memory
-#if VLLM_BLOCK_SIZE % SUBGROUPS_PER_WG != 0
-            if (sglid < QK_VALS_PER_SG_PER_ITER && sgid < VLLM_BLOCK_SIZE / QK_VALS_PER_SG_PER_ITER) {
-#else
-            if (sglid < QK_VALS_PER_SG_PER_ITER) {
-#endif
-                const uint current_token_global_idx = (block_start_idx + block_num) * VLLM_BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + sglid;
-#ifdef USE_SEQ_LEN_SPLIT
-                const uint current_token_local = block_num * VLLM_BLOCK_SIZE + sgid * QK_VALS_PER_SG_PER_ITER + sglid;
-#else
-                const uint current_token_local = current_token_global_idx;
-#endif
-                qk_vals_local[current_token_local] = current_token_global_idx >= context_len ? 0 : qk[sglid];
-            }
-        }
     }
 
     // Apply SoftMax operation
-    __local SOFTMAX_ACCUMULATOR_TYPE qk_max_vals[SUBGROUPS_PER_WG];
-    __local SOFTMAX_ACCUMULATOR_TYPE qk_sum_vals[SUBGROUPS_PER_WG];
     {
-        if (sglid == 0)
+        if (sglid == 0) {
             qk_max_vals[sgid] = qk_max;
+        }
 
         barrier(CLK_LOCAL_MEM_FENCE);
 
@@ -202,23 +163,19 @@ KERNEL(pa_sdpa_opt)(
         qk_max = sub_group_reduce_max(qk_max);
 
         SOFTMAX_ACCUMULATOR_TYPE exp_sum = SOFTMAX_ACCUMULATOR_VAL_ZERO;
-#ifdef USE_SEQ_LEN_SPLIT
-        const uint qk_num = (num_of_portions == 1) ? CEIL_DIV(context_len, SUBGROUPS_PER_WG * SUBGROUP_SIZE)
-                                                   : CEIL_DIV(SEQ_LEN_PARTITION_SIZE, SUBGROUPS_PER_WG * SUBGROUP_SIZE);
-#else
-        const uint qk_num = CEIL_DIV(context_len, SUBGROUPS_PER_WG * SUBGROUP_SIZE);
-#endif
-        for (uint qk_idx = 0; qk_idx < qk_num; qk_idx++) {
+
+        const uint qk_iters_num = CEIL_DIV(SEQ_LEN_PARTITION_SIZE, SUBGROUPS_PER_WG * SUBGROUP_SIZE);
+        for (uint qk_idx = 0; qk_idx < qk_iters_num; qk_idx++) {
             const uint local_data_idx = qk_idx * (SUBGROUPS_PER_WG * SUBGROUP_SIZE) + sgid * SUBGROUP_SIZE + sglid;
-            const uint global_data_idx = block_start_idx * VLLM_BLOCK_SIZE + qk_idx * (SUBGROUPS_PER_WG * SUBGROUP_SIZE) + sgid * SUBGROUP_SIZE + sglid;
-#ifdef USE_SEQ_LEN_SPLIT
-            if (global_data_idx < context_len && local_data_idx < SEQ_LEN_PARTITION_SIZE) {
-#else
-            if (global_data_idx < context_len) {
-#endif
-                SOFTMAX_ACCUMULATOR_TYPE val = native_exp(TO_SOFTMAX_ACCUMULATOR_TYPE(qk_vals_local[local_data_idx]) - qk_max);
-                exp_sum += val;
-                qk_vals_local[local_data_idx] = TO_OUTPUT_TYPE(val);
+            const uint global_data_idx = partition_idx * SEQ_LEN_PARTITION_SIZE + qk_idx * (SUBGROUPS_PER_WG * SUBGROUP_SIZE) + sgid * SUBGROUP_SIZE + sglid;
+
+            // ??? Why it was:
+            // if (global_data_idx < context_len && local_data_idx < SEQ_LEN_PARTITION_SIZE) {
+            if (global_data_idx < seq_len) {
+                SOFTMAX_ACCUMULATOR_TYPE qk_new = native_exp(TO_SOFTMAX_ACCUMULATOR_TYPE(qk_vals_local[local_data_idx]) - qk_max);
+                qk_vals_local[local_data_idx] = TO_OUTPUT_TYPE(qk_new);
+
+                exp_sum += qk_new;
             }
         }
 
@@ -237,28 +194,23 @@ KERNEL(pa_sdpa_opt)(
         // Final sum of all exp_sum values
         exp_sum = sub_group_reduce_add(exp_sum);
 
-        const SOFTMAX_ACCUMULATOR_TYPE inv_sum = SOFTMAX_ACCUMULATOR_VAL_ONE / exp_sum;
-
-        for (uint qk_idx = 0; qk_idx < qk_num; qk_idx++) {
+        for (uint qk_idx = 0; qk_idx < qk_iters_num; qk_idx++) {
             const uint local_data_idx = qk_idx * (SUBGROUPS_PER_WG * SUBGROUP_SIZE) + sgid * SUBGROUP_SIZE + sglid;
-            const uint global_data_idx = block_start_idx * VLLM_BLOCK_SIZE + qk_idx * (SUBGROUPS_PER_WG * SUBGROUP_SIZE) + sgid * SUBGROUP_SIZE + sglid;
-#ifdef USE_SEQ_LEN_SPLIT
-            if (global_data_idx < context_len && local_data_idx < SEQ_LEN_PARTITION_SIZE) {
-#else
-            if (global_data_idx < context_len) {
-#endif
-                SOFTMAX_ACCUMULATOR_TYPE val = TO_SOFTMAX_ACCUMULATOR_TYPE(qk_vals_local[local_data_idx]) * inv_sum;
-                qk_vals_local[local_data_idx] = TO_OUTPUT_TYPE(val);
+            const uint global_data_idx = partition_idx * SEQ_LEN_PARTITION_SIZE + qk_idx * (SUBGROUPS_PER_WG * SUBGROUP_SIZE) + sgid * SUBGROUP_SIZE + sglid;
+
+            // ??? Why it was:
+            // if (global_data_idx < context_len && local_data_idx < SEQ_LEN_PARTITION_SIZE) {
+            if (global_data_idx < seq_len) {
+                SOFTMAX_ACCUMULATOR_TYPE qk_new = TO_SOFTMAX_ACCUMULATOR_TYPE(qk_vals_local[local_data_idx]) / exp_sum;
+                qk_vals_local[local_data_idx] = TO_OUTPUT_TYPE(qk_new);
             }
         }
 
         barrier(CLK_LOCAL_MEM_FENCE);
 
-#ifdef USE_SEQ_LEN_SPLIT
         {
             // Save temporary exm_sums and max_logits values for each portion
             if (num_of_portions > 1 && sgid == 0) {
-                const uint num_of_portions = get_num_groups(2);
                 const uint exp_sums_offset = seq_idx * HEADS_NUM * num_of_portions +
                                              head_num_idx * num_of_portions +
                                              partition_idx;
@@ -268,57 +220,56 @@ KERNEL(pa_sdpa_opt)(
                 max_logits[max_logits_offset] = qk_max;
             }
         }
-#endif
     }
 
     {
         OUTPUT_TYPE acc = OUTPUT_VAL_ZERO;
 
-#ifdef USE_SEQ_LEN_SPLIT
-        const uint qk_num = ((partition_idx + 1) * SEQ_LEN_PARTITION_SIZE > context_len) ? (context_len - (partition_idx * SEQ_LEN_PARTITION_SIZE))
-                                                                                    : (SEQ_LEN_PARTITION_SIZE);
-#else
-        const uint qk_num = context_len;
-#endif
-        for (uint qk_idx = 0; qk_idx < qk_num; qk_idx += SUBGROUP_SIZE) {
-            const uint qk_offset_local = qk_idx + sglid;
-            const uint qk_offset_global = block_start_idx * VLLM_BLOCK_SIZE + qk_offset_local;
+        // const uint qk_num = ((partition_idx + 1) * SEQ_LEN_PARTITION_SIZE > context_len) ? (context_len - (partition_idx * SEQ_LEN_PARTITION_SIZE))
+        //                                                                             : (SEQ_LEN_PARTITION_SIZE);
 
-            OUTPUT_TYPE qk = qk_offset_global < context_len ? qk_vals_local[qk_offset_local] : OUTPUT_VAL_ZERO;
+        const uint partition_seq_len = min(seq_len - partition_idx * SEQ_LEN_PARTITION_SIZE, (uint)SEQ_LEN_PARTITION_SIZE);
+        uint blocks_num_per_partition = min(total_blocks_num - partition_idx * VLLM_BLOCKS_PER_PARTITION, (uint)VLLM_BLOCKS_PER_PARTITION);
 
-            const uint block_idx = block_tables[batch_idx * blocks_pitch + block_start_idx + (qk_idx / VLLM_BLOCK_SIZE)];
+        uint leftovers = blocks_num_per_partition * VLLM_BLOCK_SIZE % partition_seq_len;
+        if (leftovers != 0)
+            blocks_num_per_partition = blocks_num_per_partition - 1;
 
-            const uint value_cache_offset = block_idx * KV_CACHE_BLOCK_STRIDE +
-                                            (head_num_idx / NUM_QUERIES_PER_KV_HEAD) * (HEAD_SIZE * VLLM_BLOCK_SIZE) +
-                                            sgid * (SUBGROUP_SIZE * VLLM_BLOCK_SIZE) +
-                                            sglid * VLLM_BLOCK_SIZE +
-                                            ((qk_idx / SUBGROUP_SIZE) % (VLLM_BLOCK_SIZE / SUBGROUP_SIZE)) * SUBGROUP_SIZE;
+        const uint start_block_idx = block_indices_begins[seq_idx] + partition_idx * VLLM_BLOCKS_PER_PARTITION;
+        for (uint block_num = 0; block_num < blocks_num_per_partition; block_num++) {
+            const uint block_offset = block_indices[start_block_idx + block_num] * HEAD_SIZE * HEADS_NUM * VLLM_BLOCK_SIZE + head_num_idx * HEAD_SIZE * VLLM_BLOCK_SIZE + sgid * SUBGROUP_SIZE;
 
-            #define VALUE_VEC_TYPE MAKE_VECTOR_TYPE(INPUT2_TYPE, SUBGROUP_SIZE)
-            #define AS_VALUE_VEC(val) CAT(as_, VALUE_VEC_TYPE)(val)
-#if INPUT2_TYPE_SIZE == 4
-            #define VALUE_VLOAD(offset, ptr) CAT(vload, SUBGROUP_SIZE)(offset, ptr)
-#else
-            #define VALUE_VLOAD(offset, ptr) CAT(vload, SUBGROUP_SIZE)(offset, (__global ushort*)(ptr))
-#endif
-            VALUE_VEC_TYPE v_val = AS_VALUE_VEC(VALUE_VLOAD(0, value_cache + value_cache_offset));
+            #define VALUE_VEC_SIZE 16
+            #define VALUE_BLOCK_READ(ptr, offset) BLOCK_READN(INPUT2_TYPE, 1, ptr, offset);
+            #define VALUE_VEC MAKE_VECTOR_TYPE(INPUT2_TYPE, VALUE_VEC_SIZE)
 
-            if (block_start_idx * VLLM_BLOCK_SIZE + qk_idx + SUBGROUP_SIZE <= context_len) {
-                unroll_for (uint v_idx = 0; v_idx < SUBGROUP_SIZE; v_idx++) {
-                    OUTPUT_TYPE qk_val = sub_group_broadcast(qk, v_idx);
-                    acc = mad(qk_val, v_val[v_idx], acc);
-                }
-            } else {
-                for (uint v_idx = 0; v_idx < SUBGROUP_SIZE; v_idx++) {
-                    OUTPUT_TYPE qk_val = sub_group_broadcast(qk, v_idx);
-                    if (block_start_idx * VLLM_BLOCK_SIZE + qk_idx + v_idx < context_len) {
-                        acc = mad(qk_val, v_val[v_idx], acc);
-                    }
-                }
+            #if VALUE_VEC_SIZE != VLLM_BLOCK_SIZE
+            #error pa_sdpa_opt.cl
+            #endif
+
+            OUTPUT_TYPE qk_val = qk_vals_local[block_num * VLLM_BLOCK_SIZE + sglid];
+
+            VALUE_VEC value_vals;
+            unroll_for (uint i = 0; i < VALUE_VEC_SIZE; i++) {
+                value_vals[i] = VALUE_BLOCK_READ(value_cache, block_offset);
+            }
+
+            unroll_for (uint i = 0; i < VALUE_VEC_SIZE; i++) {
+                acc = mad(sub_group_broadcast(qk_val, i), value_vals[i], acc);
             }
         }
 
-#ifdef USE_SEQ_LEN_SPLIT
+        if (leftovers != 0) {
+            const uint last_block_idx = start_block_idx + blocks_num_per_partition;
+            const uint block_offset = block_indices[last_block_idx] * HEAD_SIZE * HEADS_NUM * VLLM_BLOCK_SIZE + head_num_idx * HEAD_SIZE * VLLM_BLOCK_SIZE + sgid * SUBGROUP_SIZE;
+
+            OUTPUT_TYPE qk_val = qk_vals_local[blocks_num_per_partition * VLLM_BLOCK_SIZE + sglid];
+            for (uint i = 0; i < leftovers; i++) {
+                INPUT2_TYPE value_val = BLOCK_READN(INPUT2_TYPE, 1, value_cache, block_offset + i * HEAD_SIZE);
+                acc = mad(sub_group_broadcast(qk_val, i), value_val, acc);
+            }
+        }
+
         if (num_of_portions > 1) {
             const uint tmp_out_offset = seq_idx * (HEADS_NUM * HEAD_SIZE * num_of_portions) +
                                         head_num_idx * (HEAD_SIZE * num_of_portions) +
@@ -328,10 +279,7 @@ KERNEL(pa_sdpa_opt)(
 
             // tmp_output data layout [num_seqs, num_heads, num_portions, head_size]
             tmp_out[tmp_out_offset] = acc;
-        }
-        else
-#endif
-        {
+        } else {
             const uint output_offset = seq_idx * (HEADS_NUM * HEAD_SIZE) +
                                        head_num_idx * HEAD_SIZE +
                                        sgid * SUBGROUP_SIZE +
