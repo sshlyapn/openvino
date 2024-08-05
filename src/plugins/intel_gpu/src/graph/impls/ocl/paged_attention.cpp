@@ -55,9 +55,10 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
     void load(BinaryInputBuffer& ib) override {
         parent::load(ib);
         if (is_dynamic()) {
-            auto& kernel_selector = kv_cache_update_kernel_selector_t::Instance();
-            auto kernel_impl = kernel_selector.GetImplementation(_kernels_data[Stage::KV_CACHE_UPDATE].kernelName);
-            kernel_impl->GetUpdateDispatchDataFunc(_kernels_data[Stage::KV_CACHE_UPDATE]);
+            OPENVINO_ASSERT(false, "Unimplemented load call");
+            // auto& kernel_selector = kv_cache_update_kernel_selector_t::Instance();
+            // auto kernel_impl = kernel_selector.GetImplementation(_kernels_data[Stage::KV_CACHE_UPDATE].kernelName);
+            // kernel_impl->GetUpdateDispatchDataFunc(_kernels_data[Stage::KV_CACHE_UPDATE]);
 
             auto& sdpa_kernel_selector = sdpa_kernel_selector_t::Instance();
             auto bt_kernel_impl = sdpa_kernel_selector.GetImplementation(_kernels_data[Stage::SDPA].kernelName);

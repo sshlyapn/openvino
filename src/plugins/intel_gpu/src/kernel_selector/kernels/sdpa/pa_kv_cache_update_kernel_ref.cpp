@@ -121,7 +121,7 @@ CommonDispatchData KVCacheUpdateKernelRef::SetDefault(const kv_cache_update_para
     const auto& key_cache = kernel_params.outputs[0];
     const auto& value_cache = kernel_params.outputs[1];
     if (!value_cache.is_dynamic() && !key_cache.is_dynamic()) {
-        bool is_prefill = kernel_params.inputs[0].Batch().v == kernel_params.inputs[4].Batch().v;
+        bool is_prefill = kernel_params.inputs[0].Batch().v != kernel_params.inputs[4].Batch().v;
 
         if (is_prefill) {
             const auto& block_indices_input = kernel_params.inputs[3];
