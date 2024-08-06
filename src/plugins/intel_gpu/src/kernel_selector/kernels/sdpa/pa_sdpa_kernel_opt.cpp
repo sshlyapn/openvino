@@ -33,28 +33,28 @@ void PagedAttentionSDPAKernelOpt::GetUpdateDispatchDataFunc(KernelData& kd) cons
         kd.kernels[0].skip_execution = false;
 
         if (expected_kernels_num == 2) {
-            // const auto& input = prim_params.inputs[0];
-            // const size_t batch_size = input.Batch().v;
+            const auto& input = prim_params.inputs[0];
+            const size_t batch_size = input.Batch().v;
             // const size_t seq_len = input.Feature().v;
-            // const size_t tokens_num = batch_size * seq_len;
-            // const size_t num_of_portions = CeilDiv(prim_params.configuration.max_context_len, seq_len_partition_size);
+            const size_t sequences_number = batch_size;
+            const size_t num_of_partitions = CeilDiv(prim_params.max_context_len, seq_len_partition_size);
 
-            const size_t num_of_portions = 1;
+            // const size_t num_of_partitions = 1;
 
             auto dispatchData = SetDefault(prim_params, 1);
             kd.kernels[1].params.workGroups.global = dispatchData.gws;
             kd.kernels[1].params.workGroups.local = dispatchData.lws;
             // Write directly to the output in SDPA main kernel in case of single portion
-            kd.kernels[1].skip_execution = num_of_portions == 1;
+            kd.kernels[1].skip_execution = num_of_partitions == 1;
 
             auto buf_dt_size = 4;
-            // auto buf_elements_count = tokens_num * prim_params.configuration.heads_num * num_of_portions;
-            auto buf_elements_count = 1;
+            auto buf_elements_count = sequences_number * prim_params.conf.heads_num * num_of_partitions;
+            // auto buf_elements_count = 1;
             auto buf_size = buf_elements_count * buf_dt_size;
 
             auto tmp_out_dt_size = 4;
-            // auto tmp_out_elements_count = tokens_num * prim_params.configuration.heads_num * num_of_portions * prim_params.configuration.head_size;
-            auto tmp_out_elements_count = 1;
+            auto tmp_out_elements_count = sequences_number * prim_params.conf.heads_num * prim_params.conf.head_size * num_of_partitions;
+            // auto tmp_out_elements_count = 1;
             auto tmp_out_size = tmp_out_elements_count * tmp_out_dt_size;
 
             kd.internalBufferSizes.clear();
@@ -63,12 +63,12 @@ void PagedAttentionSDPAKernelOpt::GetUpdateDispatchDataFunc(KernelData& kd) cons
             kd.internalBufferSizes.push_back(tmp_out_size);
             kd.internalBufferDataType = softmax_acc_dt;
 
-            ScalarDescriptor num_of_portions_scalar;
-            num_of_portions_scalar.t = ScalarDescriptor::Types::UINT32;
-            num_of_portions_scalar.v.u32 = num_of_portions;
+            ScalarDescriptor num_of_partitions_scalar;
+            num_of_partitions_scalar.t = ScalarDescriptor::Types::UINT32;
+            num_of_partitions_scalar.v.u32 = num_of_partitions;
 
             kd.kernels[1].params.scalars.resize(1);
-            kd.kernels[1].params.scalars[0] = num_of_portions_scalar;
+            kd.kernels[1].params.scalars[0] = num_of_partitions_scalar;
         }
     };
 }
@@ -115,20 +115,12 @@ KernelsData PagedAttentionSDPAKernelOpt::GetKernelsData(const Params& params) co
             if (i == 1) // Remove unused shape_info argument
                 kernel.params.arguments.erase(kernel.params.arguments.begin());
 
-            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 0});
-            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 1});
-            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 2});
-            kd.internalBufferSizes.clear();
-            kd.internalBufferSizes.push_back(1);
-            kd.internalBufferSizes.push_back(1);
-            kd.internalBufferSizes.push_back(1);
+            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 6});
+            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 7});
+            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 8});
             kd.internalBufferDataType = softmax_acc_dt;
 
             if (i == 1) {
-                ScalarDescriptor block_elem_num;
-                block_elem_num.t = ScalarDescriptor::Types::UINT32;
-                block_elem_num.v.u32 = 0;
-                kernel.params.scalars.push_back(block_elem_num);
                 kernel.params.arguments.push_back({ArgumentDescriptor::Types::SCALAR, 0});
             }
         }
@@ -215,22 +207,22 @@ CommonDispatchData PagedAttentionSDPAKernelOpt::SetDefault(const pa_sdpa_params&
         // const size_t seq_len = input.Feature().v;
         // const size_t tokens_num = batch_size * seq_len;
 
-        // const size_t num_of_portions =
-        //     use_seq_len_split ? CeilDiv(kernel_params.configuration.max_context_len, seq_len_partition_size) : 1;
+        const size_t num_of_partitions =
+            use_seq_len_split ? CeilDiv(kernel_params.max_context_len, seq_len_partition_size) : 1;
 
-        const size_t num_of_portions = 1;
+        // const size_t num_of_partitions = 1;
         const size_t heads_num = static_cast<size_t>(kernel_params.conf.heads_num);
         const size_t head_size = static_cast<size_t>(kernel_params.conf.head_size);
 
         if (kernel_idx == 0) {
             dispatch_data.gws = { seq_num,
                                   heads_num,
-                                  head_size * num_of_portions };
+                                  head_size * num_of_partitions };
             dispatch_data.lws = { 1, 1, head_size };
         } else {
             dispatch_data.gws = { seq_num,
-                                  1 /* seq_len */,
-                                  head_size * heads_num };
+                                  heads_num,
+                                  head_size };
             dispatch_data.lws = { 1, 1, subgroup_size };
         }
     }

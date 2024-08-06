@@ -374,10 +374,7 @@ void SDPAKernelOpt::GetUpdateDispatchDataFunc(KernelData& kd) const {
             kernel_data.kernels[0].skip_execution = false;
 
             auto blocks_indexes_dt = Datatype::INT32;
-            // TODO: recalculate
-            auto blocks_indexes_buf_size = dispatch_data.gws[1] * BytesPerElement(blocks_indexes_dt) / BytesPerElement(kernel_data.internalBufferDataType);
-
-            std::cout << "Set PA 3-5 internal inputs: " << dispatch_data.gws[0] << "\n";
+            auto blocks_indexes_buf_size = dispatch_data.gws[1] * BytesPerElement(blocks_indexes_dt);
 
             kernel_data.internalBufferSizes.push_back(blocks_indexes_buf_size);
             kernel_data.internalBufferSizes.push_back(blocks_indexes_buf_size);

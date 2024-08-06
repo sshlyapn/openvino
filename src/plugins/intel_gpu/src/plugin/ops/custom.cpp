@@ -237,8 +237,8 @@ void CreatePagedAttention(ProgramBuilder& p, const std::shared_ptr<ov::Node>& op
     prim.output_data_types = get_output_data_types(op);
     prim.output_paddings = get_output_paddings(op);
 
-    std::cout << "PA op->get_output_size(): " << op->get_output_size() << "\n";
-    std::cout << "PA op->get_input_size(): " << op->get_input_size() << "\n";
+    GPU_DEBUG_TRACE_DETAIL << "PA op->get_output_size(): " << op->get_output_size() << "\n";
+    GPU_DEBUG_TRACE_DETAIL << "PA op->get_input_size(): " << op->get_input_size() << "\n";
 
     OPENVINO_ASSERT(prim.num_outputs == 1, "[GPU] Unexpected outputs number");
 

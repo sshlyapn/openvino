@@ -44,16 +44,17 @@ void paged_attention_inst::on_execute() {
     GPU_DEBUG_TRACE_DETAIL << "paged_attention_inst::on_execute\n";
 
     const auto& ibuf_layouts = _impl->get_internal_buffer_layouts();
-    std::cout << "Internal buffers layouts: " << ibuf_layouts.size() << "\n";
-    std::cout << "Internal buffers: " << _intermediates_memory.size() << "\n";
+    GPU_DEBUG_TRACE_DETAIL << "Internal buffers layouts: " << ibuf_layouts.size() << "\n";
+    GPU_DEBUG_TRACE_DETAIL << "Internal buffers: " << _intermediates_memory.size() << "\n";
 
     if (_intermediates_memory.size() < 6) {
-        std::cout << "Number of intermediate buffers is less than expected\n";
+        GPU_DEBUG_TRACE_DETAIL << "Number of intermediate buffers is less than expected\n";
         return;
     }
 
+
     for (size_t i = 0; i < ibuf_layouts.size(); i++) {
-        std::cout << "Layout " << ibuf_layouts[i].to_short_string() << " mem = " << _intermediates_memory[i]->buffer_ptr() << ", " << _intermediates_memory[i]->get_layout().to_short_string() << "\n";
+        GPU_DEBUG_TRACE_DETAIL << "Layout " << ibuf_layouts[i].to_short_string() << " mem = " << _intermediates_memory[i]->buffer_ptr() << ", " << _intermediates_memory[i]->get_layout().to_short_string() << "\n";
     }
 
     auto print_arr = [&](cldnn::mem_lock<int32_t, cldnn::mem_lock_type::read>& vec, size_t max_len) {
@@ -61,15 +62,15 @@ void paged_attention_inst::on_execute() {
         for (size_t i = 0; i < std::min(max_len, vec.size()); i++) {
             ss << vec[i] << ", ";
         }
-        std::cout << "Array from graph (len=" << vec.size() << ") content: " << ss.str() << "\n";
+        GPU_DEBUG_TRACE_DETAIL << "subsequence_begins from graph (len=" << vec.size() << ") content: " << ss.str() << "\n";
     };
 
-    auto print_arr2 = [&](std::vector<int32_t> vec, size_t max_len) {
+    auto print_arr2 = [&](std::vector<int32_t> vec, size_t max_len, std::string name) {
         std::stringstream ss;
         for (size_t i = 0; i < std::min(max_len, vec.size()); i++) {
             ss << vec[i] << ", ";
         }
-        std::cout << "Array blocks_indexes content: " << ss.str() << "\n";
+        GPU_DEBUG_TRACE_DETAIL << name << " content: " << ss.str() << "\n";
     };
 
 
@@ -101,9 +102,9 @@ void paged_attention_inst::on_execute() {
     }
 
     print_arr(subsequence_begins_mem_lock, subsequence_begins_mem_lock.size());
-    print_arr2(blocks_indexes_start, blocks_indexes_start.size());
-    print_arr2(blocks_indexes_end, blocks_indexes_end.size());
-    print_arr2(gws_seq_indexes_correspondence, gws_seq_indexes_correspondence.size());
+    print_arr2(blocks_indexes_start, blocks_indexes_start.size(), "blocks_indexes_start");
+    print_arr2(blocks_indexes_end, blocks_indexes_end.size(), "blocks_indexes_end");
+    print_arr2(gws_seq_indexes_correspondence, gws_seq_indexes_correspondence.size(), "gws_seq_indexes_correspondence");
 
     auto buf_size = _intermediates_memory[3]->get_layout().bytes_count();
     mem_lock<int32_t, mem_lock_type::write> blocks_indexes_start_lock(_intermediates_memory[3], stream);

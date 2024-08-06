@@ -687,7 +687,7 @@ std::vector<cldnn::event::ptr> SyncInferRequest::prepare_input(const std::string
         for (size_t i = 0; i < max_len; i++) {
             ss << vec[i] << ", ";
         }
-        std::cout << "Set_input parameter:input_ids (max-len=" << max_len << ") content: " << ss.str() << "\n";
+        GPU_DEBUG_TRACE_DETAIL << "Set_input parameter:input_ids (max-len=" << max_len << ") content: " << ss.str() << "\n";
     };
 
     if (internal_name == "parameter:input_ids") {

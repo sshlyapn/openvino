@@ -459,20 +459,20 @@ void primitive_inst::update_shape() {
         const auto scale_mem = constant_mem.at(9);
         mem_lock<ov::float16, mem_lock_type::read> scale_mem_lock(scale_mem, _network.get_stream());
 
-        auto print_arr = [&](cldnn::mem_lock<int32_t, cldnn::mem_lock_type::read>& vec, size_t max_len) {
+        auto print_arr = [&](cldnn::mem_lock<int32_t, cldnn::mem_lock_type::read>& vec, size_t max_len, std::string name) {
             std::stringstream ss;
             for (size_t i = 0; i < std::min(max_len, vec.size()); i++) {
                 ss << vec[i] << ", ";
             }
-            std::cout << "Array (len=" << vec.size() << ") content: " << ss.str() << "\n";
+            GPU_DEBUG_TRACE_DETAIL << name << " (len=" << vec.size() << ") content: " << ss.str() << "\n";
         };
 
-        print_arr(past_lens_mem_lock, past_lens_mem_lock.size());
-        print_arr(subsequence_begins_mem_lock, subsequence_begins_mem_lock.size());
-        print_arr(block_indices_mem_lock, block_indices_mem_lock.size());
-        print_arr(block_indices_begins_mem_lock, block_indices_begins_mem_lock.size());
-        print_arr(max_len_mem_lock, max_len_mem_lock.size());
-        std::cout << "Scale is " << scale_mem_lock[0] << " " << scale_mem->get_layout().to_short_string() << "\n";
+        print_arr(past_lens_mem_lock, past_lens_mem_lock.size(), "past_lens");
+        print_arr(subsequence_begins_mem_lock, subsequence_begins_mem_lock.size(), "subsequence_begins");
+        print_arr(block_indices_mem_lock, block_indices_mem_lock.size(), "block_indices");
+        print_arr(block_indices_begins_mem_lock, block_indices_begins_mem_lock.size(), "block_indices_begins");
+        print_arr(max_len_mem_lock, max_len_mem_lock.size(), "max_len");
+        GPU_DEBUG_TRACE_DETAIL << "Scale is " << scale_mem_lock[0] << " " << scale_mem->get_layout().to_short_string() << "\n";
     }
 
     auto update_output_layout = [&](layout& layout, size_t idx) {

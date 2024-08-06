@@ -132,7 +132,7 @@ CommonDispatchData KVCacheUpdateKernelRef::SetDefault(const kv_cache_update_para
             dispatch_data.gws = {blocks_number, heads_number, SUBGROUP_SIZE};
             dispatch_data.lws = {1, 1, SUBGROUP_SIZE};
         } else {
-            const auto& key_input = kernel_params.inputs[1];
+            const auto& key_input = kernel_params.inputs[0];
 
             auto tokens_number = key_input.Batch().v;
             auto heads_number = static_cast<size_t>(kernel_params.conf.heads_num);

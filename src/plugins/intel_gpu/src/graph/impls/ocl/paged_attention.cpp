@@ -82,12 +82,10 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
             args.outputs = { instance.input_memory_ptr(3),  /* key_cache */
                              instance.input_memory_ptr(4)   /* value_cache */ };
         } else if (stage == Stage::SDPA) {
-            if (kernel_idx == 0) {
-                args.inputs = { instance.input_memory_ptr(0), /* query */
-                                instance.input_memory_ptr(1), /* key */
-                                instance.input_memory_ptr(2), /* value */
-                                instance.input_memory_ptr(6), /* subsequence_begins */ };
-            }
+            args.inputs = { instance.input_memory_ptr(0), /* query */
+                            instance.input_memory_ptr(1), /* key */
+                            instance.input_memory_ptr(2), /* value */
+                            instance.input_memory_ptr(6), /* subsequence_begins */ };
 
             args.outputs = { instance.output_memory_ptr(0) };
         } else if (stage == Stage::PA_SDPA) {
@@ -100,7 +98,9 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
                                 instance.input_memory_ptr(7), /* block_indices */
                                 instance.input_memory_ptr(8), /* block_indices_begins */ };
             } else {
-                std::cout << "PA finalization kernel arguments not configured yet\n";
+                args.inputs = { instance.input_memory_ptr(5), /* past_lens */ };
+
+                args.outputs = { instance.output_memory_ptr(0) };
             }
 
             args.outputs = { instance.output_memory_ptr(0) };
@@ -169,6 +169,8 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
 
         execute_stage(events, instance, res_events, Stage::KV_CACHE_UPDATE);
 
+        // TODO: optimize get intermediate buffer function with respect to stage
+
         std::vector<event::ptr> dep_events(res_events.begin(), res_events.end());
         if (is_prefill_stage(*instance.get_impl_params())) {
             execute_stage(dep_events, instance, res_events, Stage::SDPA);
@@ -200,7 +202,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         return config;
     }
 
-    static sdpa_kernel_params_t get_new_sdpa_kernel_params(const kernel_impl_params& impl_param, bool is_dynamic = false) {
+    static sdpa_kernel_params_t get_sdpa_kernel_params(const kernel_impl_params& impl_param, bool is_dynamic = false) {
         auto params = get_default_params<kernel_selector::sdpa_params>(impl_param, is_dynamic);
 
         const auto query_layout = impl_param.get_input_layout(0);
@@ -241,10 +243,10 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
                 for (size_t i = 0; i < subsequence_begins.size() - 1; i++) {
                     auto prompt_length = subsequence_begins[i + 1] - subsequence_begins[i];
                     aligned_seq_len += align_to(prompt_length, target_seq_len_block_size);
-                    std::cout << "Res: " << i << ", " << prompt_length << " " << target_seq_len_block_size << " " << align_to(prompt_length, target_seq_len_block_size) << "\n";
+                    GPU_DEBUG_TRACE_DETAIL << "Res: " << i << ", " << prompt_length << " " << target_seq_len_block_size << " " << align_to(prompt_length, target_seq_len_block_size) << "\n";
                 }
 
-                std::cout << "Aligned seq_len = " << aligned_seq_len << " size=" << subsequence_begins.size() << "\n";
+                GPU_DEBUG_TRACE_DETAIL << "Aligned seq_len = " << aligned_seq_len << " size=" << subsequence_begins.size() << "\n";
                 return aligned_seq_len;
             };
             GPU_DEBUG_TRACE_DETAIL << "update_dispatch_data1\n";
@@ -255,7 +257,6 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
 
             params.paged_attention_aligned_seq_len = align_seq_len(subsequence_begins_mem_lock);
         }
-
         params.set_dynamic_shape_offsets(in_tensor_to_offset_map, out_tensor_to_offset_map);
 
         return params;
@@ -327,14 +328,6 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
 
         auto output = impl_param.get_output_layout(0);
 
-        // args.inputs = { instance.input_memory_ptr(0), /* query */
-        //                 instance.input_memory_ptr(3), /* key_cache */
-        //                 instance.input_memory_ptr(4), /* value_cache */
-        //                 instance.input_memory_ptr(5), /* past_lens */
-        //                 instance.input_memory_ptr(6), /* subsequence_begins */
-        //                 instance.input_memory_ptr(7), /* block_indices */
-        //                 instance.input_memory_ptr(8), /* block_indices_begins */ };
-
         params.is_shape_agnostic = is_dynamic;
         params.stage_id = 0; // TODO: can be removed
         params.inputs.resize(7);
@@ -352,6 +345,13 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         GPU_DEBUG_TRACE_DETAIL << "get_pa_sdpa_params 2\n";
 
         params.conf = get_sdpa_configuration(impl_param);
+
+        if (!is_prefill_stage(impl_param) && !is_dynamic) {
+            const auto& input_mem = impl_param.memory_deps;
+            const auto max_context_len = input_mem.at(12);
+            mem_lock<int32_t, mem_lock_type::read> max_context_len_mem_lock(max_context_len, *impl_param.strm);
+            params.max_context_len = max_context_len_mem_lock[0];
+        }
 
         const auto& in_offsets_map = impl_param.in_port_to_shape_info_offset;
         const auto& out_offsets_map = impl_param.out_port_to_shape_info_offset;
@@ -379,11 +379,11 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         auto past_lens_shape = impl_param.get_input_layout(5).get_partial_shape();
 
         if (query_shape.is_static() && past_lens_shape.is_static()) {
-            std::cout << "Prefill stage: " << (query_shape[0].get_length() != past_lens_shape[0].get_length()) << " " << query_shape[0].get_length() << " " << past_lens_shape[0].get_length() << "\n";
+            GPU_DEBUG_TRACE_DETAIL << "Prefill stage: " << (query_shape[0].get_length() != past_lens_shape[0].get_length()) << " " << query_shape[0].get_length() << " " << past_lens_shape[0].get_length() << "\n";
             return query_shape[0].get_length() != past_lens_shape[0].get_length();
         }
 
-        std::cout << "Prefill stage: false\n";
+        GPU_DEBUG_TRACE_DETAIL << "Prefill stage: false\n";
         return false;
     }
 
@@ -394,7 +394,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         auto& kv_cache_update_kernel_selector = kv_cache_update_kernel_selector_t::Instance();
         kernels_data.push_back(kv_cache_update_kernel_selector.get_best_kernel(kv_cache_update_kernel_params));
 
-        auto sdpa_kernel_params = get_new_sdpa_kernel_params(impl_param, impl_param.is_dynamic());
+        auto sdpa_kernel_params = get_sdpa_kernel_params(impl_param, impl_param.is_dynamic());
         auto& sdpa_kernel_selector = sdpa_kernel_selector_t::Instance();
         kernels_data.push_back(sdpa_kernel_selector.get_best_kernel(sdpa_kernel_params));
 
@@ -414,7 +414,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         (_kernels_data[Stage::KV_CACHE_UPDATE].update_dispatch_data_func)(kv_cache_update_kernel_params, _kernels_data[Stage::KV_CACHE_UPDATE]);
 
         if (is_prefill_stage(impl_param)) {
-            auto sdpa_kernel_params = get_new_sdpa_kernel_params(impl_param, impl_param.is_dynamic());
+            auto sdpa_kernel_params = get_sdpa_kernel_params(impl_param, impl_param.is_dynamic());
             (_kernels_data[Stage::SDPA].update_dispatch_data_func)(sdpa_kernel_params, _kernels_data[Stage::SDPA]);
         } else {
             auto pa_sdpa_kernel_params = get_pa_sdpa_params(impl_param, impl_param.is_dynamic());

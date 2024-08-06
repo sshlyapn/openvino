@@ -13,6 +13,7 @@ struct pa_sdpa_params : base_params {
     pa_sdpa_params() : base_params(KernelType::PA_SDPA) {}
 
     sdpa_configuration conf;
+    size_t max_context_len = 0;
 };
 
 class PagedAttentionSDPAKernelOpt : public KernelBaseOpenCL {
