@@ -97,7 +97,7 @@ KERNEL(pa_kv_cache_update)(
         // }
 
         // TODO: enable optimization
-        if (tokens_num == VLLM_BLOCK_SIZE && false) {
+        if (tokens_num == VLLM_BLOCK_SIZE) {
             unroll_for (uint token_num = 0; token_num < VLLM_BLOCK_SIZE; token_num++) {
                 uint head_idx_index = 0;
                 #define READ_BLOCK_SIZE 8

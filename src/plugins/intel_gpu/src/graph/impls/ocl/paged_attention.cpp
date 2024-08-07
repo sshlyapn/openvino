@@ -66,41 +66,65 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         }
     }
 
+    std::vector<layout> get_internal_buffer_layouts_impl(const kernel_impl_params& params) const override {
+        auto add_internal_buffers = [](const kernel_selector::KernelData& kd, std::vector<layout>& layouts) {
+            if (kd.internalBufferSizes.empty())
+                return;
+
+            auto dtype = from_data_type(kd.internalBufferDataType);
+            const auto bpp = data_type_traits::size_of(dtype);
+            for (auto size : kd.internalBufferSizes) {
+                layout inbuf_layout = {dtype, format::bfyx, // simple linear format (flattern to x channel)
+                                       {1, 1, 1, (tensor::value_type)(size / bpp)}};
+                layouts.push_back(inbuf_layout);
+            }
+        };
+
+        std::vector<layout> layouts;
+        if (is_prefill_stage(params)) {
+            add_internal_buffers(_kernels_data[Stage::KV_CACHE_UPDATE], layouts);
+            add_internal_buffers(_kernels_data[Stage::SDPA], layouts);
+        } else {
+            add_internal_buffers(_kernels_data[Stage::KV_CACHE_UPDATE], layouts);
+            add_internal_buffers(_kernels_data[Stage::PA_SDPA], layouts);
+        }
+
+        return layouts;
+    }
+
     kernel_arguments_data get_arguments(const paged_attention_inst& instance, size_t stage, size_t kernel_idx) const {
         kernel_arguments_data args;
         if (stage == Stage::KV_CACHE_UPDATE || stage == Stage::SDPA || (stage == Stage::PA_SDPA && kernel_idx == 0))
             args.shape_info = instance.shape_info_memory_ptr();
 
         if (stage == Stage::KV_CACHE_UPDATE) {
-            args.inputs = {  instance.input_memory_ptr(1),  /* key */
-                             instance.input_memory_ptr(2),  /* value */
-                             instance.input_memory_ptr(6),  /* subsequence_begins */
-                             instance.input_memory_ptr(7),  /* block_indices */
-                             instance.input_memory_ptr(5),  /* past_lens */
-                             instance.input_memory_ptr(8),  /* block_indices_begins */ };
+            args.inputs = {  instance.key_memory_ptr(),
+                             instance.value_memory_ptr(),
+                             instance.subsequence_begins_memory_ptr(),
+                             instance.block_indices_memory_ptr(),
+                             instance.past_lens_memory_ptr(),
+                             instance.block_indices_begins_memory_ptr() };
 
-            args.outputs = { instance.input_memory_ptr(3),  /* key_cache */
-                             instance.input_memory_ptr(4)   /* value_cache */ };
+            args.outputs = { instance.key_cache_memory_ptr(),
+                             instance.value_cache_memory_ptr() };
         } else if (stage == Stage::SDPA) {
-            args.inputs = { instance.input_memory_ptr(0), /* query */
-                            instance.input_memory_ptr(1), /* key */
-                            instance.input_memory_ptr(2), /* value */
-                            instance.input_memory_ptr(6), /* subsequence_begins */ };
+            args.inputs = {  instance.input_memory_ptr(0),
+                             instance.key_memory_ptr(),
+                             instance.value_memory_ptr(),
+                             instance.subsequence_begins_memory_ptr() };
 
             args.outputs = { instance.output_memory_ptr(0) };
         } else if (stage == Stage::PA_SDPA) {
             if (kernel_idx == 0) {
-                args.inputs = { instance.input_memory_ptr(0), /* query */
-                                instance.input_memory_ptr(3), /* key_cache */
-                                instance.input_memory_ptr(4), /* value_cache */
-                                instance.input_memory_ptr(5), /* past_lens */
-                                instance.input_memory_ptr(6), /* subsequence_begins */
-                                instance.input_memory_ptr(7), /* block_indices */
-                                instance.input_memory_ptr(8), /* block_indices_begins */ };
+                args.inputs = { instance.input_memory_ptr(0),
+                                instance.key_cache_memory_ptr(),
+                                instance.value_cache_memory_ptr(),
+                                instance.past_lens_memory_ptr(),
+                                instance.subsequence_begins_memory_ptr(),
+                                instance.block_indices_memory_ptr(),
+                                instance.block_indices_begins_memory_ptr() };
             } else {
-                args.inputs = { instance.input_memory_ptr(5), /* past_lens */ };
-
-                args.outputs = { instance.output_memory_ptr(0) };
+                args.inputs = { instance.past_lens_memory_ptr(), };
             }
 
             args.outputs = { instance.output_memory_ptr(0) };
@@ -109,8 +133,8 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         return args;
     }
 
-    std::set<size_t> get_lockable_internal_buffers() const override {
-        return { 3, 4, 5 };
+    std::set<size_t> get_lockable_internal_buffers(const kernel_impl_params& params) const override {
+        return is_prefill_stage(params) ? std::set<size_t>{ 3, 4, 5 } : std::set<size_t>{};
     };
 
     void execute_stage(const std::vector<event::ptr>& events, paged_attention_inst& instance, std::vector<event::ptr>& all_events, size_t stage) {
@@ -372,19 +396,6 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         params.set_dynamic_shape_offsets(in_tensor_to_offset_map, out_tensor_to_offset_map);
 
         return params;
-    }
-
-    static bool is_prefill_stage(const kernel_impl_params& impl_param) {
-        auto query_shape = impl_param.get_input_layout(0).get_partial_shape();
-        auto past_lens_shape = impl_param.get_input_layout(5).get_partial_shape();
-
-        if (query_shape.is_static() && past_lens_shape.is_static()) {
-            GPU_DEBUG_TRACE_DETAIL << "Prefill stage: " << (query_shape[0].get_length() != past_lens_shape[0].get_length()) << " " << query_shape[0].get_length() << " " << past_lens_shape[0].get_length() << "\n";
-            return query_shape[0].get_length() != past_lens_shape[0].get_length();
-        }
-
-        GPU_DEBUG_TRACE_DETAIL << "Prefill stage: false\n";
-        return false;
     }
 
     static std::unique_ptr<primitive_impl> create(const typed_program_node<paged_attention>& arg, const kernel_impl_params& impl_param) {

@@ -115,9 +115,9 @@ KernelsData PagedAttentionSDPAKernelOpt::GetKernelsData(const Params& params) co
             if (i == 1) // Remove unused shape_info argument
                 kernel.params.arguments.erase(kernel.params.arguments.begin());
 
-            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 6});
-            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 7});
-            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 8});
+            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 0});
+            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 1});
+            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 2});
             kd.internalBufferDataType = softmax_acc_dt;
 
             if (i == 1) {

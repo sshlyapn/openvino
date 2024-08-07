@@ -9,6 +9,8 @@
 
 namespace cldnn {
 
+bool is_prefill_stage(const kernel_impl_params& impl_param);
+
 template <>
 struct typed_program_node<paged_attention> : public typed_program_node_base<paged_attention> {
 private:
@@ -41,6 +43,16 @@ public:
 
     typed_primitive_inst(network& network, const paged_attention_node& desc);
     typed_primitive_inst(network& network) : parent(network) {}
+
+    memory::ptr query_memory_ptr() const { return input_memory_ptr(0); }
+    memory::ptr key_memory_ptr() const { return input_memory_ptr(1); }
+    memory::ptr value_memory_ptr() const { return input_memory_ptr(2); }
+    memory::ptr key_cache_memory_ptr() const { return input_memory_ptr(3); }
+    memory::ptr value_cache_memory_ptr() const { return input_memory_ptr(4); }
+    memory::ptr past_lens_memory_ptr() const { return input_memory_ptr(5); }
+    memory::ptr subsequence_begins_memory_ptr() const { return input_memory_ptr(6); }
+    memory::ptr block_indices_memory_ptr() const { return input_memory_ptr(7); }
+    memory::ptr block_indices_begins_memory_ptr() const { return input_memory_ptr(8); }
 
     mutable cldnn::memory::ptr blocks_mem = nullptr;
     mutable cldnn::memory::ptr context_lens_mem = nullptr;

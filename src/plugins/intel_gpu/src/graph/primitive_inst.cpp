@@ -855,7 +855,7 @@ event::ptr primitive_inst::realloc_if_needed() {
     {
         if (_impl == nullptr)
             return ev;
-        const auto& ibuf_layouts = _impl->get_internal_buffer_layouts();
+        const auto& ibuf_layouts = _impl->get_internal_buffer_layouts(*_impl_params);
         if (ibuf_layouts.empty())
             return ev;
         GPU_DEBUG_CODE(std::string memalloc_info = "");
@@ -1874,7 +1874,7 @@ primitive_inst::primitive_inst(network & network, program_node const& node, bool
 memory::ptr primitive_inst::allocate_internal_buffer(size_t idx, bool reset) {
     if (_impl == nullptr || _outputs.empty() || _outputs[0] == nullptr)
         return nullptr;
-    const auto& ibuf_layouts = _impl->get_internal_buffer_layouts();
+    const auto& ibuf_layouts = _impl->get_internal_buffer_layouts(*_impl_params);
     if (ibuf_layouts.empty())
         return nullptr;
 
@@ -1916,7 +1916,7 @@ memory::ptr primitive_inst::allocate_internal_buffer(size_t idx, bool reset) {
     // allocate intermediate memory for the updated layout of buffer
     auto layout = ibuf_layouts[idx];
     auto alloc_type = allocation_type::unknown;
-    const auto& lockable_buffers_indexes = _impl->get_lockable_internal_buffers();
+    const auto& lockable_buffers_indexes = _impl->get_lockable_internal_buffers(*_impl_params);
     auto need_lockable_allocation = lockable_buffers_indexes.find(idx) != lockable_buffers_indexes.end();
     GPU_DEBUG_LOG << "[" << _node->id() << ": internal buf " << idx << "] " << layout.to_short_string() << " " << need_lockable_allocation << " lockable_buffers_size=" << lockable_buffers_indexes.size() << std::endl;
     if ((int64_t)available_device_mem_size - (int64_t)layout.bytes_count() >= 0 &&
@@ -1953,7 +1953,7 @@ memory::ptr primitive_inst::allocate_internal_buffer(size_t idx, bool reset) {
 void primitive_inst::allocate_internal_buffers(bool reset) {
     if (_impl == nullptr || _outputs.empty() || _outputs[0] == nullptr)
         return;
-    const auto& ibuf_layouts = _impl->get_internal_buffer_layouts();
+    const auto& ibuf_layouts = _impl->get_internal_buffer_layouts(*_impl_params);
     if (ibuf_layouts.empty())
         return;
 
