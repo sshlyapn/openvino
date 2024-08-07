@@ -31,15 +31,15 @@ KERNEL(pa_kv_cache_update)(
         const uint sglid = (uint)get_global_id(2);
 
         const uint seq_len = past_lens[seq_idx];
-        const uint current_token_pos_in_block = seq_len % VLLM_BLOCK_SIZE;
+        const uint current_token_pos_in_block = seq_len % PAGED_ATTENTION_BLOCK_SIZE;
         const uint seq_last_block_idx = block_indices_begins[seq_idx + 1] - 1;
         const uint block_idx = block_indices[seq_last_block_idx];
 
         uint key_value_in_offset = seq_idx * NUM_HEADS * HEAD_SIZE + head_idx * HEAD_SIZE;
 
-        uint key_out_offset = block_idx * NUM_HEADS * HEAD_SIZE * VLLM_BLOCK_SIZE + head_idx * HEAD_SIZE * VLLM_BLOCK_SIZE + current_token_pos_in_block;
+        uint key_out_offset = block_idx * NUM_HEADS * HEAD_SIZE * PAGED_ATTENTION_BLOCK_SIZE + head_idx * HEAD_SIZE * PAGED_ATTENTION_BLOCK_SIZE + current_token_pos_in_block;
 
-        uint value_out_offset = block_idx * NUM_HEADS * HEAD_SIZE * VLLM_BLOCK_SIZE + head_idx * HEAD_SIZE * VLLM_BLOCK_SIZE + current_token_pos_in_block * HEAD_SIZE;
+        uint value_out_offset = block_idx * NUM_HEADS * HEAD_SIZE * PAGED_ATTENTION_BLOCK_SIZE + head_idx * HEAD_SIZE * PAGED_ATTENTION_BLOCK_SIZE + current_token_pos_in_block * HEAD_SIZE;
 
         // if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_global_id(2) == 0) {
         //     printf("Update kv_cache (2nd+): %d %d %d: block_idx=%d, seq_len=%d, current_token_pos_in_block=%d, seq_last_block_idx=%d\n",
@@ -54,9 +54,9 @@ KERNEL(pa_kv_cache_update)(
             DATA_VEC input_data = BLOCK_READ(key_data, key_value_in_offset + head_idx_index);
 
             unroll_for (uint i = 0; i < READ_BLOCK_SIZE; i++) {
-                uint key_offset = key_out_offset + (head_idx_index + sglid + SUBGROUP_SIZE * i) * VLLM_BLOCK_SIZE;
+                uint key_offset = key_out_offset + (head_idx_index + sglid + SUBGROUP_SIZE * i) * PAGED_ATTENTION_BLOCK_SIZE;
                 // printf("Update kv_cache: %d %d %d, key (head_idx_index=%d): %d -> %d. key_value_in_offset=%d, block_idx=%d, seq_len=%d. in_block_offset=%d\n",
-                //     seq_idx, head_idx, sglid, head_idx_index, key_value_in_offset + head_idx_index, key_offset, key_value_in_offset, block_idx, seq_len, head_idx * HEAD_SIZE * VLLM_BLOCK_SIZE + current_token_pos_in_block + (head_idx_index + sglid + SUBGROUP_SIZE * i) * VLLM_BLOCK_SIZE);
+                //     seq_idx, head_idx, sglid, head_idx_index, key_value_in_offset + head_idx_index, key_offset, key_value_in_offset, block_idx, seq_len, head_idx * HEAD_SIZE * PAGED_ATTENTION_BLOCK_SIZE + current_token_pos_in_block + (head_idx_index + sglid + SUBGROUP_SIZE * i) * PAGED_ATTENTION_BLOCK_SIZE);
                 key_cache_data[key_offset] = input_data;
             }
 
@@ -69,7 +69,7 @@ KERNEL(pa_kv_cache_update)(
             unroll_for (uint i = 0; i < READ_BLOCK_SIZE; i++) {
                 uint value_offset = value_out_offset + head_idx_index + sglid + SUBGROUP_SIZE * i;
                 // printf("Update kv_cache: %d %d %d, value (head_idx_index=%d): %d -> %d. key_value_in_offset=%d, block_idx=%d, seq_len=%d. in_block_offset=%d\n",
-                    // seq_idx, head_idx, sglid, head_idx_index, key_value_in_offset + head_idx_index, value_offset, key_value_in_offset, block_idx, seq_len, head_idx * HEAD_SIZE * VLLM_BLOCK_SIZE + current_token_pos_in_block * HEAD_SIZE + head_idx_index + sglid + SUBGROUP_SIZE * i);
+                    // seq_idx, head_idx, sglid, head_idx_index, key_value_in_offset + head_idx_index, value_offset, key_value_in_offset, block_idx, seq_len, head_idx * HEAD_SIZE * PAGED_ATTENTION_BLOCK_SIZE + current_token_pos_in_block * HEAD_SIZE + head_idx_index + sglid + SUBGROUP_SIZE * i);
                 value_cache_data[value_offset] = input_data;
             }
         }
@@ -86,8 +86,8 @@ KERNEL(pa_kv_cache_update)(
         uint key_value_in_offset = block_start_pos * NUM_HEADS * HEAD_SIZE +
                                    head_idx * HEAD_SIZE;
 
-        uint key_out_offset = block_indices[block_idx] * NUM_HEADS * HEAD_SIZE * VLLM_BLOCK_SIZE +
-                              head_idx * HEAD_SIZE * VLLM_BLOCK_SIZE;
+        uint key_out_offset = block_indices[block_idx] * NUM_HEADS * HEAD_SIZE * PAGED_ATTENTION_BLOCK_SIZE +
+                              head_idx * HEAD_SIZE * PAGED_ATTENTION_BLOCK_SIZE;
 
         uint value_out_offset = key_out_offset;
 
@@ -97,8 +97,8 @@ KERNEL(pa_kv_cache_update)(
         // }
 
         // TODO: enable optimization
-        if (tokens_num == VLLM_BLOCK_SIZE) {
-            unroll_for (uint token_num = 0; token_num < VLLM_BLOCK_SIZE; token_num++) {
+        if (tokens_num == PAGED_ATTENTION_BLOCK_SIZE) {
+            unroll_for (uint token_num = 0; token_num < PAGED_ATTENTION_BLOCK_SIZE; token_num++) {
                 uint head_idx_index = 0;
                 #define READ_BLOCK_SIZE 8
                 for (; head_idx_index + (READ_BLOCK_SIZE * SUBGROUP_SIZE) <= HEAD_SIZE; head_idx_index += SUBGROUP_SIZE * READ_BLOCK_SIZE) {
@@ -108,7 +108,7 @@ KERNEL(pa_kv_cache_update)(
                     DATA_VEC input_data = BLOCK_READ(key_data, key_value_in_offset + head_idx_index);
 
                     unroll_for (uint i = 0; i < READ_BLOCK_SIZE; i++) {
-                        uint key_offset = key_out_offset + (head_idx_index + sglid + SUBGROUP_SIZE * i) * VLLM_BLOCK_SIZE;
+                        uint key_offset = key_out_offset + (head_idx_index + sglid + SUBGROUP_SIZE * i) * PAGED_ATTENTION_BLOCK_SIZE;
                         key_cache_data[key_offset] = input_data[i];
                     }
 
@@ -128,7 +128,7 @@ KERNEL(pa_kv_cache_update)(
                     DATA_VEC input_data = BLOCK_READ(key_data, key_value_in_offset + head_idx_index);
 
                     unroll_for (uint i = 0; i < READ_BLOCK_SIZE; i++) {
-                        uint key_offset = key_out_offset + (head_idx_index + sglid + SUBGROUP_SIZE * i) * VLLM_BLOCK_SIZE;
+                        uint key_offset = key_out_offset + (head_idx_index + sglid + SUBGROUP_SIZE * i) * PAGED_ATTENTION_BLOCK_SIZE;
                         key_cache_data[key_offset] = input_data[i];
                     }
 
@@ -148,7 +148,7 @@ KERNEL(pa_kv_cache_update)(
                     DATA_VEC input_data = BLOCK_READ(key_data, key_value_in_offset + head_idx_index);
 
                     unroll_for (uint i = 0; i < READ_BLOCK_SIZE; i++) {
-                        uint key_offset = key_out_offset + (head_idx_index + sglid + SUBGROUP_SIZE * i) * VLLM_BLOCK_SIZE;
+                        uint key_offset = key_out_offset + (head_idx_index + sglid + SUBGROUP_SIZE * i) * PAGED_ATTENTION_BLOCK_SIZE;
                         key_cache_data[key_offset] = input_data[i];
                     }
 
@@ -168,7 +168,7 @@ KERNEL(pa_kv_cache_update)(
                     DATA_VEC input_data = BLOCK_READ(key_data, key_value_in_offset + head_idx_index);
 
                     unroll_for (uint i = 0; i < READ_BLOCK_SIZE; i++) {
-                        uint key_offset = key_out_offset + (head_idx_index + sglid + SUBGROUP_SIZE * i) * VLLM_BLOCK_SIZE;
+                        uint key_offset = key_out_offset + (head_idx_index + sglid + SUBGROUP_SIZE * i) * PAGED_ATTENTION_BLOCK_SIZE;
                         key_cache_data[key_offset] = input_data;
                     }
 
@@ -197,7 +197,7 @@ KERNEL(pa_kv_cache_update)(
                     DATA_VEC input_data = BLOCK_READ(key_data, key_value_in_offset + head_idx_index);
 
                     unroll_for (uint i = 0; i < READ_BLOCK_SIZE; i++) {
-                        uint key_offset = key_out_offset + (head_idx_index + sglid + SUBGROUP_SIZE * i) * VLLM_BLOCK_SIZE;
+                        uint key_offset = key_out_offset + (head_idx_index + sglid + SUBGROUP_SIZE * i) * PAGED_ATTENTION_BLOCK_SIZE;
                         key_cache_data[key_offset] = input_data[i];
                     }
 
@@ -217,7 +217,7 @@ KERNEL(pa_kv_cache_update)(
                     DATA_VEC input_data = BLOCK_READ(key_data, key_value_in_offset + head_idx_index);
 
                     unroll_for (uint i = 0; i < READ_BLOCK_SIZE; i++) {
-                        uint key_offset = key_out_offset + (head_idx_index + sglid + SUBGROUP_SIZE * i) * VLLM_BLOCK_SIZE;
+                        uint key_offset = key_out_offset + (head_idx_index + sglid + SUBGROUP_SIZE * i) * PAGED_ATTENTION_BLOCK_SIZE;
                         key_cache_data[key_offset] = input_data[i];
                     }
 
@@ -237,7 +237,7 @@ KERNEL(pa_kv_cache_update)(
                     DATA_VEC input_data = BLOCK_READ(key_data, key_value_in_offset + head_idx_index);
 
                     unroll_for (uint i = 0; i < READ_BLOCK_SIZE; i++) {
-                        uint key_offset = key_out_offset + (head_idx_index + sglid + SUBGROUP_SIZE * i) * VLLM_BLOCK_SIZE;
+                        uint key_offset = key_out_offset + (head_idx_index + sglid + SUBGROUP_SIZE * i) * PAGED_ATTENTION_BLOCK_SIZE;
                         key_cache_data[key_offset] = input_data[i];
                     }
 
@@ -258,7 +258,7 @@ KERNEL(pa_kv_cache_update)(
                     DATA_VEC input_data = BLOCK_READ(key_data, key_value_in_offset + head_idx_index);
 
                     unroll_for (uint i = 0; i < READ_BLOCK_SIZE; i++) {
-                        uint key_offset = key_out_offset + (head_idx_index + sglid + SUBGROUP_SIZE * i) * VLLM_BLOCK_SIZE;
+                        uint key_offset = key_out_offset + (head_idx_index + sglid + SUBGROUP_SIZE * i) * PAGED_ATTENTION_BLOCK_SIZE;
                         key_cache_data[key_offset] = input_data;
                     }
 

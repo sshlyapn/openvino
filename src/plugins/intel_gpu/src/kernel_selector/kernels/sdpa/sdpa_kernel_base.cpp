@@ -75,7 +75,7 @@ JitConstants SDPAKernelBase::GetJitConstants(const sdpa_params& params) const {
     }
 
     jit.AddConstant(MakeJitConstant("IS_CAUSAL", params.conf.is_causal));
-    if (!params.is_paged_attention) {
+    if (!params.conf.is_paged_attention) {
         jit.AddConstant(MakeJitConstant("HAS_ATTN_MASK_INPUT", params.inputs.size() > 3));
         jit.AddConstant(MakeJitConstant("HAS_SCALE_INPUT", params.inputs.size() > 4));
     }
@@ -113,7 +113,7 @@ JitConstants SDPAKernelBase::GetJitConstants(const sdpa_params& params) const {
         jit.AddConstant(MakeJitConstant("INPUT2_DIMS_ORDER", GetDimsOrder(params.input2_order)));
 
     TransposedDimensionAccessHelperJit dims_q(params.inputs[0], params.input0_order);
-    const auto num_heads = params.is_paged_attention ? std::to_string(params.conf.heads_num) : dims_q.f();
+    const auto num_heads = params.conf.is_paged_attention ? std::to_string(params.conf.heads_num) : dims_q.f();
     jit.AddConstant(MakeJitConstant("TARGET_SEQ_LEN", dims_q.y()));
     jit.AddConstant(MakeJitConstant("NUM_HEADS", num_heads));
 

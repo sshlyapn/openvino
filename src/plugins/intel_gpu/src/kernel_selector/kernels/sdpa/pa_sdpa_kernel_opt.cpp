@@ -9,22 +9,16 @@
 
 namespace kernel_selector {
 
-// For kernel w/o split
-constexpr size_t max_sequence_length = 3072;
-
 constexpr size_t seq_len_partition_size = 256;
 constexpr size_t subgroup_size = 16;
-
-const Datatype softmax_acc_dt = Datatype::F32;
-
-// Use flash attention or not
-const bool use_seq_len_split = true;
+constexpr size_t paged_attention_block_size = 16;
+constexpr Datatype softmax_acc_dt = Datatype::F32;
 
 void PagedAttentionSDPAKernelOpt::GetUpdateDispatchDataFunc(KernelData& kd) const {
     kd.update_dispatch_data_func = [](const Params& params, KernelData& kd) {
         const auto& prim_params = dynamic_cast<const pa_sdpa_params&>(params);
 
-        const size_t expected_kernels_num = use_seq_len_split ? 2 : 1;
+        const size_t expected_kernels_num = 2;
         OPENVINO_ASSERT(kd.kernels.size() == expected_kernels_num, "[GPU] Invalid kernels size for update dispatch data func of SDPA kernel");
 
         auto dispatchData = SetDefault(prim_params, 0);
@@ -39,22 +33,17 @@ void PagedAttentionSDPAKernelOpt::GetUpdateDispatchDataFunc(KernelData& kd) cons
             const size_t sequences_number = batch_size;
             const size_t num_of_partitions = CeilDiv(prim_params.max_context_len, seq_len_partition_size);
 
-            // const size_t num_of_partitions = 1;
-
             auto dispatchData = SetDefault(prim_params, 1);
             kd.kernels[1].params.workGroups.global = dispatchData.gws;
             kd.kernels[1].params.workGroups.local = dispatchData.lws;
-            // Write directly to the output in SDPA main kernel in case of single portion
             kd.kernels[1].skip_execution = num_of_partitions == 1;
 
             auto buf_dt_size = 4;
             auto buf_elements_count = sequences_number * prim_params.conf.heads_num * num_of_partitions;
-            // auto buf_elements_count = 1;
             auto buf_size = buf_elements_count * buf_dt_size;
 
             auto tmp_out_dt_size = 4;
             auto tmp_out_elements_count = sequences_number * prim_params.conf.heads_num * prim_params.conf.head_size * num_of_partitions;
-            // auto tmp_out_elements_count = 1;
             auto tmp_out_size = tmp_out_elements_count * tmp_out_dt_size;
 
             kd.internalBufferSizes.clear();
@@ -78,7 +67,7 @@ KernelsData PagedAttentionSDPAKernelOpt::GetKernelsData(const Params& params) co
         return {};
     }
 
-    const uint kernels_num = use_seq_len_split ? 2 : 1;
+    const uint kernels_num = 2;
     KernelData kd = KernelData::Default<pa_sdpa_params>(params, kernels_num);
     kd.needs_sub_kernels_sync = true;
     GetUpdateDispatchDataFunc(kd);
@@ -111,18 +100,16 @@ KernelsData PagedAttentionSDPAKernelOpt::GetKernelsData(const Params& params) co
                         static_cast<int>(kernel_params.outputs.size()),
                         kernel_params.is_shape_agnostic);
 
-        if (use_seq_len_split) {
-            if (i == 1) // Remove unused shape_info argument
-                kernel.params.arguments.erase(kernel.params.arguments.begin());
+        if (i == 1) // Remove unused shape_info argument
+            kernel.params.arguments.erase(kernel.params.arguments.begin());
 
-            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 0});
-            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 1});
-            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 2});
-            kd.internalBufferDataType = softmax_acc_dt;
+        kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 0});
+        kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 1});
+        kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 2});
+        kd.internalBufferDataType = softmax_acc_dt;
 
-            if (i == 1) {
-                kernel.params.arguments.push_back({ArgumentDescriptor::Types::SCALAR, 0});
-            }
+        if (i == 1) {
+            kernel.params.arguments.push_back({ArgumentDescriptor::Types::SCALAR, 0});
         }
     }
 
@@ -150,20 +137,22 @@ ParamsKey PagedAttentionSDPAKernelOpt::GetSupportedKey() const {
 }
 
 bool PagedAttentionSDPAKernelOpt::Validate(const Params& params) const {
-    if (params.GetType() != KernelType::PA_SDPA) {
+    if (params.GetType() != KernelType::PA_SDPA)
         return false;
-    }
 
-    // const auto& kernel_params = dynamic_cast<const pa_sdpa_params&>(params);
-    // if (seq_len_partition_size % kernel_params.configuration.block_size != 0)
-    //     return false;
+    const auto& kernel_params = dynamic_cast<const pa_sdpa_params&>(params);
+    if (seq_len_partition_size % kernel_params.conf.paged_attention_block_size != 0)
+        return false;
 
-    // if (kernel_params.configuration.head_size % subgroup_size != 0)
-    //     return false;
+    if (kernel_params.conf.head_size % subgroup_size != 0)
+        return false;
 
-    // const auto subgroups_per_wg = kernel_params.configuration.head_size / subgroup_size;
-    // if (subgroups_per_wg > subgroup_size)
-    //     return false;
+    const auto subgroups_per_wg = kernel_params.conf.head_size / subgroup_size;
+    if (subgroups_per_wg > subgroup_size)
+        return false;
+
+    if (!kernel_params.conf.is_paged_attention)
+        return false;
 
     return true;
 }
@@ -176,8 +165,7 @@ JitConstants PagedAttentionSDPAKernelOpt::GetJitConstants(const pa_sdpa_params& 
     jit.AddConstant(MakeJitConstant("HEADS_NUM", config.heads_num));
     jit.AddConstant(MakeJitConstant("KV_HEADS_NUM", config.kv_heads_num));
     jit.AddConstant(MakeJitConstant("NUM_QUERIES_PER_KV_HEAD", config.heads_num / config.kv_heads_num));
-    jit.AddConstant(MakeJitConstant("VLLM_BLOCK_SIZE", 16));
-    jit.AddConstant(MakeJitConstant("X_BLOCK_SIZE", 1));
+    jit.AddConstant(MakeJitConstant("VLLM_BLOCK_SIZE", paged_attention_block_size));
 
     if (config.has_scale_val) {
         jit.AddConstant(MakeJitConstant("SCALE_VAL", config.scale_val));
@@ -185,14 +173,9 @@ JitConstants PagedAttentionSDPAKernelOpt::GetJitConstants(const pa_sdpa_params& 
 
     jit.Merge(MakeTypeJitConstants(softmax_acc_dt, "SOFTMAX_ACCUMULATOR"));
 
-
-    if (use_seq_len_split) {
-        jit.AddConstant(MakeJitConstant("USE_SEQ_LEN_SPLIT", true));
-        jit.AddConstant(MakeJitConstant("SEQ_LEN_PARTITION_SIZE", seq_len_partition_size));
-        jit.AddConstant(MakeJitConstant("SHARED_MEM_SIZE", seq_len_partition_size));
-    } else {
-        jit.AddConstant(MakeJitConstant("SHARED_MEM_SIZE", max_sequence_length));
-    }
+    jit.AddConstant(MakeJitConstant("USE_SEQ_LEN_SPLIT", true));
+    jit.AddConstant(MakeJitConstant("SEQ_LEN_PARTITION_SIZE", seq_len_partition_size));
+    jit.AddConstant(MakeJitConstant("SHARED_MEM_SIZE", seq_len_partition_size));
 
     return jit;
 }
@@ -204,13 +187,7 @@ CommonDispatchData PagedAttentionSDPAKernelOpt::SetDefault(const pa_sdpa_params&
     const auto& input = kernel_params.inputs[0];
     if (!input.is_dynamic()) {
         const size_t seq_num = input.Batch().v;
-        // const size_t seq_len = input.Feature().v;
-        // const size_t tokens_num = batch_size * seq_len;
-
-        const size_t num_of_partitions =
-            use_seq_len_split ? CeilDiv(kernel_params.max_context_len, seq_len_partition_size) : 1;
-
-        // const size_t num_of_partitions = 1;
+        const size_t num_of_partitions = CeilDiv(kernel_params.max_context_len, seq_len_partition_size);
         const size_t heads_num = static_cast<size_t>(kernel_params.conf.heads_num);
         const size_t head_size = static_cast<size_t>(kernel_params.conf.head_size);
 

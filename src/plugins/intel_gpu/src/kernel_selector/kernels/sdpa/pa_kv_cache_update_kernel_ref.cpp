@@ -10,20 +10,15 @@
 
 namespace kernel_selector {
 
-constexpr size_t SUBGROUP_SIZE = 16;
-constexpr size_t VLLM_BLOCK_SIZE = 16;
+constexpr size_t subgroup_size = 16;
+constexpr size_t vllm_block_size = 16;
 
 void KVCacheUpdateKernelRef::GetUpdateDispatchDataFunc(KernelData& kd) const {
     kd.update_dispatch_data_func = [](const Params& params, KernelData& kd) {
-        const auto& kv_cache_params = static_cast<const kv_cache_update_params&>(params);
-
-        GPU_DEBUG_TRACE_DETAIL << "key data shape : " << kv_cache_params.inputs[0].Batch().v  << " " << kv_cache_params.inputs[0].Feature().v << "\n";
-        GPU_DEBUG_TRACE_DETAIL << "value data shape : " << kv_cache_params.inputs[1].Batch().v  << " " << kv_cache_params.inputs[1].Feature().v << "\n";
-        GPU_DEBUG_TRACE_DETAIL << "subsequence_begins data shape : " << kv_cache_params.inputs[2].Batch().v  << " " << kv_cache_params.inputs[2].Feature().v << "\n";
-        GPU_DEBUG_TRACE_DETAIL << "block_indices shape : " << kv_cache_params.inputs[3].Batch().v  << " " << kv_cache_params.inputs[3].Feature().v << "\n";
-
         const auto& prim_params = dynamic_cast<const kv_cache_update_params&>(params);
+
         auto dispatchData = SetDefault(prim_params);
+
         OPENVINO_ASSERT(kd.kernels.size() == 1, "[GPU] Invalid kernels size for update dispatch data func");
         kd.kernels[0].params.workGroups.global = dispatchData.gws;
         kd.kernels[0].params.workGroups.local = dispatchData.lws;
@@ -88,18 +83,21 @@ ParamsKey KVCacheUpdateKernelRef::GetSupportedKey() const {
 }
 
 bool KVCacheUpdateKernelRef::Validate(const Params& params) const {
-    if (params.GetType() != KernelType::PA_KV_CACHE_UPDATE) {
+    if (params.GetType() != KernelType::PA_KV_CACHE_UPDATE)
         return false;
-    }
 
     const auto& kernel_params = dynamic_cast<const kv_cache_update_params&>(params);
-    if (kernel_params.inputs.size() != 6) {
+    if (kernel_params.inputs.size() != 6)
         return false;
-    }
 
-    if (kernel_params.outputs.size() != 2) {
+    if (kernel_params.outputs.size() != 2)
         return false;
-    }
+
+    if (!kernel_params.conf.is_paged_attention)
+        return false;
+
+    if (kernel_params.conf.paged_attention_block_size != static_cast<int64_t>(vllm_block_size))
+        return false;
 
     return true;
 }
@@ -107,8 +105,8 @@ bool KVCacheUpdateKernelRef::Validate(const Params& params) const {
 JitConstants KVCacheUpdateKernelRef::GetJitConstants(const kv_cache_update_params& kernel_params) const {
     JitConstants jit = MakeBaseParamsJitConstants(kernel_params);
 
-    jit.AddConstant(MakeJitConstant("SUBGROUP_SIZE", SUBGROUP_SIZE));
-    jit.AddConstant(MakeJitConstant("VLLM_BLOCK_SIZE", VLLM_BLOCK_SIZE));
+    jit.AddConstant(MakeJitConstant("SUBGROUP_SIZE", subgroup_size));
+    jit.AddConstant(MakeJitConstant("PAGED_ATTENTION_BLOCK_SIZE", vllm_block_size));
     jit.AddConstant(MakeJitConstant("NUM_HEADS", kernel_params.conf.heads_num));
     jit.AddConstant(MakeJitConstant("HEAD_SIZE", kernel_params.conf.head_size));
 
@@ -129,16 +127,16 @@ CommonDispatchData KVCacheUpdateKernelRef::SetDefault(const kv_cache_update_para
             auto blocks_number = block_indices_input.Batch().v;
             auto heads_number = static_cast<size_t>(kernel_params.conf.heads_num);
 
-            dispatch_data.gws = {blocks_number, heads_number, SUBGROUP_SIZE};
-            dispatch_data.lws = {1, 1, SUBGROUP_SIZE};
+            dispatch_data.gws = {blocks_number, heads_number, subgroup_size};
+            dispatch_data.lws = {1, 1, subgroup_size};
         } else {
             const auto& key_input = kernel_params.inputs[0];
 
             auto tokens_number = key_input.Batch().v;
             auto heads_number = static_cast<size_t>(kernel_params.conf.heads_num);
 
-            dispatch_data.gws = {tokens_number, heads_number, SUBGROUP_SIZE};
-            dispatch_data.lws = {1, 1, SUBGROUP_SIZE};
+            dispatch_data.gws = {tokens_number, heads_number, subgroup_size};
+            dispatch_data.lws = {1, 1, subgroup_size};
         }
     }
 

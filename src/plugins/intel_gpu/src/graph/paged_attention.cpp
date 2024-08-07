@@ -15,16 +15,13 @@ bool is_prefill_stage(const kernel_impl_params& impl_param) {
     const auto& query_shape = impl_param.get_input_layout(0).get_partial_shape();
     const auto& past_lens_shape = impl_param.get_input_layout(5).get_partial_shape();
 
-    if (query_shape.is_static() && past_lens_shape.is_static()) {
-        GPU_DEBUG_TRACE_DETAIL << "Prefill stage: " << (query_shape[0].get_length() != past_lens_shape[0].get_length()) << " " << query_shape[0].get_length() << " " << past_lens_shape[0].get_length() << "\n";
+    if (query_shape.is_static() && past_lens_shape.is_static())
         return query_shape[0].get_length() != past_lens_shape[0].get_length();
-    }
 
-    GPU_DEBUG_TRACE_DETAIL << "Prefill stage: false\n";
     return false;
 }
 
-layout paged_attention_inst::calc_output_layout(const paged_attention_node& node, kernel_impl_params const& impl_param) {
+layout paged_attention_inst::calc_output_layout(const paged_attention_node& /*node*/, kernel_impl_params const& impl_param) {
     auto out_layout = impl_param.get_input_layout(0);
 
     return {out_layout};
@@ -33,6 +30,11 @@ layout paged_attention_inst::calc_output_layout(const paged_attention_node& node
 template<typename ShapeType>
 std::vector<layout> paged_attention_inst::calc_output_layouts(paged_attention_node const& /*node*/, kernel_impl_params const& impl_param) {
     auto out_layout = impl_param.get_input_layout(0);
+
+    const auto& key_cache_ps = impl_param.get_input_layout(3).get_partial_shape();
+    bool valid_block_size = key_cache_ps[3].is_dynamic() || key_cache_ps[3].get_length() == paged_attention::block_size;
+    OPENVINO_ASSERT(valid_block_size, "[GPU] Incorrect block size for Paged Attention operation. "
+                                      "Expected ", paged_attention::block_size, ", but got ", key_cache_ps[3].get_length());
 
     return {out_layout};
 }
@@ -45,8 +47,13 @@ std::string paged_attention_inst::to_string(const paged_attention_node& node) {
 
     std::stringstream primitive_description;
 
-    json_composite custom_gpu_prim_info;
-    node_info->add("paged attention primitive info", custom_gpu_prim_info);
+    json_composite paged_attention_info;
+    paged_attention_info.add("paged_attention_block_size", desc->block_size);
+    paged_attention_info.add("head_size", desc->head_size);
+    paged_attention_info.add("heads_num", desc->heads_num);
+    paged_attention_info.add("kv_heads_num", desc->kv_heads_num);
+    paged_attention_info.add("scale", desc->scale_val.value_or(1.0f));
+    node_info->add("paged_attention primitive info", paged_attention_info);
     node_info->dump(primitive_description);
 
     return primitive_description.str();
@@ -76,15 +83,15 @@ void paged_attention_inst::on_execute() {
     mem_lock<int32_t, mem_lock_type::write> gws_seq_indexes_correspondence_lock(gws_seq_indexes_correspondence_mem, stream);
 
     size_t index = 0;
-    const auto target_seq_block_size = 16; // TODO: Get block size from the impl
+    const auto target_seq_len_block_size = 16; // TODO: Get block size from the impl
     for (size_t i = 0; i < subsequence_begins_mem_lock.size() - 1; i++) {
         const auto seq_start = subsequence_begins_mem_lock[i];
         const auto seq_end = subsequence_begins_mem_lock[i + 1];
         const auto seq_length = seq_end - seq_start;
 
-        for (int32_t j = 0; j < seq_length; j += target_seq_block_size) {
+        for (int32_t j = 0; j < seq_length; j += target_seq_len_block_size) {
             auto block_start_pos = subsequence_begins_mem_lock[i] + j;
-            auto block_end_pos = std::min(block_start_pos + target_seq_block_size, seq_end);
+            auto block_end_pos = std::min(block_start_pos + target_seq_len_block_size, seq_end);
 
             blocks_indexes_start_lock[index] = block_start_pos;
             blocks_indexes_end_lock[index] = block_end_pos;

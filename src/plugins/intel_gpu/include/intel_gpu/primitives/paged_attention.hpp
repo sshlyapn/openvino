@@ -14,6 +14,8 @@ namespace cldnn {
 struct paged_attention : public primitive_base<paged_attention> {
     CLDNN_DECLARE_PRIMITIVE(paged_attention)
 
+    static constexpr size_t block_size = 16;
+
     paged_attention() : primitive_base("", {}) {}
 
     paged_attention(const primitive_id& id,
@@ -32,8 +34,6 @@ struct paged_attention : public primitive_base<paged_attention> {
         ob << head_size;
         ob << heads_num;
         ob << kv_heads_num;
-        ob << block_size;
-        ob << x_block_size;
     }
 
     void load(BinaryInputBuffer& ib) override {
@@ -41,15 +41,11 @@ struct paged_attention : public primitive_base<paged_attention> {
         ib >> head_size;
         ib >> heads_num;
         ib >> kv_heads_num;
-        ib >> block_size;
-        ib >> x_block_size;
     }
 
     optional_value<float> scale_val{};
     size_t head_size = 0;
     size_t heads_num = 0;
     size_t kv_heads_num = 0;
-    size_t block_size = 0;
-    size_t x_block_size = 0;
 };
 }  // namespace cldnn

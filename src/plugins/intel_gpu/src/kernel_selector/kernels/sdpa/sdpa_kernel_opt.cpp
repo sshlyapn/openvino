@@ -111,7 +111,7 @@ JitConstants SDPAKernelOpt::GetJitConstants(const sdpa_params& params, size_t ke
     auto sdpa_stage = kernel_idx == KernelsTypes::FINALIZATION ? 1 : 0;
     jit.AddConstant(MakeJitConstant("SDPA_STAGE_" + std::to_string(sdpa_stage), 1));
 
-    if (params.is_paged_attention && params.conf.has_scale_val) {
+    if (params.conf.is_paged_attention && params.conf.has_scale_val) {
         jit.AddConstant(MakeJitConstant("STATIC_SCALE_VALUE_INV", 1.0f / params.conf.scale_val));
         jit.AddConstant(MakeJitConstant("STATIC_SCALE_VALUE", params.conf.scale_val));
     } else if (params.inputs.size() <= 4) {
@@ -125,7 +125,7 @@ JitConstants SDPAKernelOpt::GetJitConstants(const sdpa_params& params, size_t ke
         jit.AddConstant(MakeJitConstant("SG_SCALE_FACTOR", 1));
     }
 
-    if (params.is_paged_attention)
+    if (params.conf.is_paged_attention)
         jit.AddConstant(MakeJitConstant("IS_PAGED_ATTENTION", 1));
 
     if (params.engineInfo.supports_immad && params.conf.broadcast_axis == -1 && params.conf.head_size >= 128)
@@ -138,16 +138,14 @@ CommonDispatchData SDPAKernelOpt::SetDefault(const sdpa_params& params, size_t k
     CommonDispatchData dispatch_data;
 
     const auto& query_input = params.inputs[0];
-
     if (!query_input.is_dynamic()) {
-
-        if (params.is_paged_attention) {
+        if (params.conf.is_paged_attention) {
             OPENVINO_ASSERT(kernel_idx == KernelsTypes::MULTI_TOKENS);
 
             const size_t sg_num_scale = get_sg_number_scale_factor(params);
             const size_t heads_num = static_cast<size_t>(params.conf.heads_num);
             const size_t target_seq_len_block_size = get_target_seq_len_block_size();
-            const size_t target_seq_len = static_cast<size_t>(params.paged_attention_aligned_seq_len);
+            const size_t target_seq_len = static_cast<size_t>(params.conf.paged_attention_aligned_seq_len);
             const size_t head_size = static_cast<size_t>(params.conf.head_size);
             const size_t batch_size = 1;
 
@@ -155,6 +153,8 @@ CommonDispatchData SDPAKernelOpt::SetDefault(const sdpa_params& params, size_t k
                                   CeilDiv(target_seq_len, target_seq_len_block_size),
                                   head_size * sg_num_scale };
             dispatch_data.lws = { 1, 1, head_size * sg_num_scale };
+
+            return dispatch_data;
         }
 
         TransposedDimensionAccessHelperBase dims_q(params.inputs[0], params.input0_order);
@@ -169,13 +169,6 @@ CommonDispatchData SDPAKernelOpt::SetDefault(const sdpa_params& params, size_t k
         const size_t num_of_partitions =
             kernel_idx == KernelsTypes::MULTI_TOKENS ? 1 : CeilDiv(source_seq_len, get_seq_len_partition_size(params, kernel_idx));
         const size_t target_seq_len_block_size = kernel_idx == 1 ? get_target_seq_len_block_size() : 1;
-
-
-        GPU_DEBUG_TRACE_DETAIL << "Dims: " << output.b_dim().v << " " << output.f_dim().v << " " << output.y_dim().v << " " << output.x_dim().v << "\n";
-
-        if (params.is_paged_attention) {
-            return dispatch_data;
-        }
 
         if (kernel_idx == KernelsTypes::SINGLE_TOKEN) {
             dispatch_data.gws = { batch_size * heads_num,
@@ -204,15 +197,10 @@ KernelsData SDPAKernelOpt::GetKernelsData(const Params& params) const {
         return {};
     }
 
-    // Implementation contains multiple kernels:
-    // kernel[KernelsTypes::SINGLE_TOKEN] - single token generation stage (2nd token)
-    // kernel[KernelsTypes::MULTI_TOKENS] - multi tokens processing stage (1st token)
-    // kernel[KernelsTypes::FINALIZATION] - results aggregation for 2nd token generation
-
     std::vector<KernelsTypes> kernels_type;
     const auto& prim_params = static_cast<const sdpa_params&>(params);
 
-    if (prim_params.is_paged_attention) {
+    if (prim_params.conf.is_paged_attention) {
         kernels_type = { KernelsTypes::MULTI_TOKENS };
     } else if (params.is_shape_agnostic) {
         kernels_type = { KernelsTypes::SINGLE_TOKEN, KernelsTypes::MULTI_TOKENS, KernelsTypes::FINALIZATION };
@@ -287,7 +275,7 @@ KernelsData SDPAKernelOpt::GetKernelsData(const Params& params) const {
         kd.internalBufferSizes.push_back(tmp_out_size);
         kd.internalBufferDataType = prim_params.inputs[0].GetDType();
 
-        if (prim_params.is_paged_attention) {
+        if (prim_params.conf.is_paged_attention) {
             kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 3});
             kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 4});
             kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 5});
@@ -313,7 +301,7 @@ void SDPAKernelOpt::GetUpdateDispatchDataFunc(KernelData& kd) const {
         const auto& prim_params = static_cast<const sdpa_params&>(params);
 
         const size_t paged_attention_kernels_num = 1;
-        const size_t expected_kernels_num = prim_params.is_paged_attention ? paged_attention_kernels_num
+        const size_t expected_kernels_num = prim_params.conf.is_paged_attention ? paged_attention_kernels_num
                                                                            : KernelsTypes::TOTAL_KERNELS_NUM;
         OPENVINO_ASSERT(kernel_data.kernels.size() == expected_kernels_num,
                         "[GPU] Invalid kernels size for update dispatch data func of SDPA kernel");
