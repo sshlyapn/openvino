@@ -52,7 +52,7 @@ void regclass_RemoteContext(py::module m) {
            const std::map<std::string, py::object>& properties) {
             auto _properties = Common::utils::properties_to_any_map(properties);
             py::gil_scoped_release release;
-            return RemoteTensorWrapper(self.context.create_tensor(type, shape, _properties));
+            return RemoteTensorWrapper(self.context, self.context.create_tensor(type, shape, _properties));
         },
         py::arg("type"),
         py::arg("shape"),
@@ -141,7 +141,7 @@ void regclass_VAContext(py::module m) {
                 tensor_params[ov::intel_gpu::va_plane.name()] = uint32_t(1);
                 uv_tensor = self.context.create_tensor(ov::element::u8, {1, height / 2, width / 2, 2}, tensor_params);
             }
-            return py::make_tuple(VASurfaceTensorWrapper(y_tensor), VASurfaceTensorWrapper(uv_tensor));
+            return py::make_tuple(VASurfaceTensorWrapper(self.context, y_tensor), VASurfaceTensorWrapper(self.context, uv_tensor));
         },
         py::arg("height"),
         py::arg("width"),
@@ -172,7 +172,7 @@ void regclass_VAContext(py::module m) {
             ov::AnyMap params = {{ov::intel_gpu::shared_mem_type.name(), ov::intel_gpu::SharedMemType::VA_SURFACE},
                                  {ov::intel_gpu::dev_object_handle.name(), surface},
                                  {ov::intel_gpu::va_plane.name(), plane}};
-            return VASurfaceTensorWrapper(self.context.create_tensor(type, shape, params));
+            return VASurfaceTensorWrapper(self.context, self.context.create_tensor(type, shape, params));
         },
         py::call_guard<py::gil_scoped_release>(),
         py::arg("type"),
