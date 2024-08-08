@@ -764,19 +764,25 @@ std::string network::get_primitive_info(const primitive_id& id) const {
     return node.type()->to_string(node);
 }
 
-bool network::is_cpu_impl(const primitive_id& id) const {
+bool network::need_lockable_output(const primitive_id& id) const {
     auto prim_inst = find_primitive(id);
-
-    for (const auto& user : prim_inst->get_node().get_users()) {
-        if (user->is_type<paged_attention>()) {
-            std::cout << "Input " << id << " has PA user: " << user->id() << "\n";
-        }
-    }
 
     OPENVINO_ASSERT(prim_inst, "[GPU] Can't get implementation type, since topology ",
                                "doesn't contain primitive with requested id: ", id);
 
-    return prim_inst->get_impl() ? prim_inst->get_impl()->is_cpu() : true;
+    const auto& node = prim_inst->get_node();
+    if (node.is_type<input_layout>()) {
+        for (const auto& user : node.get_users()) {
+            const auto& lockable_input_ids = user->get_lockable_input_ids();
+            if (lockable_input_ids.count(user->get_dependency_index(node))) {
+                return true;
+            }
+        }
+
+        return false;
+    } else {
+        return prim_inst->get_impl() ? prim_inst->get_impl()->is_cpu() : true;
+    }
 }
 
 std::string network::get_implementation_info(const primitive_id& id) const {

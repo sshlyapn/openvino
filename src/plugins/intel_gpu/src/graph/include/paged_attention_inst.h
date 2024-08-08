@@ -19,13 +19,13 @@ private:
 public:
     using parent::parent;
 
-    program_node& query_input() const { return get_dependency(0); }
-    program_node& key_input() const { return get_dependency(1); }
-    program_node& value_input() const { return get_dependency(2); }
-    program_node& key_cache() const { return get_dependency(3); }
-    program_node& value_cache() const { return get_dependency(4); }
+    std::set<size_t> get_lockable_input_ids() const override {
+        return { 6 /* subsequence_begins */, 12 /* max_context_len */ };
+    }
 
-    // std::vector<size_t> get_shape_infer_dependencies() const override { return { 5 /* is_prompt */, 7 /* max_context_len */ }; }
+    std::vector<size_t> get_shape_infer_dependencies() const override {
+        return { 6 /* subsequence_begins */, 12 /* max_context_len */ };
+    }
 };
 
 using paged_attention_node = typed_program_node<paged_attention>;

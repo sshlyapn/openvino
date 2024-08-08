@@ -670,7 +670,7 @@ std::vector<cldnn::event::ptr> SyncInferRequest::prepare_input(const std::string
     auto& engine = m_graph->get_engine();
     auto& stream = network->get_stream();
 
-    // network->is_cpu_impl(internal_name);
+    auto need_lockable_mem = network->need_lockable_output(internal_name);
 
     OPENVINO_ASSERT(pshape.compatible(ov::PartialShape(user_tensor->get_shape())) || is_batched_input(port),
                     "[GPU] The input tensor size is not equal to model port shape, can't handle input tensor with name: ",
@@ -696,7 +696,7 @@ std::vector<cldnn::event::ptr> SyncInferRequest::prepare_input(const std::string
         print_arr(static_cast<int64_t*>(user_tensor->data()), user_tensor->get_size());
     }
 
-    if (is_remote) {
+    if (is_remote && !need_lockable_mem) {
         if (convert_needed) {
             m_plugin_inputs[input_idx] = { create_device_tensor(pshape,
                                                                 cldnn::element_type_to_data_type(element_type),
@@ -738,7 +738,7 @@ std::vector<cldnn::event::ptr> SyncInferRequest::prepare_input(const std::string
 
     if (update_device_tensor) {
         // If device input hasn't been created, then try to use user memory if it's usm_host, or allocate new device buffer
-        m_plugin_inputs[input_idx] = create_or_share_device_tensor(user_tensor_wrapper, internal_name, pshape, device_tensor_et, convert_needed);
+        m_plugin_inputs[input_idx] = create_or_share_device_tensor(user_tensor_wrapper, internal_name, pshape, device_tensor_et, convert_needed || need_lockable_mem);
     } else if (!is_remote) {
         // Device memory has been created on previous iterations. Try to reuse whenever it's possible
         auto device_tensor_wrapper = m_plugin_inputs.at(input_idx);
@@ -846,13 +846,13 @@ std::vector<cldnn::event::ptr> SyncInferRequest::prepare_output(size_t output_id
     }
 
     if (!is_dynamic) {
-        auto is_cpu_impl = network->is_cpu_impl(internal_name);
+        bool need_lockable_mem = network->need_lockable_output(internal_name);
         bool has_device_buffer = m_plugin_outputs.count(output_idx) > 0;
         bool update_device_tensor = !has_device_buffer ||
                                     (m_plugin_outputs[output_idx].owner == TensorOwner::USER && !is_remote);
         if (update_device_tensor) {
             m_plugin_outputs[output_idx] =
-                create_or_share_device_tensor(user_tensor_wrapper, internal_name, pshape, device_tensor_et, is_cpu_impl || convert_needed);
+                create_or_share_device_tensor(user_tensor_wrapper, internal_name, pshape, device_tensor_et, need_lockable_mem || convert_needed);
         }
     }
 

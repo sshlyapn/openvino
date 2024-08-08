@@ -413,9 +413,10 @@ void primitive_inst::update_shape() {
         auto dep_mem = dep->output_memory_ptr(dep_port);
         memory_deps.insert({i, dep_mem});
 
-        // Ignore shape_infer dependency for input_layout dependency type for paged attention
-        if (get_node().is_type<paged_attention>() && dep->get_node().is_type<input_layout>())
+        // Ignore shape infer dependency for input_layout when processing paged_attention nodes
+        if (get_node().is_type<paged_attention>() && dep->get_node().is_type<input_layout>()) {
             continue;
+        }
 
         if (!get_node().is_type<shape_of>() && !dep->get_node().is_in_shape_of_subgraph()) {
             has_runtime_deps = true;
@@ -438,42 +439,6 @@ void primitive_inst::update_shape() {
     }
 
     _impl_params->memory_deps = memory_deps;
-
-    if (get_node().is_type<paged_attention>()) {
-        auto& constant_mem = _impl_params->memory_deps;
-        const auto past_lens_mem = constant_mem.at(5);
-        mem_lock<int32_t, mem_lock_type::read> past_lens_mem_lock(past_lens_mem, _network.get_stream());
-
-        const auto subsequence_begins_mem = constant_mem.at(6);
-        mem_lock<int32_t, mem_lock_type::read> subsequence_begins_mem_lock(subsequence_begins_mem, _network.get_stream());
-
-        const auto block_indices_mem = constant_mem.at(7);
-        mem_lock<int32_t, mem_lock_type::read> block_indices_mem_lock(block_indices_mem, _network.get_stream());
-
-        const auto block_indices_begins_mem = constant_mem.at(8);
-        mem_lock<int32_t, mem_lock_type::read> block_indices_begins_mem_lock(block_indices_begins_mem, _network.get_stream());
-
-        const auto max_len_mem = constant_mem.at(12);
-        mem_lock<int32_t, mem_lock_type::read> max_len_mem_lock(max_len_mem, _network.get_stream());
-
-        const auto scale_mem = constant_mem.at(9);
-        mem_lock<ov::float16, mem_lock_type::read> scale_mem_lock(scale_mem, _network.get_stream());
-
-        auto print_arr = [&](cldnn::mem_lock<int32_t, cldnn::mem_lock_type::read>& vec, size_t max_len, std::string name) {
-            std::stringstream ss;
-            for (size_t i = 0; i < std::min(max_len, vec.size()); i++) {
-                ss << vec[i] << ", ";
-            }
-            GPU_DEBUG_TRACE_DETAIL << name << " (len=" << vec.size() << ") content: " << ss.str() << "\n";
-        };
-
-        print_arr(past_lens_mem_lock, past_lens_mem_lock.size(), "past_lens");
-        print_arr(subsequence_begins_mem_lock, subsequence_begins_mem_lock.size(), "subsequence_begins");
-        print_arr(block_indices_mem_lock, block_indices_mem_lock.size(), "block_indices");
-        print_arr(block_indices_begins_mem_lock, block_indices_begins_mem_lock.size(), "block_indices_begins");
-        print_arr(max_len_mem_lock, max_len_mem_lock.size(), "max_len");
-        GPU_DEBUG_TRACE_DETAIL << "Scale is " << scale_mem_lock[0] << " " << scale_mem->get_layout().to_short_string() << "\n";
-    }
 
     auto update_output_layout = [&](layout& layout, size_t idx) {
         if (!_node->is_type<reshape>() || (!_node->get_input_layout(0).has_dynamic_pad() && !_node->can_be_optimized())) {
