@@ -103,9 +103,8 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         if (stage == Stage::KV_CACHE_UPDATE) {
             args.inputs = {  instance.key_memory_ptr(),
                              instance.value_memory_ptr(),
-                             instance.subsequence_begins_memory_ptr(),
-                             instance.block_indices_memory_ptr(),
                              instance.past_lens_memory_ptr(),
+                             instance.block_indices_memory_ptr(),
                              instance.block_indices_begins_memory_ptr() };
 
             args.outputs = { instance.key_cache_memory_ptr(),
@@ -123,7 +122,6 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
                                 instance.key_cache_memory_ptr(),
                                 instance.value_cache_memory_ptr(),
                                 instance.past_lens_memory_ptr(),
-                                instance.subsequence_begins_memory_ptr(),
                                 instance.block_indices_memory_ptr(),
                                 instance.block_indices_begins_memory_ptr() };
             } else {
@@ -228,20 +226,18 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         auto key_cache = impl_param.get_input_layout(3);
         auto value_cache = impl_param.get_input_layout(4);
         auto past_lens = impl_param.get_input_layout(5);
-        auto subsequence_begins = impl_param.get_input_layout(6);
         auto block_indices = impl_param.get_input_layout(7);
         auto block_indices_begins = impl_param.get_input_layout(8);
 
-        const auto inputs_number = 6;
+        const auto inputs_number = 5;
         const auto outputs_number = 2;
         params.inputs.resize(inputs_number);
         params.outputs.resize(outputs_number);
         params.inputs[0] = convert_data_tensor(key);
         params.inputs[1] = convert_data_tensor(value);
-        params.inputs[2] = convert_data_tensor(subsequence_begins);
+        params.inputs[2] = convert_data_tensor(past_lens);
         params.inputs[3] = convert_data_tensor(block_indices);
-        params.inputs[4] = convert_data_tensor(past_lens);
-        params.inputs[5] = convert_data_tensor(block_indices_begins);
+        params.inputs[4] = convert_data_tensor(block_indices_begins);
         params.outputs[0] = convert_data_tensor(key_cache);
         params.outputs[1] = convert_data_tensor(value_cache);
 
@@ -251,10 +247,9 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         std::map<size_t, size_t> in_tensor_to_offset_map = {
             {0, in_offsets_map.at(1)},
             {1, in_offsets_map.at(2)},
-            {2, in_offsets_map.at(6)},
+            {2, in_offsets_map.at(5)},
             {3, in_offsets_map.at(7)},
-            {4, in_offsets_map.at(5)},
-            {5, in_offsets_map.at(8)},
+            {4, in_offsets_map.at(8)},
         };
         std::map<size_t, size_t> out_tensor_to_offset_map = {
             {0, in_offsets_map.at(3)},
@@ -349,19 +344,17 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         auto key_cache = impl_param.get_input_layout(3);
         auto value_cache = impl_param.get_input_layout(4);
         auto past_lens = impl_param.get_input_layout(5);
-        auto subsequence_begins = impl_param.get_input_layout(6);
         auto block_indices = impl_param.get_input_layout(7);
         auto block_indices_begins = impl_param.get_input_layout(8);
 
-        const auto inputs_number = 7;
+        const auto inputs_number = 6;
         params.inputs.resize(inputs_number);
         params.inputs[0] = convert_data_tensor(query);
         params.inputs[1] = convert_data_tensor(key_cache);
         params.inputs[2] = convert_data_tensor(value_cache);
         params.inputs[3] = convert_data_tensor(past_lens);
-        params.inputs[4] = convert_data_tensor(subsequence_begins);
-        params.inputs[5] = convert_data_tensor(block_indices);
-        params.inputs[6] = convert_data_tensor(block_indices_begins);
+        params.inputs[4] = convert_data_tensor(block_indices);
+        params.inputs[5] = convert_data_tensor(block_indices_begins);
 
         params.conf = get_sdpa_configuration(impl_param);
 
@@ -380,9 +373,8 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
             {1, in_offsets_map.at(3)},
             {2, in_offsets_map.at(4)},
             {3, in_offsets_map.at(5)},
-            {4, in_offsets_map.at(6)},
-            {5, in_offsets_map.at(7)},
-            {6, in_offsets_map.at(8)},
+            {4, in_offsets_map.at(7)},
+            {5, in_offsets_map.at(8)},
         };
         std::map<size_t, size_t> out_tensor_to_offset_map = {
             {0, out_offsets_map.at(0)},

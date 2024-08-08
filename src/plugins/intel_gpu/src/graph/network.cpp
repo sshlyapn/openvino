@@ -26,6 +26,7 @@
 #include "primitive_inst.h"
 #include "input_layout_inst.h"
 #include "fully_connected_inst.h"
+#include "paged_attention_inst.h"
 #include "convolution_inst.h"
 #include "deconvolution_inst.h"
 #include "mutable_data_inst.h"
@@ -765,6 +766,12 @@ std::string network::get_primitive_info(const primitive_id& id) const {
 
 bool network::is_cpu_impl(const primitive_id& id) const {
     auto prim_inst = find_primitive(id);
+
+    for (const auto& user : prim_inst->get_node().get_users()) {
+        if (user->is_type<paged_attention>()) {
+            std::cout << "Input " << id << " has PA user: " << user->id() << "\n";
+        }
+    }
 
     OPENVINO_ASSERT(prim_inst, "[GPU] Can't get implementation type, since topology ",
                                "doesn't contain primitive with requested id: ", id);

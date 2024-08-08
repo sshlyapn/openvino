@@ -8,23 +8,18 @@ KERNEL(pa_kv_cache_update)(
     OPTIONAL_SHAPE_INFO_ARG
     __global const INPUT0_TYPE* key_data,
     __global const INPUT1_TYPE* value_data,
-    __global const INPUT2_TYPE* subsequence_begins,
+    __global const INPUT2_TYPE* past_lens,
     __global const INPUT3_TYPE* block_indices,
-    __global const INPUT4_TYPE* past_lens,
-    __global const INPUT5_TYPE* block_indices_begins,
+    __global const INPUT4_TYPE* block_indices_begins,
     __global OUTPUT_TYPE* key_cache_data,
     __global OUTPUT1_TYPE* value_cache_data,
     const __global int* blocked_indexes_start,
     const __global int* blocked_indexes_end,
     const __global int* gws_seq_indexes_correspondence
-    )
-
-    // key_cache layout:   [blocks, head_nums, head_size, vllm_block_size]
-    // value_cache layout: [blocks, head_nums, vllm_block_size, head_size]
-{
+) {
     // If the the number of new tokens equals to the number of past_lens elements,
     // then it's the 2nd+ iteration
-    if (INPUT0_BATCH_NUM == INPUT4_BATCH_NUM) {
+    if (INPUT0_BATCH_NUM == INPUT2_BATCH_NUM) {
         // 2nd+ token
         const uint seq_idx = (uint)get_global_id(0);
         const uint head_idx = (uint)get_global_id(1);
@@ -35,11 +30,11 @@ KERNEL(pa_kv_cache_update)(
         const uint seq_last_block_idx = block_indices_begins[seq_idx + 1] - 1;
         const uint block_idx = block_indices[seq_last_block_idx];
 
-        uint key_value_in_offset = seq_idx * NUM_HEADS * HEAD_SIZE + head_idx * HEAD_SIZE;
+        uint key_value_in_offset = seq_idx * HEADS_NUM * HEAD_SIZE + head_idx * HEAD_SIZE;
 
-        uint key_out_offset = block_idx * NUM_HEADS * HEAD_SIZE * PAGED_ATTENTION_BLOCK_SIZE + head_idx * HEAD_SIZE * PAGED_ATTENTION_BLOCK_SIZE + current_token_pos_in_block;
+        uint key_out_offset = block_idx * HEADS_NUM * HEAD_SIZE * PAGED_ATTENTION_BLOCK_SIZE + head_idx * HEAD_SIZE * PAGED_ATTENTION_BLOCK_SIZE + current_token_pos_in_block;
 
-        uint value_out_offset = block_idx * NUM_HEADS * HEAD_SIZE * PAGED_ATTENTION_BLOCK_SIZE + head_idx * HEAD_SIZE * PAGED_ATTENTION_BLOCK_SIZE + current_token_pos_in_block * HEAD_SIZE;
+        uint value_out_offset = block_idx * HEADS_NUM * HEAD_SIZE * PAGED_ATTENTION_BLOCK_SIZE + head_idx * HEAD_SIZE * PAGED_ATTENTION_BLOCK_SIZE + current_token_pos_in_block * HEAD_SIZE;
 
         // if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_global_id(2) == 0) {
         //     printf("Update kv_cache (2nd+): %d %d %d: block_idx=%d, seq_len=%d, current_token_pos_in_block=%d, seq_last_block_idx=%d\n",
@@ -83,10 +78,10 @@ KERNEL(pa_kv_cache_update)(
         const uint block_end_pos = blocked_indexes_end[block_idx];
         const uint tokens_num = block_end_pos - block_start_pos;
 
-        uint key_value_in_offset = block_start_pos * NUM_HEADS * HEAD_SIZE +
+        uint key_value_in_offset = block_start_pos * HEADS_NUM * HEAD_SIZE +
                                    head_idx * HEAD_SIZE;
 
-        uint key_out_offset = block_indices[block_idx] * NUM_HEADS * HEAD_SIZE * PAGED_ATTENTION_BLOCK_SIZE +
+        uint key_out_offset = block_indices[block_idx] * HEADS_NUM * HEAD_SIZE * PAGED_ATTENTION_BLOCK_SIZE +
                               head_idx * HEAD_SIZE * PAGED_ATTENTION_BLOCK_SIZE;
 
         uint value_out_offset = key_out_offset;
@@ -180,7 +175,7 @@ KERNEL(pa_kv_cache_update)(
                     }
                 }
 
-                key_value_in_offset += NUM_HEADS * HEAD_SIZE;
+                key_value_in_offset += HEADS_NUM * HEAD_SIZE;
                 key_out_offset += 1;
                 value_out_offset += HEAD_SIZE;
             }
@@ -270,7 +265,7 @@ KERNEL(pa_kv_cache_update)(
                     }
                 }
 
-                key_value_in_offset += NUM_HEADS * HEAD_SIZE;
+                key_value_in_offset += HEADS_NUM * HEAD_SIZE;
                 key_out_offset += 1;
                 value_out_offset += HEAD_SIZE;
             }
