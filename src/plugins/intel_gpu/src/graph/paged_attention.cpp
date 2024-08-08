@@ -63,11 +63,11 @@ void paged_attention_inst::on_execute() {
     if (!is_prefill_stage(*_impl_params))
         return;
 
-    OPENVINO_ASSERT(_intermediates_memory.size() == 6, "Unexpected number of intermediates buffers for Paged Attention at prefill stage");
+    OPENVINO_ASSERT(_intermediates_memory.size() == 3, "Unexpected number of intermediates buffers for Paged Attention at prefill stage");
 
-    const auto blocks_indexes_start_idx = 3;
-    const auto blocks_indexes_end_idx = 4;
-    const auto gws_seq_indexes_correspondence_idx = 5;
+    const auto blocks_indexes_start_idx = 0;
+    const auto blocks_indexes_end_idx = 1;
+    const auto gws_seq_indexes_correspondence_idx = 2;
 
     auto subsequence_begins_mem = subsequence_begins_memory_ptr();
     auto blocks_indexes_start_mem = _intermediates_memory[blocks_indexes_start_idx];

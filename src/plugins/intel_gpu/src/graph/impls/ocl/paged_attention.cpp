@@ -135,7 +135,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
     }
 
     std::set<size_t> get_lockable_internal_buffers(const kernel_impl_params& params) const override {
-        return is_prefill_stage(params) ? std::set<size_t>{ 3, 4, 5 } : std::set<size_t>{};
+        return is_prefill_stage(params) ? std::set<size_t>{ 0, 1, 2 } : std::set<size_t>{};
     };
 
     void execute_stage(const std::vector<event::ptr>& events, paged_attention_inst& instance, std::vector<event::ptr>& all_events, size_t stage) {

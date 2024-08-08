@@ -41,7 +41,7 @@ KERNEL(pa_kv_cache_update)(
         //             seq_idx, head_idx, sglid, block_idx, seq_len, current_token_pos_in_block, seq_last_block_idx);
         // }
 
-        #define READ_BLOCK_SIZE 1
+        #define READ_BLOCK_SIZE GENERATE_STAGE_BLOCK_SIZE
         for (uint head_idx_index = 0; head_idx_index < HEAD_SIZE; head_idx_index += SUBGROUP_SIZE * READ_BLOCK_SIZE) {
             #define BLOCK_READ(ptr, offset) BLOCK_READN(INPUT0_TYPE, READ_BLOCK_SIZE, ptr, offset);
             #define DATA_VEC MAKE_VECTOR_TYPE(INPUT0_TYPE, READ_BLOCK_SIZE)
@@ -52,7 +52,11 @@ KERNEL(pa_kv_cache_update)(
                 uint key_offset = key_out_offset + (head_idx_index + sglid + SUBGROUP_SIZE * i) * PAGED_ATTENTION_BLOCK_SIZE;
                 // printf("Update kv_cache: %d %d %d, key (head_idx_index=%d): %d -> %d. key_value_in_offset=%d, block_idx=%d, seq_len=%d. in_block_offset=%d\n",
                 //     seq_idx, head_idx, sglid, head_idx_index, key_value_in_offset + head_idx_index, key_offset, key_value_in_offset, block_idx, seq_len, head_idx * HEAD_SIZE * PAGED_ATTENTION_BLOCK_SIZE + current_token_pos_in_block + (head_idx_index + sglid + SUBGROUP_SIZE * i) * PAGED_ATTENTION_BLOCK_SIZE);
-                key_cache_data[key_offset] = input_data;
+                #if READ_BLOCK_SIZE == 1
+                    key_cache_data[key_offset] = input_data;
+                #else
+                    key_cache_data[key_offset] = input_data[i];
+                #endif
             }
 
             // if (seq_len == 15 && head_idx == 0) {
@@ -65,7 +69,11 @@ KERNEL(pa_kv_cache_update)(
                 uint value_offset = value_out_offset + head_idx_index + sglid + SUBGROUP_SIZE * i;
                 // printf("Update kv_cache: %d %d %d, value (head_idx_index=%d): %d -> %d. key_value_in_offset=%d, block_idx=%d, seq_len=%d. in_block_offset=%d\n",
                     // seq_idx, head_idx, sglid, head_idx_index, key_value_in_offset + head_idx_index, value_offset, key_value_in_offset, block_idx, seq_len, head_idx * HEAD_SIZE * PAGED_ATTENTION_BLOCK_SIZE + current_token_pos_in_block * HEAD_SIZE + head_idx_index + sglid + SUBGROUP_SIZE * i);
-                value_cache_data[value_offset] = input_data;
+                #if READ_BLOCK_SIZE == 1
+                    value_cache_data[value_offset] = input_data;
+                #else
+                    value_cache_data[value_offset] = input_data[i];
+                #endif
             }
         }
     } else {

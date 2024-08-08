@@ -13,6 +13,17 @@ namespace kernel_selector {
 constexpr size_t subgroup_size = 16;
 constexpr size_t paged_attention_block_size = 16;
 
+static size_t get_generate_stage_block_size(size_t head_size) {
+    auto preferred_block_size = { 4, 2, 1 };
+    for (const auto& block_size : preferred_block_size) {
+        if (head_size % block_size == 0) {
+            return block_size;
+        }
+    }
+
+    return 1;
+}
+
 KernelsData KVCacheUpdateKernelRef::GetKernelsData(const Params& p) const {
     if (!Validate(p)) {
         return {};
@@ -43,9 +54,9 @@ KernelsData KVCacheUpdateKernelRef::GetKernelsData(const Params& p) const {
                      static_cast<int>(params.outputs.size()),
                      params.is_shape_agnostic);
 
-    kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 3});
-    kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 4});
-    kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 5});
+    kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 0});
+    kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 1});
+    kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 2});
 
     return {kd};
 }
@@ -102,6 +113,7 @@ JitConstants KVCacheUpdateKernelRef::GetJitConstants(const kv_cache_update_param
     jit.AddConstant(MakeJitConstant("KV_HEADS_NUM", params.conf.kv_heads_num));
     jit.AddConstant(MakeJitConstant("PAGED_ATTENTION_BLOCK_SIZE", paged_attention_block_size));
     jit.AddConstant(MakeJitConstant("SUBGROUP_SIZE", subgroup_size));
+    jit.AddConstant(MakeJitConstant("GENERATE_STAGE_BLOCK_SIZE", get_generate_stage_block_size(params.conf.head_size)));
 
     return jit;
 }
