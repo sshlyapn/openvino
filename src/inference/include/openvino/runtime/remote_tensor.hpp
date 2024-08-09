@@ -24,6 +24,8 @@ class OPENVINO_RUNTIME_API RemoteTensor : public Tensor {
     using Tensor::Tensor;
 
 public:
+    RemoteTensor(const RemoteTensor& other, const Coordinate& begin, const Coordinate& end);
+
     /**
      * @brief Checks OpenVINO remote type.
      * @param tensor Tensor which type is checked.
@@ -43,7 +45,9 @@ public:
     template <typename T>
     T* data() = delete;
 
-    void copy_to(ov::Tensor& dst) const = delete;
+    void copy_to(ov::Tensor& dst) const;
+
+    void copy_from(ov::Tensor& src);
 
     /**
      * @brief Returns a map of device-specific parameters required for low-level

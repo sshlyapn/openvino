@@ -73,6 +73,52 @@ const ov::Strides& RemoteTensorImpl::get_strides() const {
     return m_strides;
 }
 
+void RemoteTensorImpl::copy_to(const std::shared_ptr<ov::ITensor>& dst,
+                               size_t src_offset,
+                               size_t dst_offset,
+                               ov::Shape shape) const {
+    const auto& stream = m_context->get_context_stream();
+    auto remote_tensor = std::dynamic_pointer_cast<RemoteTensorImpl>(dst);
+    if (remote_tensor != nullptr) {
+        auto dst_mem = remote_tensor->get_memory();
+        auto src_mem = get_memory();
+
+        /* src_mem->copy_to(...); */
+    } else {
+        auto dst_tensor = std::dynamic_pointer_cast<ov::IRemoteTensor>(dst);
+        OPENVINO_ASSERT(dst_tensor == nullptr, "[GPU] Unsupported RemoteTensor type");
+
+        auto dst_ptr = dst->data();
+        auto src_mem = get_memory();
+
+        (void)dst_ptr;
+        /* src_mem->copy_to(...); */
+    }
+}
+
+void RemoteTensorImpl::copy_from(const std::shared_ptr<ov::ITensor>& src,
+                                 size_t src_offset,
+                                 size_t dst_offset,
+                                 ov::Shape shape) {
+    const auto& stream = m_context->get_context_stream();
+    auto remote_impl = std::dynamic_pointer_cast<RemoteTensorImpl>(src);
+    if (remote_impl != nullptr) {
+        auto src_mem = remote_impl->get_memory();
+        auto dst_mem = get_memory();
+
+        /* dst_mem->copy_from(...); */
+    } else {
+        auto src_tensor = std::dynamic_pointer_cast<ov::IRemoteTensor>(src);
+        OPENVINO_ASSERT(src_tensor == nullptr, "[GPU] Unsupported RemoteTensor type");
+
+        auto src_ptr = src->data();
+        auto dst_mem = get_memory();
+
+        (void)src_ptr;
+        /* dst_mem->copy_from(...); */
+    }
+}
+
 const AnyMap& RemoteTensorImpl::get_properties() const {
     return m_properties;
 }

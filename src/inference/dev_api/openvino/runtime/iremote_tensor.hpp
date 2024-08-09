@@ -33,5 +33,17 @@ public:
      * @return Device name
      */
     virtual const std::string& get_device_name() const = 0;
+
+    virtual void copy_to(const std::shared_ptr<ov::ITensor>& dst) const {
+        copy_to(dst, 0, 0, this->get_shape());
+    }
+
+    virtual void copy_from(const std::shared_ptr<ov::ITensor>& src) {
+        copy_from(src, 0, 0, this->get_shape());
+    }
+
+    virtual void copy_to(const std::shared_ptr<ov::ITensor>& dst, size_t src_offset, size_t dst_offset, ov::Shape dst_shape) const = 0;
+
+    virtual void copy_from(const std::shared_ptr<ov::ITensor>& src, size_t src_offset, size_t dst_offset, ov::Shape dst_shape) = 0;
 };
 }  // namespace ov

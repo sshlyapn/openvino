@@ -67,6 +67,14 @@ public:
     const std::string& get_device_name() const override {
         return m_tensor->get_device_name();
     }
+
+    void copy_to(const std::shared_ptr<ov::ITensor>& dst, size_t src_offset, size_t dst_offset, ov::Shape dst_shape) const override {
+        OPENVINO_NOT_IMPLEMENTED;
+    }
+
+    void copy_from(const std::shared_ptr<ov::ITensor>& src, size_t src_offset, size_t dst_offset, ov::Shape dst_shape) override {
+        OPENVINO_NOT_IMPLEMENTED;
+    }
 };
 // ! [vector_impl:implementation]
 

@@ -38,6 +38,14 @@ public:
 
     static ov::SoPtr<ov::ITensor> get_hardware_tensor(const ov::SoPtr<ov::ITensor>& tensor, bool unwrap);
 
+    void copy_to(const std::shared_ptr<ov::ITensor>& dst, size_t src_offset, size_t dst_offset, ov::Shape dst_shape) const override {
+        OPENVINO_NOT_IMPLEMENTED;
+    }
+
+    void copy_from(const std::shared_ptr<ov::ITensor>& src, size_t src_offset, size_t dst_offset, ov::Shape dst_shape) override {
+        OPENVINO_NOT_IMPLEMENTED;
+    }
+
 private:
     mutable std::string m_name;
     ov::SoPtr<ov::ITensor> m_tensor;

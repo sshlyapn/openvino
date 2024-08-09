@@ -11,6 +11,7 @@
 
 #include "openvino/runtime/common.hpp"
 #include "openvino/runtime/itensor.hpp"
+#include "openvino/runtime/iremote_tensor.hpp"
 #include "openvino/runtime/so_ptr.hpp"
 
 namespace ov {
@@ -48,6 +49,10 @@ OPENVINO_RUNTIME_API std::shared_ptr<ITensor> make_tensor(const element::Type ty
  * @note A Number of dimensions in `begin` and `end` must match number of dimensions in `other.get_shape()`
  */
 OPENVINO_RUNTIME_API std::shared_ptr<ITensor> make_tensor(const std::shared_ptr<ITensor>& other,
+                                                          const Coordinate& begin,
+                                                          const Coordinate& end);
+
+OPENVINO_RUNTIME_API std::shared_ptr<ITensor> make_tensor(const std::shared_ptr<IRemoteTensor>& other,
                                                           const Coordinate& begin,
                                                           const Coordinate& end);
 

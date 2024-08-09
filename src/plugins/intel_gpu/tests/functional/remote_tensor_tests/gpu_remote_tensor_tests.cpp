@@ -2495,3 +2495,28 @@ TEST(OVRemoteContextGPU, smoke_RemoteTensorSetShape) {
     OV_ASSERT_NO_THROW(remote_tensor.set_shape({1, 3, 4, 5}));
     OV_ASSERT_NO_THROW(remote_tensor.set_shape({3, 3, 4, 5}));
 }
+
+TEST(OVRemoteTensorGPU, smoke_RoiRemoteTensor) {
+#if defined(ANDROID)
+    GTEST_SKIP();
+#endif
+    auto core = ov::Core();
+    auto context = core.get_default_context(ov::test::utils::DEVICE_GPU);
+
+    auto remote_tensor_dst = context.create_tensor(ov::element::f32, ov::Shape{1, 2, 3, 4});
+    auto roi_remote_tensor_dst = ov::RemoteTensor(remote_tensor_dst, {0, 0, 0, 1}, {1, 2, 3, 4});
+
+    auto remote_tensor_src = context.create_tensor(ov::element::f32, ov::Shape{1, 2, 3, 4});
+    auto roi_remote_tensor_src = ov::RemoteTensor(remote_tensor_src, {0, 0, 0, 1}, {1, 2, 3, 4});
+
+    // ROI Remote Tensor to ROI Remote Tensor
+    roi_remote_tensor_src.copy_to(roi_remote_tensor_dst);
+    roi_remote_tensor_dst.copy_from(roi_remote_tensor_src);
+
+    // Remote Tensor to Remote Tensor
+    remote_tensor_src.copy_to(remote_tensor_dst);
+
+    // Remote Tensor to Host Tensor
+    auto host_tensor = ov::Tensor(ov::element::f32, ov::Shape{1, 2, 3, 4});
+    remote_tensor_src.copy_to(host_tensor);
+}

@@ -339,6 +339,95 @@ private:
 };
 
 /**
+ * @brief ROI tensor on other tensor
+ * ROI tensor holds the owner
+ */
+
+class RoiRemoteTensor : public IRemoteTensor {
+public:
+    RoiRemoteTensor(const std::shared_ptr<IRemoteTensor>& owner, const Coordinate& begin, const Coordinate& end)
+        : m_owner{owner},
+          m_shape{make_roi_shape(owner->get_shape(), begin, end)},
+          m_capacity{m_shape},
+          m_offset{std::inner_product(begin.begin(), begin.end(), get_strides().begin(), static_cast<size_t>(0))} {
+        OPENVINO_ASSERT(get_element_type().bitwidth() >= 8,
+                        "ROI Tensor for types with bitwidths less then 8 bit is not implemented. Tensor type: ",
+                        get_element_type());
+    }
+
+    void copy_to(const std::shared_ptr<ov::ITensor>& dst) const override {
+        OPENVINO_ASSERT(m_owner != nullptr, "Tensor was not initialized.");
+
+        if (std::dynamic_pointer_cast<RoiRemoteTensor>(dst)) {
+            auto dst_roi_remote_tensor = std::dynamic_pointer_cast<RoiRemoteTensor>(dst);
+            m_owner->copy_to(dst_roi_remote_tensor->m_owner, m_offset, dst_roi_remote_tensor->m_offset, this->m_shape);
+        } else {
+            m_owner->copy_to(dst, m_offset, 0, this->m_shape);
+        }
+    };
+
+    void copy_from(const std::shared_ptr<ov::ITensor>& src) override {
+        OPENVINO_ASSERT(m_owner != nullptr, "Tensor was not initialized.");
+
+        if (std::dynamic_pointer_cast<RoiRemoteTensor>(src)) {
+            auto src_roi_remote_tensor = std::dynamic_pointer_cast<RoiRemoteTensor>(src);
+            m_owner->copy_from(src_roi_remote_tensor->m_owner, src_roi_remote_tensor->m_offset, m_offset, this->m_shape);
+        } else {
+            m_owner->copy_from(src, 0, m_offset, this->m_shape);
+        }
+    };
+
+    void copy_to(const std::shared_ptr<ov::ITensor>& dst, size_t src_offset, size_t dst_offset, ov::Shape dst_shape) const override {
+        OPENVINO_NOT_IMPLEMENTED;
+    }
+
+    void copy_from(const std::shared_ptr<ov::ITensor>& dst, size_t src_offset, size_t dst_offset, ov::Shape dst_shape) override {
+        OPENVINO_NOT_IMPLEMENTED;
+    }
+
+    const element::Type& get_element_type() const override {
+        return m_owner->get_element_type();
+    }
+
+    const Strides& get_strides() const override {
+        return m_owner->get_strides();
+    }
+
+    const Shape& get_shape() const override {
+        return m_shape;
+    }
+
+    void set_shape(ov::Shape new_shape) override {
+        OPENVINO_ASSERT(new_shape.size() == m_shape.size());
+        for (auto new_dim = new_shape.cbegin(), max_dim = m_capacity.cbegin(); new_dim != new_shape.cend();
+             ++max_dim, ++new_dim) {
+            OPENVINO_ASSERT(*new_dim <= *max_dim,
+                            "Cannot set new shape: ",
+                            new_shape,
+                            " for ROI tensor! Dimension: ",
+                            std::distance(new_shape.cbegin(), new_dim),
+                            " is not compatible.");
+        }
+
+        m_shape = std::move(new_shape);
+    }
+
+    const AnyMap& get_properties() const override {
+        return m_owner->get_properties();
+    };
+
+    const std::string& get_device_name() const override {
+        return m_owner->get_device_name();
+    }
+
+private:
+    std::shared_ptr<IRemoteTensor> m_owner;
+    Shape m_shape;
+    const Shape m_capacity;
+    const size_t m_offset;
+};
+
+/**
  * @brief Creates ROI tensor
  *
  * @param other Tensor what owns the memory
@@ -351,6 +440,12 @@ std::shared_ptr<ITensor> make_tensor(const std::shared_ptr<ITensor>& other,
                                      const Coordinate& begin,
                                      const Coordinate& end) {
     return std::make_shared<RoiTensor>(other, begin, end);
+}
+
+std::shared_ptr<ITensor> make_tensor(const std::shared_ptr<IRemoteTensor>& other,
+                                     const Coordinate& begin,
+                                     const Coordinate& end) {
+    return std::make_shared<RoiRemoteTensor>(other, begin, end);
 }
 
 namespace util {
