@@ -81,11 +81,17 @@ struct memory {
 
         return true;
     }
-    virtual event::ptr copy_from(stream& /* stream */, const memory& /* other */, bool blocking = true) = 0;
-    virtual event::ptr copy_from(stream& /* stream */, const void* /* host_ptr */, bool blocking = true, size_t dst_offset = 0, size_t data_size = 0) = 0;
 
-    virtual event::ptr copy_to(stream& stream, memory& other, bool blocking = true) { return other.copy_from(stream, *this, blocking); }
-    virtual event::ptr copy_to(stream& /* stream */, void* /* host_ptr */, bool blocking = true) = 0;
+    virtual event::ptr copy_from(stream& stream, const memory& other, size_t src_offset, size_t dst_offset = 0, size_t size = 0, bool blocking = true) = 0;
+    virtual event::ptr copy_from(stream& stream, const memory& other, bool blocking = true) { return copy_from(stream, other, 0, 0, _bytes_count, blocking); };
+    virtual event::ptr copy_to(stream& stream, memory& other, size_t src_offset, size_t dst_offset, size_t size, bool blocking = true) = 0;
+    virtual event::ptr copy_to(stream& stream, memory& other, bool blocking = true) { return copy_to(stream, other, 0, 0, _bytes_count, blocking); }
+
+    virtual event::ptr copy_from(stream& stream, const void* src_ptr, size_t src_offset, size_t dst_offset = 0, size_t size = 0, bool blocking = true) = 0;
+    virtual event::ptr copy_from(stream& stream, const void* src_ptr, bool blocking = true) { return copy_from(stream, src_ptr, 0, 0, _bytes_count, blocking); };
+    virtual event::ptr copy_to(stream& stream, void* dst_ptr, size_t src_offset, size_t dst_offset, size_t size, bool blocking = true) = 0;
+    virtual event::ptr copy_to(stream& stream, void* dst_ptr, bool blocking = true) { return copy_to(stream, dst_ptr, 0, 0, _bytes_count, blocking); };
+
 
 #ifdef ENABLE_ONEDNN_FOR_GPU
     virtual dnnl::memory get_onednn_memory(dnnl::memory::desc /* desc */, int64_t offset = 0) const {
@@ -112,11 +118,10 @@ struct simple_attached_memory : memory {
     simple_attached_memory(const layout& layout, void* pointer)
         : memory(nullptr, layout, allocation_type::unknown, nullptr), _pointer(pointer) {}
 
-    void* lock(const stream& /* stream */, mem_lock_type /* type */) override { return _pointer; }
-    void unlock(const stream& /* stream */) override {}
-    event::ptr fill(stream& /* stream */, unsigned char) override { return nullptr; }
-    event::ptr fill(stream& /* stream */) override { return nullptr; }
-    shared_mem_params get_internal_params() const override { return { shared_mem_type::shared_mem_empty, nullptr, nullptr, nullptr,
+    void* lock(const stream& stream, mem_lock_type type otherreturn _pointer; }
+    void unlock(const stream& stream) override {}
+    event otherll(stream& stream, unsigned char) otherturn nullptr; }
+    event::ptr fill(stream& stream) override { return other    shared_mem_params get_internal_params() const override { return { shared_mem_type::shared_mem_empty, nullptr, nullptr, nullptr,
 #ifdef _WIN32
         nullptr,
 #else
@@ -124,16 +129,16 @@ struct simple_attached_memory : memory {
 #endif
         0}; };
 
-    event::ptr copy_from(stream& /* stream */, const memory& /* other */, bool /* blocking */) override {
+    event::ptr copy_from(stream& stream, const memory& other, bool blocking) override {
         OPENVINO_THROW("[GPU] copy_from is not implemented for simple_attached_memory");
     }
-    event::ptr copy_from(stream& /* stream */, const void* /* host_ptr */, bool /* blocking */, size_t /* dst_offset */, size_t /* data_size */) override {
+    event::ptr copy_from(stream& stream, const void* other, bool /* blocking */, size_t /* dst_offset */, size_t /* data_size */) override {
         OPENVINO_THROW("[GPU] copy_from is not implemented for simple_attached_memory");
     }
-    event::ptr copy_to(stream& /* stream */, memory& /* other */, bool /* blocking */) override {
+    event::ptr copy_to(stream& stream, memory& /* otherol /* blocking */) override {
         OPENVINO_THROW("[GPU] copy_to is not implemented for simple_attached_memory");
     }
-    event::ptr copy_to(stream& /* stream */, void* /* host_ptr */, bool /* blocking */) override {
+    event::ptr copy_to(stream& stream, void* /* otherol /* blocking */) override {
         OPENVINO_THROW("[GPU] copy_to is not implemented for simple_attached_memory");
     }
 

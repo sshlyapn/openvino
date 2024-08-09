@@ -37,9 +37,9 @@ public:
     ov::SoPtr<ov::ITensor> create_host_tensor(const ov::element::Type type, const ov::Shape& shape) override;
     ov::SoPtr<ov::IRemoteTensor> create_tensor(const ov::element::Type& type, const ov::Shape& shape, const ov::AnyMap& params) override;
 
-
     cldnn::engine& get_engine() { return *m_engine; }
     ov::intel_gpu::gpu_handle_param get_external_queue() const { return m_external_queue; }
+    cldnn::stream_ptr get_context_stream() { return context_stream; }
 
     cldnn::memory::ptr try_get_cached_memory(size_t hash);
     void add_to_cache(size_t hash, cldnn::memory::ptr memory);
@@ -56,6 +56,7 @@ private:
 
     void init_properties();
 
+    cldnn::stream_ptr context_stream;
     std::shared_ptr<cldnn::engine> m_engine;
     ov::intel_gpu::gpu_handle_param m_va_display = nullptr;
     ov::intel_gpu::gpu_handle_param m_external_queue = nullptr;

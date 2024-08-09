@@ -38,6 +38,13 @@ public:
 
     static ov::SoPtr<ov::ITensor> get_hardware_tensor(const ov::SoPtr<ov::ITensor>& tensor, bool unwrap);
 
+    void copy_to(const std::shared_ptr<ov::ITensor>& dst, size_t src_offset, size_t dst_offset, size_t size) const override {
+        OPENVINO_THROW("[PROXY] Unimplemented copy_to() function call");
+    };
+
+    virtual void copy_from(const std::shared_ptr<ov::ITensor>& src, size_t src_offset, size_t dst_offset, size_t size) const override {
+        OPENVINO_THROW("[PROXY] Unimplemented copy_from() function call");
+    }
 private:
     mutable std::string m_name;
     ov::SoPtr<ov::ITensor> m_tensor;

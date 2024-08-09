@@ -40,10 +40,25 @@ struct gpu_buffer : public lockable_gpu_mem, public memory {
         return _buffer;
     }
 
-    event::ptr copy_from(stream& stream, const memory& other, bool blocking) override;
-    event::ptr copy_from(stream& stream, const void* host_ptr, bool blocking, size_t dst_offset, size_t data_size) override;
+    // event::ptr copy_from(stream& stream, const memory& other, bool blocking) override;
+    // event::ptr copy_from(stream& stream, const void* host_ptr, bool blocking, size_t dst_offset, size_t data_size) override;
 
-    event::ptr copy_to(stream& stream, void* other , bool blocking) override;
+    // event::ptr copy_to(stream& stream, void* other , bool blocking) override;
+
+    // event::ptr copy_from(stream& stream, const memory& other, bool blocking = true) override { return copy_from(stream, other, 0, 0, _bytes_count, blocking); }
+    // event::ptr copy_from(stream& stream, const void* src_ptr, bool blocking = true) override { return copy_from(stream, src_ptr, 0, 0, _bytes_count, blocking); }
+    // event::ptr copy_to(stream& stream, memory& other, bool blocking = true) override { return copy_to(stream, other, 0, 0, _bytes_count, blocking); }
+    // event::ptr copy_to(stream& stream, void* dst_ptr, bool blocking = true) override { return copy_to(stream, dst_ptr, 0, 0, _bytes_count, blocking); }
+
+    event::ptr copy_from(stream& stream, const memory& other, bool blocking = true) override;
+    event::ptr copy_from(stream& stream, const void* src_ptr, bool blocking = true) override;
+    event::ptr copy_to(stream& stream, memory& other, bool blocking = true) override;
+    event::ptr copy_to(stream& stream, void* dst_ptr, bool blocking = true) override;
+
+    event::ptr copy_from(stream& stream, const memory& other, size_t src_offset, size_t dst_offset = 0, size_t size = 0, bool blocking = true) override;
+    event::ptr copy_from(stream& stream, const void* src_ptr, size_t src_offset, size_t dst_offset = 0, size_t size = 0, bool blocking = true) override;
+    event::ptr copy_to(stream& stream, memory& other, size_t src_offset, size_t dst_offset, size_t size, bool blocking = true) override;
+    event::ptr copy_to(stream& stream, void* dst_ptr, size_t src_offset, size_t dst_offset, size_t size, bool blocking = true) override;
 
 #ifdef ENABLE_ONEDNN_FOR_GPU
     dnnl::memory get_onednn_memory(dnnl::memory::desc /* desc */, int64_t offset = 0) const override;
@@ -123,6 +138,7 @@ struct gpu_usm : public lockable_gpu_mem, public memory {
     event::ptr copy_from(stream& stream, const void* host_ptr, bool blocking, size_t dst_offset, size_t data_size) override;
 
     event::ptr copy_to(stream& stream, void* host_ptr, bool blocking) override;
+    event::ptr copy_to(stream& stream, void* dst_ptr, size_t src_offset, size_t dst_offset, size_t size, bool blocking) override;
 #ifdef ENABLE_ONEDNN_FOR_GPU
     dnnl::memory get_onednn_memory(dnnl::memory::desc /* desc */, int64_t offset = 0) const override;
 #endif

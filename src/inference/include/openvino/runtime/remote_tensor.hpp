@@ -43,7 +43,12 @@ public:
     template <typename T>
     T* data() = delete;
 
-    void copy_to(ov::Tensor& dst) const = delete;
+    void copy_to(ov::Tensor& dst) const;
+
+    void copy_to(ov::Tensor& dst, size_t src_offset, size_t dst_offset, size_t size) const;
+
+    void copy_from(ov::Tensor& dst, size_t src_offset, size_t dst_offset, size_t size) const;
+
 
     /**
      * @brief Returns a map of device-specific parameters required for low-level

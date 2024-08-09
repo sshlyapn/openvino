@@ -73,6 +73,66 @@ const ov::Strides& RemoteTensorImpl::get_strides() const {
     return m_strides;
 }
 
+void RemoteTensorImpl::copy_to(const std::shared_ptr<ov::ITensor>& dst,
+                               size_t src_offset,
+                               size_t dst_offset,
+                               size_t size) const {
+    const auto& stream = m_context->get_context_stream();
+    auto remote_impl = std::dynamic_pointer_cast<RemoteTensorImpl>(dst);
+    if (remote_impl != nullptr) {
+        auto dst_mem = remote_impl->get_original_memory();
+        auto src_mem = get_original_memory();
+
+        OPENVINO_ASSERT(dst_offset + size <= dst_mem->size());
+        OPENVINO_ASSERT(src_offset + size <= src_mem->size());
+        OPENVINO_ASSERT(dst_mem->get_allocation_type() != cldnn::allocation_type::cl_mem, "[GPU] Unsupported buffer type");
+
+        src_mem->copy_to(*stream, dst_mem->buffer_ptr(), src_offset, dst_offset, size);
+
+        std::cout << "Copy to RemoteTensor call\n";
+    } else {
+        auto dst_tensor = std::dynamic_pointer_cast<ov::IRemoteTensor>(dst);
+        OPENVINO_ASSERT(dst_tensor == nullptr, "[GPU] Unsupported RemoteTensor type");
+
+        auto dst_ptr = dst->data();
+        auto src_mem = get_original_memory();
+
+        src_mem->copy_to(*stream, dst_ptr, src_offset, dst_offset, size);
+        std::cout << "Copy to host Tensor call\n";
+    }
+}
+
+
+void RemoteTensorImpl::copy_from(const std::shared_ptr<ov::ITensor>& src,
+                                 size_t src_offset,
+                                 size_t dst_offset,
+                                 size_t size) const {
+    const auto& stream = m_context->get_context_stream();
+    auto remote_impl = std::dynamic_pointer_cast<RemoteTensorImpl>(src);
+    if (remote_impl != nullptr) {
+        auto src_mem = remote_impl->get_original_memory();
+        auto dst_mem = get_original_memory();
+
+        OPENVINO_ASSERT(dst_offset + size <= dst_mem->size());
+        OPENVINO_ASSERT(src_offset + size <= src_mem->size());
+        OPENVINO_ASSERT(dst_mem->get_allocation_type() != cldnn::allocation_type::cl_mem, "[GPU] Unsupported buffer type");
+
+        src_mem->copy_to(*stream, dst_mem->buffer_ptr(), src_offset, dst_offset, size);
+
+        std::cout << "Copy to RemoteTensor call\n";
+    } else {
+        auto src_tensor = std::dynamic_pointer_cast<ov::IRemoteTensor>(src);
+        OPENVINO_ASSERT(src_tensor == nullptr, "[GPU] Unsupported RemoteTensor type");
+
+        auto src_ptr = src->data();
+        auto dst_mem = get_original_memory();
+
+        dst_mem->copy_from(*stream, src_ptr, src_offset, dst_offset, size);
+        std::cout << "Copy to host Tensor call\n";
+    }
+}
+
+
 const AnyMap& RemoteTensorImpl::get_properties() const {
     return m_properties;
 }

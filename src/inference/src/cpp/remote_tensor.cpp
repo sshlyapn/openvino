@@ -55,6 +55,14 @@ AnyMap RemoteTensor::get_params() const {
     }
 }
 
+void RemoteTensor::copy_to(ov::Tensor& dst, size_t src_offset, size_t dst_offset, size_t size) const {
+    OPENVINO_ASSERT(_impl != nullptr, "Tensor was not initialized.");
+    std::cout << "Copy memory block to other tensor\n";
+    auto remote_tensor = std::dynamic_pointer_cast<ov::IRemoteTensor>(_impl);
+    auto dst_tensor = std::dynamic_pointer_cast<ov::ITensor>(get_tensor_impl(dst)._ptr);
+    remote_tensor->copy_to(dst_tensor, src_offset, dst_offset, size);
+}
+
 std::string RemoteTensor::get_device_name() const {
     OPENVINO_ASSERT(_impl != nullptr, "Tensor was not initialized.");
     auto remote_tensor = std::dynamic_pointer_cast<ov::IRemoteTensor>(_impl);

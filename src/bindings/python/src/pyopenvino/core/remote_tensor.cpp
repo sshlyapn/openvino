@@ -44,6 +44,24 @@ void regclass_RemoteTensor(py::module m) {
 
     cls.def(
         "copy_to",
+        [](RemoteTensorWrapper& self, py::object& dst, size_t src_offset, size_t dst_offset, size_t size) {
+            ov::Tensor dst_tensor;
+            if (py::isinstance<ov::Tensor>(dst)) {
+                std::cout << "Copy call to host\n";
+                dst_tensor = dst.cast<const ov::Tensor&>();
+            } else if (py::isinstance<RemoteTensorWrapper>(dst)) {
+                std::cout << "Copy call to remote\n";
+                dst_tensor = dst.cast<const RemoteTensorWrapper&>().tensor;
+            }
+
+            self.tensor.copy_to(dst_tensor, src_offset, dst_offset, size);
+        },
+        R"(
+        This method is not implemented.
+    )");
+
+    cls.def(
+        "copy_to",
         [](RemoteTensorWrapper& self, py::object& dst) {
             Common::utils::raise_not_implemented();
         },
