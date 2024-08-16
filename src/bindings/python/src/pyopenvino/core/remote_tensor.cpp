@@ -45,6 +45,38 @@ void regclass_RemoteTensor(py::module m) {
     cls.def(
         "copy_to",
         [](RemoteTensorWrapper& self, py::object& dst) {
+            ov::Tensor dst_tensor;
+            if (py::isinstance<ov::Tensor>(dst)) {
+                dst_tensor = dst.cast<const ov::Tensor&>();
+            } else if (py::isinstance<RemoteTensorWrapper>(dst)) {
+                dst_tensor = dst.cast<const RemoteTensorWrapper&>().tensor;
+            }
+
+            self.tensor.copy_to(dst_tensor);
+        },
+        R"(
+        Description
+    )");
+
+    cls.def(
+        "copy_from",
+        [](RemoteTensorWrapper& self, py::object& dst) {
+            ov::Tensor dst_tensor;
+            if (py::isinstance<ov::Tensor>(dst)) {
+                dst_tensor = dst.cast<const ov::Tensor&>();
+            } else if (py::isinstance<RemoteTensorWrapper>(dst)) {
+                dst_tensor = dst.cast<const RemoteTensorWrapper&>().tensor;
+            }
+
+            self.tensor.copy_from(dst_tensor);
+        },
+        R"(
+        Description
+    )");
+
+    cls.def(
+        "copy_to",
+        [](RemoteTensorWrapper& self, py::object& dst) {
             Common::utils::raise_not_implemented();
         },
         R"(
