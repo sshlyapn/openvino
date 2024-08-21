@@ -34,6 +34,9 @@ KERNEL(pa_sdpa_opt)(
     const __global INPUT3_TYPE* past_lens,
     const __global INPUT4_TYPE* block_indices,
     const __global INPUT5_TYPE* block_indices_begins,
+#if HAS_ALIBI
+    const __global INPUT6_TYPE* alibi_slopes,
+#endif
     __global OUTPUT_TYPE* output,
     __global SOFTMAX_ACCUMULATOR_TYPE* exp_sums,
     __global SOFTMAX_ACCUMULATOR_TYPE* max_logits,
@@ -149,7 +152,14 @@ KERNEL(pa_sdpa_opt)(
             qk_acc = TO_INPUT0_TYPE(SCALE_VAL) * qk_acc;
 #endif
 
-            if (partition_idx * SEQ_LEN_PARTITION_SIZE + block_num * SUBGROUPS_PER_WG * SUBGROUP_SIZE + sgid * SUBGROUP_SIZE + sglid >= seq_len)
+            const uint token_idx = partition_idx * SEQ_LEN_PARTITION_SIZE + block_num * SUBGROUPS_PER_WG * SUBGROUP_SIZE + sgid * SUBGROUP_SIZE + sglid;
+
+#ifdef HAS_ALIBI
+            const int alibi_val = (1 - seq_len) + token_idx;
+            qk_acc += alibi_slopes[head_num_idx] * alibi_val;
+#endif
+
+            if (token_idx >= seq_len)
                 qk_acc = INPUT0_VAL_MIN;
 
             qk_max = SOFTMAX_ACCUMULATOR_MAX_FUNC(qk_max, TO_SOFTMAX_ACCUMULATOR_TYPE(qk_acc));

@@ -155,6 +155,9 @@ JitConstants PagedAttentionSDPAKernelOpt::GetJitConstants(const pa_sdpa_params& 
     if (config.has_scale_val)
         jit.AddConstant(MakeJitConstant("SCALE_VAL", config.scale_val));
 
+    if (params.conf.has_alibi_input)
+        jit.AddConstant(MakeJitConstant("HAS_ALIBI", 1));
+
     jit.Merge(MakeTypeJitConstants(softmax_acc_dt, "SOFTMAX_ACCUMULATOR"));
 
     return jit;

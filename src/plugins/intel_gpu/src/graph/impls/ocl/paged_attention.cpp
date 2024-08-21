@@ -96,6 +96,8 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
     }
 
     kernel_arguments_data get_arguments(const paged_attention_inst& instance, size_t stage, size_t kernel_idx) const {
+        const auto desc = instance.get_node().as<paged_attention>().get_primitive();
+
         kernel_arguments_data args;
         if (stage == Stage::KV_CACHE_UPDATE || stage == Stage::SDPA || (stage == Stage::PA_SDPA && kernel_idx == 0))
             args.shape_info = instance.shape_info_memory_ptr();
@@ -115,6 +117,10 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
                              instance.value_memory_ptr(),
                              instance.subsequence_begins_memory_ptr() };
 
+            if (desc->has_alibi) {
+                args.inputs.push_back(instance.alibi_memory_ptr());
+            }
+
             args.outputs = { instance.output_memory_ptr(0) };
         } else if (stage == Stage::PA_SDPA) {
             if (kernel_idx == 0) {
@@ -124,6 +130,10 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
                                 instance.past_lens_memory_ptr(),
                                 instance.block_indices_memory_ptr(),
                                 instance.block_indices_begins_memory_ptr() };
+
+                if (desc->has_alibi) {
+                    args.inputs.push_back(instance.alibi_memory_ptr());
+                }
             } else {
                 args.inputs = { instance.past_lens_memory_ptr(), };
             }
@@ -202,6 +212,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         config.head_size = desc->head_size;
         config.heads_num = desc->heads_num;
         config.kv_heads_num = desc->kv_heads_num;
+        config.has_alibi_input = desc->has_alibi;
         config.is_causal = true;
         config.is_paged_attention = true;
         config.paged_attention_block_size = static_cast<int64_t>(paged_attention::block_size);
@@ -269,13 +280,23 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         const auto key_layout = impl_param.get_input_layout(1);
         const auto value_layout = impl_param.get_input_layout(2);
         const auto subsequence_begins_layout = impl_param.get_input_layout(6);
+        const auto alibi_layout = impl_param.get_input_layout(11);
+        const auto has_alibi = alibi_layout.count() > 0;
 
-        const auto inputs_number = 4;
+        auto inputs_number = 4;
+        if (has_alibi)
+            inputs_number++;
+
+        auto input_idx = 0;
         params.inputs.resize(inputs_number);
-        params.inputs[0] = convert_data_tensor(query_layout);
-        params.inputs[1] = convert_data_tensor(key_layout);
-        params.inputs[2] = convert_data_tensor(value_layout);
-        params.inputs[3] = convert_data_tensor(subsequence_begins_layout);
+        params.inputs[input_idx++] = convert_data_tensor(query_layout);
+        params.inputs[input_idx++] = convert_data_tensor(key_layout);
+        params.inputs[input_idx++] = convert_data_tensor(value_layout);
+        params.inputs[input_idx++] = convert_data_tensor(subsequence_begins_layout);
+
+        if (has_alibi)
+            params.inputs[input_idx++] = convert_data_tensor(alibi_layout);
+
         params.conf = get_sdpa_configuration(impl_param);
 
         const auto& in_offsets_map = impl_param.in_port_to_shape_info_offset;
@@ -285,11 +306,13 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
             {1, in_offsets_map.at(1)},
             {2, in_offsets_map.at(2)},
             {3, in_offsets_map.at(6)},
-            {4, in_offsets_map.at(9)},
         };
         std::map<size_t, size_t> out_tensor_to_offset_map = {
             {0, out_offsets_map.at(0)},
         };
+
+        if (has_alibi)
+            in_tensor_to_offset_map.insert({4, in_offsets_map.at(11)});
 
         if (is_prefill_stage(impl_param) && !is_dynamic) {
             auto get_aligned_seq_len = [&](int64_t target_seq_len_block_size = 16) {
@@ -341,23 +364,31 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
     static pa_sdpa_kernel_params_t get_pa_sdpa_params(const kernel_impl_params& impl_param, bool is_dynamic = false) {
         auto params = get_default_params<pa_sdpa_kernel_params_t>(impl_param, is_dynamic);
 
-        auto query = impl_param.get_input_layout(0);
-        auto key_cache = impl_param.get_input_layout(3);
-        auto value_cache = impl_param.get_input_layout(4);
-        auto past_lens = impl_param.get_input_layout(5);
-        auto block_indices = impl_param.get_input_layout(7);
-        auto block_indices_begins = impl_param.get_input_layout(8);
+        const auto query_layout = impl_param.get_input_layout(0);
+        const auto key_cache_layout = impl_param.get_input_layout(3);
+        const auto value_cache_layout = impl_param.get_input_layout(4);
+        const auto past_lens_layout = impl_param.get_input_layout(5);
+        const auto block_indices_layout = impl_param.get_input_layout(7);
+        const auto block_indices_begins_layout = impl_param.get_input_layout(8);
+        const auto alibi_layout = impl_param.get_input_layout(11);
 
-        const auto inputs_number = 6;
+        const auto has_alibi = alibi_layout.count() > 0;
+        auto inputs_number = 6;
+        if (has_alibi)
+            inputs_number++;
+
+        auto input_idx = 0;
         params.inputs.resize(inputs_number);
-        params.inputs[0] = convert_data_tensor(query);
-        params.inputs[1] = convert_data_tensor(key_cache);
-        params.inputs[2] = convert_data_tensor(value_cache);
-        params.inputs[3] = convert_data_tensor(past_lens);
-        params.inputs[4] = convert_data_tensor(block_indices);
-        params.inputs[5] = convert_data_tensor(block_indices_begins);
-
+        params.inputs[input_idx++] = convert_data_tensor(query_layout);
+        params.inputs[input_idx++] = convert_data_tensor(key_cache_layout);
+        params.inputs[input_idx++] = convert_data_tensor(value_cache_layout);
+        params.inputs[input_idx++] = convert_data_tensor(past_lens_layout);
+        params.inputs[input_idx++] = convert_data_tensor(block_indices_layout);
+        params.inputs[input_idx++] = convert_data_tensor(block_indices_begins_layout);
         params.conf = get_sdpa_configuration(impl_param);
+
+        if (has_alibi)
+            params.inputs[input_idx++] = convert_data_tensor(alibi_layout);
 
         if (!is_prefill_stage(impl_param) && !is_dynamic) {
             const auto& input_mem = impl_param.memory_deps;
@@ -380,6 +411,9 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         std::map<size_t, size_t> out_tensor_to_offset_map = {
             {0, out_offsets_map.at(0)},
         };
+
+        if (has_alibi)
+            in_tensor_to_offset_map.insert({6, in_offsets_map.at(11)});
 
         params.set_dynamic_shape_offsets(in_tensor_to_offset_map, out_tensor_to_offset_map);
 

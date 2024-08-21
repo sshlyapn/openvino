@@ -87,6 +87,7 @@ struct sdpa_configuration {
     int64_t broadcast_axis = -1;
 
     bool is_causal = false;
+    bool has_alibi_input = false;
 
     // Paged Attention configuration
     bool is_paged_attention = false;

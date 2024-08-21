@@ -179,6 +179,9 @@ JitConstants SDPAKernelOpt::GetJitConstants(const sdpa_params& params, size_t ke
             jit.AddConstant(MakeJitConstant("STATIC_SCALE_VALUE_INV", 1.0f / params.conf.scale_val));
             jit.AddConstant(MakeJitConstant("STATIC_SCALE_VALUE", params.conf.scale_val));
         }
+        if (params.conf.has_alibi_input) {
+            jit.AddConstant(MakeJitConstant("HAS_ALIBI", 1));
+        }
     } else if (params.inputs.size() <= 4) {
         jit.AddConstant(MakeJitConstant("STATIC_SCALE_VALUE_INV", std::sqrt(static_cast<float>(params.conf.head_size))));
         jit.AddConstant(MakeJitConstant("STATIC_SCALE_VALUE", 1.0f / std::sqrt(static_cast<float>(params.conf.head_size))));

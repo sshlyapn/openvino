@@ -553,13 +553,19 @@ KERNEL(sdpa_opt)(
 
     #define TARGET_SEQ_LEN (subsequence_begins[gws_seq_indexes_correspondence[((uint)get_global_id(1))] + 1] - subsequence_begins[gws_seq_indexes_correspondence[((uint)get_global_id(1))]])
 
-    #define PA_BUFFERS , subsequence_begins, blocked_indexes_start, blocked_indexes_end, gws_seq_indexes_correspondence
-    #define PA_BUFFERS_ARGS , const __global INPUT3_TYPE* subsequence_begins, const __global int* blocked_indexes_start, const __global int* blocked_indexes_end, const __global int* gws_seq_indexes_correspondence
+    #define PA_BUFFERS      , subsequence_begins,                                 \
+                              blocked_indexes_start,                              \
+                              blocked_indexes_end,                                \
+                              gws_seq_indexes_correspondence
+
+    #define PA_BUFFERS_ARGS , const __global INPUT3_TYPE* subsequence_begins,     \
+                              const __global int* blocked_indexes_start,          \
+                              const __global int* blocked_indexes_end,            \
+                              const __global int* gws_seq_indexes_correspondence
 #else
     #define PA_BUFFERS
     #define PA_BUFFERS_ARGS
 #endif
-
 #if HAS_ATTN_MASK_INPUT
     #define ATTN_MASK_BUFFER , attn_mask
     #define ATTN_MASK_BUFFER_ARG , const __global INPUT3_TYPE* attn_mask
@@ -658,6 +664,9 @@ KERNEL(sdpa_opt)(
     const __global INPUT2_TYPE* value_input,
 #if IS_PAGED_ATTENTION
     const __global INPUT3_TYPE* subsequence_begins,
+#if HAS_ALIBI
+    const __global INPUT4_TYPE* alibi_slopes,
+#endif
 #endif
 #if HAS_ATTN_MASK_INPUT
     const __global INPUT3_TYPE* attn_mask,
@@ -930,6 +939,13 @@ KERNEL(sdpa_opt)(
                     const OUTPUT_TYPE scale_val = TO_OUTPUT_TYPE(STATIC_SCALE_VALUE);
 #endif
                     qk_acc[i] *= scale_val;
+
+#ifdef HAS_ALIBI
+                    // if (seq_len + i < blocked_indexes_start[target_seq_dim] - subsequence_begins[gws_seq_indexes_correspondence[target_seq_dim]] + sglid) {
+                    //     const int alibi_val = (1 - SOURCE_SEQ_LEN) + seq_len + i;
+                    //     qk_acc += alibi_slopes[num_heads_dim] * alibi_val;
+                    // }
+#endif
 
                     qk_acc[i] = INPUT0_MIN_FUNC(INPUT0_MAX_FUNC(qk_acc[i], INPUT0_VAL_MIN), INPUT0_VAL_MAX);
 
