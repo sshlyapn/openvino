@@ -726,6 +726,37 @@ std::vector<cldnn::event::ptr> SyncInferRequest::prepare_input(const std::string
     bool is_remote_tensor_impl = remote_tensor_impl_ptr != nullptr;
     bool is_usm_host_tensor = usm_host_ptr != nullptr;
 
+    auto print_arr = [&](int32_t* vec, size_t max_len, std::string name) {
+        std::stringstream ss;
+        for (size_t i = 0; i < max_len; i++) {
+            ss << vec[i] << ", ";
+        }
+        GPU_DEBUG_TRACE_DETAIL << "Array " << name << " (len=" << max_len << ") content: " << ss.str() << "\n";
+    };
+    auto print_arr2 = [&](int64_t* vec, size_t max_len, std::string name) {
+        std::stringstream ss;
+        for (size_t i = 0; i < max_len; i++) {
+            ss << vec[i] << ", ";
+        }
+        GPU_DEBUG_TRACE_DETAIL << "Array " << name << " (len=" << max_len << ") content: " << ss.str() << "\n";
+    };
+
+
+    if (internal_name == "parameter:past_lens" ||
+        internal_name == "parameter:subsequence_begins" ||
+        internal_name == "parameter:block_indices" ||
+        internal_name == "parameter:block_indices_begins" ||
+        internal_name == "parameter:max_context_len") {
+            print_arr(user_tensor->data<int32_t>(), user_tensor->get_size(), internal_name);
+    }
+
+
+    if (internal_name == "parameter:input_ids") {
+            print_arr2(user_tensor->data<int64_t>(), user_tensor->get_size(), internal_name);
+    }
+
+
+
     GPU_DEBUG_TRACE_DETAIL << "Prepare input for " << internal_name
                            << " (is_remote_tensor_impl ? " << is_remote_tensor_impl
                            << ", is_usm_host_tensor ? " << is_usm_host_tensor
