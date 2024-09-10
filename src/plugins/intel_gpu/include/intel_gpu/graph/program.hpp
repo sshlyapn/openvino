@@ -51,6 +51,8 @@ struct program {
     friend class program_wrapper;                   // this class is intended to extend the interface of program for
                                                     // the usage within tests_core_internal project only
 public:
+    std::string first_pa_name = "";
+
     struct nodes_ordering {
     public:
         typedef std::list<program_node*> list_of_nodes;

@@ -52,6 +52,12 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         PA_SDPA,
     };
 
+    bool requires_params_update(primitive_inst& inst, const kernel_impl_params& impl_params) const override {
+        const auto stage = get_paged_attention_stage(impl_params);
+
+        return stage == PagedAttentionStage::MIXED;
+    }
+
     void load(BinaryInputBuffer& ib) override {
         parent::load(ib);
         if (is_dynamic()) {
@@ -225,6 +231,8 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
     }
 
     static int64_t get_aligned_seq_len(const kernel_impl_params& impl_param, const PagedAttentionStage& stage, int64_t target_seq_len_block_size = 16) {
+        auto custom_timer = CustomPATimer("get_aligned_seq_len");
+
         // Since at prefill stage Q, K, V inputs may contain multiple sequences with arbitrary
         // target sequence lengths each (shape is [sequences_num * target_seq_len, num_heads * head_size]),
         // to apply blocking to the first dimension (target_seq_len of each sequence), we need to calculate aligned total
@@ -245,12 +253,31 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
             const auto& input_mem = impl_param.memory_deps;
             const auto subsequence_begins_input_idx = 6;
             const auto subsequence_begins_mem = input_mem.at(subsequence_begins_input_idx);
-            mem_lock<int32_t, mem_lock_type::read> subsequence_begins_mem_lock(subsequence_begins_mem, *impl_param.strm);
+            mem_lock<int32_t, mem_lock_type::read> subsequence_begins_mem_lock(subsequence_begins_mem, impl_param.prog->get_stream());
 
             auto aligned_seq_len = 0;
-            for (size_t i = 0; i < subsequence_begins_mem_lock.size() - 1; i++) {
-                auto prompt_length = subsequence_begins_mem_lock[i + 1] - subsequence_begins_mem_lock[i];
-                aligned_seq_len += align_to(prompt_length, target_seq_len_block_size);
+            if (stage == PagedAttentionStage::MIXED) {
+                const auto past_lens_idx = 5;
+                const auto past_lens_mem = input_mem.at(past_lens_idx);
+                mem_lock<int32_t, mem_lock_type::read> past_lens_mem_lock(past_lens_mem, impl_param.prog->get_stream());
+
+                for (size_t i = 0; i < subsequence_begins_mem_lock.size() - 1; i++) {
+                    auto past_len = past_lens_mem_lock[i];
+                    auto prompt_length = subsequence_begins_mem_lock[i + 1] - subsequence_begins_mem_lock[i];
+
+                    auto leftovers_num = past_len % target_seq_len_block_size;
+                    if (past_len != 0 && prompt_length + leftovers_num > target_seq_len_block_size) {
+                        aligned_seq_len += target_seq_len_block_size;
+                        prompt_length -= target_seq_len_block_size - leftovers_num;
+                    }
+
+                    aligned_seq_len += align_to(prompt_length, target_seq_len_block_size);
+                }
+            } else {
+                for (size_t i = 0; i < subsequence_begins_mem_lock.size() - 1; i++) {
+                    auto prompt_length = subsequence_begins_mem_lock[i + 1] - subsequence_begins_mem_lock[i];
+                    aligned_seq_len += align_to(prompt_length, target_seq_len_block_size);
+                }
             }
 
             return aligned_seq_len;
@@ -330,8 +357,16 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
 
         params.is_prefill = stage == PagedAttentionStage::PREFILL || stage == PagedAttentionStage::MIXED;
 
-        if ((stage == PagedAttentionStage::PREFILL || stage == PagedAttentionStage::MIXED) && !is_dynamic)
+        if ((stage == PagedAttentionStage::PREFILL || stage == PagedAttentionStage::MIXED) && !is_dynamic) {
             params.conf.paged_attention_aligned_seq_len = get_aligned_seq_len(impl_param, stage);
+
+            const auto& desc = impl_param.typed_desc<paged_attention>();
+            const bool print = desc->id == impl_param.prog->first_pa_name;
+
+            if (print && false) {
+                std::cout << "params.conf.paged_attention_aligned_seq_len=" << params.conf.paged_attention_aligned_seq_len << "\n";
+            }
+        }
 
         const auto& in_offsets_map = impl_param.in_port_to_shape_info_offset;
         std::map<size_t, size_t> in_tensor_to_offset_map = {
@@ -393,8 +428,16 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         if (has_alibi)
             in_tensor_to_offset_map.insert({4, in_offsets_map.at(11)});
 
-        if ((stage == PagedAttentionStage::PREFILL || stage == PagedAttentionStage::MIXED) && !is_dynamic)
+        if ((stage == PagedAttentionStage::PREFILL || stage == PagedAttentionStage::MIXED) && !is_dynamic) {
             params.conf.paged_attention_aligned_seq_len = get_aligned_seq_len(impl_param, stage);
+
+            const auto& desc = impl_param.typed_desc<paged_attention>();
+            const bool print = desc->id == impl_param.prog->first_pa_name;
+
+            if (print && false) {
+                std::cout << "params.conf.paged_attention_aligned_seq_len=" << params.conf.paged_attention_aligned_seq_len << "\n";
+            }
+        }
 
         params.set_dynamic_shape_offsets(in_tensor_to_offset_map, out_tensor_to_offset_map);
 
@@ -437,7 +480,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         if ((stage == PagedAttentionStage::GENERATE || stage == PagedAttentionStage::MIXED) && !is_dynamic) {
             const auto& input_mem = impl_param.memory_deps;
             const auto max_context_len = input_mem.at(12);
-            mem_lock<int32_t, mem_lock_type::read> max_context_len_mem_lock(max_context_len, *impl_param.strm);
+            mem_lock<int32_t, mem_lock_type::read> max_context_len_mem_lock(max_context_len, impl_param.prog->get_stream());
             params.max_context_len = max_context_len_mem_lock[0];
         }
 

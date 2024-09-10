@@ -13,30 +13,45 @@ GPU_DEFINE_PRIMITIVE_TYPE_ID(paged_attention)
 
 constexpr size_t paged_attention::block_size;
 
+
+
 PagedAttentionStage get_paged_attention_stage(const kernel_impl_params& impl_param) {
+    auto custom_timer = CustomPATimer("GetStage");
     const auto& query_shape = impl_param.get_input_layout(0).get_partial_shape();
     const auto& past_lens_shape = impl_param.get_input_layout(5).get_partial_shape();
 
+    const auto& desc = impl_param.typed_desc<paged_attention>();
+
+    const bool print = desc->id == impl_param.prog->first_pa_name;
+
     if (query_shape.is_static() && past_lens_shape.is_static()) {
         if (query_shape[0].get_length() == past_lens_shape[0].get_length()) {
+            if (print && false)
+                std::cout << "Paged attention " << desc->id << " GENERATE\n";
             return PagedAttentionStage::GENERATE;
         }
 
         const auto past_lens_idx = 5;
         const auto& memory_deps = impl_param.memory_deps;
         const auto past_lens_mem = memory_deps.at(past_lens_idx);
-        mem_lock<int32_t, mem_lock_type::read> past_lens_mem_lock(past_lens_mem, *impl_param.strm);
+        mem_lock<int32_t, mem_lock_type::read> past_lens_mem_lock(past_lens_mem, impl_param.prog->get_stream());
 
         const auto past_lens_size = past_lens_mem_lock.size();
         for (size_t i = 0; i < past_lens_size; i++) {
             if (past_lens_mem_lock[i] != 0) {
+                if (print && false)
+                    std::cout << "Paged attention " << desc->id << " MIXED\n";
                 return PagedAttentionStage::MIXED;
             }
         }
 
+        if (print && false)
+            std::cout << "Paged attention " << desc->id << " PREFILL\n";
         return PagedAttentionStage::PREFILL;
     }
 
+    if (print && false)
+        std::cout << "Paged attention " << desc->id << " UNKNOWN\n";
     return PagedAttentionStage::UNKNOWN;
 }
 
@@ -81,6 +96,7 @@ std::string paged_attention_inst::to_string(const paged_attention_node& node) {
 }
 
 void paged_attention_inst::on_execute() {
+    auto custom_timer = CustomPATimer("on_execute");
     auto stage = get_paged_attention_stage(*_impl_params);
 
     if (stage == PagedAttentionStage::UNKNOWN ||
@@ -93,6 +109,7 @@ void paged_attention_inst::on_execute() {
     const auto blocks_indexes_end_idx = 1;
     const auto blocked_gws_subseq_mapping_idx = 2;
 
+    const auto past_lens_mem = past_lens_memory_ptr();
     auto subsequence_begins_mem = subsequence_begins_memory_ptr();
     auto blocks_indexes_start_mem = _intermediates_memory[blocks_indexes_start_idx];
     auto blocks_indexes_end_mem = _intermediates_memory[blocks_indexes_end_idx];
@@ -100,12 +117,18 @@ void paged_attention_inst::on_execute() {
 
     OPENVINO_ASSERT(subsequence_begins_mem->get_layout().data_type == data_types::i32);
 
-    auto& stream = get_network().get_stream();
+    auto& stream = get_network().get_program()->get_stream();
+    mem_lock<int32_t, mem_lock_type::read> past_lens_mem_lock(past_lens_mem, stream);
     mem_lock<int32_t, mem_lock_type::read> subsequence_begins_mem_lock(subsequence_begins_mem, stream);
     mem_lock<int32_t, mem_lock_type::write> blocks_indexes_start_lock(blocks_indexes_start_mem, stream);
     mem_lock<int32_t, mem_lock_type::write> blocks_indexes_end_lock(blocks_indexes_end_mem, stream);
     mem_lock<int32_t, mem_lock_type::write> blocked_gws_subseq_mapping_mem_lock(blocked_gws_subseq_mapping_mem, stream);
     std::unique_ptr<mem_lock<int32_t, mem_lock_type::write>> sequential_gws_subseq_mapping_lock = nullptr;
+
+
+    const auto& desc = _impl_params->typed_desc<paged_attention>();
+
+    const bool print = desc->id == _impl_params->prog->first_pa_name;
 
     if (stage == PagedAttentionStage::MIXED) {
         const auto sequential_gws_subseq_mapping_idx = 6;
@@ -120,17 +143,56 @@ void paged_attention_inst::on_execute() {
     size_t index = 0;
     const auto target_seq_len_block_size = 16; // TODO: Get block size from the impl
     for (size_t i = 0; i < subsequence_begins_mem_lock.size() - 1; i++) {
+        const auto past_len = past_lens_mem_lock[i];
         const auto seq_start = subsequence_begins_mem_lock[i];
         const auto seq_end = subsequence_begins_mem_lock[i + 1];
         const auto seq_length = seq_end - seq_start;
 
-        for (int32_t j = 0; j < seq_length; j += target_seq_len_block_size) {
-            auto block_start_pos = subsequence_begins_mem_lock[i] + j;
-            auto block_end_pos = std::min(block_start_pos + target_seq_len_block_size, seq_end);
+        if (print && false) {
+            std::cout << "i=" << i << " "
+                      << "past_len=" << past_len << " "
+                      << "seq_start=" << seq_start << " "
+                      << "seq_end=" << seq_end << " "
+                      << "seq_length=" << seq_length << "\n";
+        }
+
+        int32_t j = 0;
+        if (past_len != 0) {
+            auto block_start_pos = seq_start;
+            auto empty_slots = target_seq_len_block_size - (past_len % target_seq_len_block_size);
+            auto block_end_pos = seq_start + std::min(empty_slots, seq_length);
+
+
+            if (print && false) {
+                std::cout << "j=-1" << " "
+                          << "block_start_pos=" << block_start_pos << " "
+                          << "block_end_pos=" << block_end_pos<< "\n";
+            }
+            OPENVINO_ASSERT(block_end_pos > block_start_pos, "Unexpected configuration[1]");
 
             blocks_indexes_start_lock[index] = block_start_pos;
             blocks_indexes_end_lock[index] = block_end_pos;
             blocked_gws_subseq_mapping_mem_lock[index] = static_cast<int32_t>(i);
+
+            index++;
+
+            auto added_tokens = block_end_pos - block_start_pos;
+            j += added_tokens;
+        }
+
+        for (; j < seq_length; j += target_seq_len_block_size) {
+            auto block_start_pos = subsequence_begins_mem_lock[i] + j;
+            auto block_end_pos = std::min(block_start_pos + target_seq_len_block_size, seq_end);
+
+            if (print && false) {
+                std::cout << "j=" << j << " "
+                        << "block_start_pos=" << block_start_pos << " "
+                        << "block_end_pos=" << block_end_pos<< "\n";
+            }
+            blocks_indexes_start_lock[index] = block_start_pos;
+            blocks_indexes_end_lock[index] = block_end_pos;
+            blocked_gws_subseq_mapping_mem_lock[index] = static_cast<int32_t>(i);
+            OPENVINO_ASSERT(block_end_pos > block_start_pos, "Unexpected configuration[1]");
 
             index++;
         }
@@ -139,6 +201,24 @@ void paged_attention_inst::on_execute() {
             for (int32_t idx = seq_start; idx < seq_end; idx++) {
                 sequential_gws_subseq_mapping_lock->operator[](idx) = static_cast<int32_t>(i);
             }
+        }
+    }
+
+    auto print_arr = [&](mem_lock<int32_t, mem_lock_type::write>& mem, size_t max_len, std::string name) {
+        std::stringstream ss;
+        for (size_t i = 0; i < max_len; i++) {
+            ss << mem[i] << ", ";
+        }
+        std::cout << "-> Mem " << name << " (len=" << max_len << ") content: " << ss.str() << "\n";
+    };
+
+    if (print && false) {
+        print_arr(blocks_indexes_start_lock, blocks_indexes_start_lock.size(), "blocks_indexes_start_lock");
+        print_arr(blocks_indexes_end_lock, blocks_indexes_end_lock.size(), "blocks_indexes_end_lock");
+        print_arr(blocked_gws_subseq_mapping_mem_lock, blocked_gws_subseq_mapping_mem_lock.size(), "blocked_gws_subseq_mapping_mem_lock");
+
+        if (sequential_gws_subseq_mapping_lock) {
+            print_arr(*sequential_gws_subseq_mapping_lock, sequential_gws_subseq_mapping_lock->size(), "sequential_gws_subseq_mapping_lock");
         }
     }
 }

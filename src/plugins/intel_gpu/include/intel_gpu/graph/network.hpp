@@ -67,6 +67,8 @@ struct network {
 public:
     using ptr = std::shared_ptr<network>;
 
+    size_t paged_attention_head_size = 0;
+
     explicit network(program::ptr program, const ExecutionConfig& config, stream::ptr stream, bool is_internal = false, bool is_primary_stream = true);
     network(engine& engine,
             const topology& topo,

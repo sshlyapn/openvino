@@ -486,6 +486,12 @@ bool crop_in_place_optimization::match(const program_node& node,
             if (can_reshape_be_optimized(reshape_node) &&
                 (!node.is_dynamic() || !reshape_node.is_runtime_propagatable_padding()))
                 return false;
+
+            if (reshape_node.get_users().front()->is_type<reshape>()) {
+                const auto& next_reshape = reshape_node.get_users().front()->as<reshape>();
+                if (!next_reshape.is_runtime_propagatable_padding())
+                    return false;
+            }
         }
         if (user->is_type<experimental_detectron_roi_feature_extractor>() && user->get_dependency_index(node) == 0)
             return false;
@@ -782,8 +788,17 @@ void prepare_buffer_fusing::run(program& p) {
                 if (node.get_users().front()->is_type<reshape>()) {
                     auto& reshape_node = node.get_users().front()->as<reshape>();
                     if (reshape_node.is_runtime_propagatable_padding()) {
-                        user_info.first = &reshape_node;
-                        user_info.second = reshape_node.get_output_layout();
+                        bool can_optimize = true;
+                        if (reshape_node.get_users().front()->is_type<reshape>()) {
+                            auto& next_reshape_node = reshape_node.get_users().front()->as<reshape>();
+                            can_optimize = next_reshape_node.is_runtime_propagatable_padding();
+                            // std::cout << "Disable opt for " << next_reshape_node.id() << " (user: "
+                            //           << next_reshape_node.get_users().front()->id() << " " << can_optimize << ")\n";
+                        }
+                        if (can_optimize) {
+                            user_info.first = &reshape_node;
+                            user_info.second = reshape_node.get_output_layout();
+                        }
                     }
                 }
                 crop_in_place_optimization::update_in_place_crop_padding_simple_data_format(crop_layout,

@@ -48,6 +48,7 @@
 #include "multiclass_nms_inst.h"
 #include "mutable_data_inst.h"
 #include "pooling_inst.h"
+#include "paged_attention_inst.h"
 #include "border_inst.h"
 #include "primitive_inst.h"
 #include "prior_box_inst.h"
@@ -439,6 +440,11 @@ void program::prepare_nodes(topology const& topology) {
         if (node_ptr->dependencies.size() == 0) {
             inputs.push_back(node_ptr);
         }
+
+        // if (first_pa_name.empty() && node_ptr->is_type<paged_attention>()) {
+        //     std::cout << "First PA name " << node_ptr->id() << "\n";
+        //     first_pa_name = node_ptr->id();
+        // }
     }
 }
 

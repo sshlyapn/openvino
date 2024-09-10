@@ -1648,12 +1648,29 @@ event::ptr primitive_inst::execute(const std::vector<event::ptr>& events) {
         // Try update impl if current impl is dynamic because opt kernel may be added to impl cache through async compilation.
         // Only try update weight and realloc when impl is updated.
         const bool can_use_async_compilation = use_async_compilation();
+        bool was_updated = false;
         if (shape_changed() || !_impl || (!shape_changed() && _impl->is_dynamic() && can_use_async_compilation)) {
             if (update_impl(can_use_async_compilation)) {
                 need_args_update = true;
                 auto ev = update_weights();
                 if (ev)
                     dependencies.push_back(ev);
+                auto ev_reset = realloc_if_needed();
+                if (ev_reset)
+                    dependencies.push_back(ev_reset);
+
+                was_updated = true;
+            }
+        }
+
+        if (_node->is_type<paged_attention>() && _impl->requires_params_update(*this, *_impl_params) && !was_updated) {
+            {
+                auto custom_timer = CustomPATimer("paged_attention_update");
+                _impl->update(*this, *_impl_params);
+            }
+
+            {
+                auto custom_timer = CustomPATimer("paged_attention_realloc_if_needed");
                 auto ev_reset = realloc_if_needed();
                 if (ev_reset)
                     dependencies.push_back(ev_reset);
@@ -1868,6 +1885,9 @@ primitive_inst::primitive_inst(network & network, program_node const& node, bool
             GPU_DEBUG_TRACE_DETAIL << id() << ": initialize impl with dynamic impl " << _impl->get_kernel_name() << std::endl;
             _dynamic_impl = _impl->clone();
         }
+    }
+    if (_node->is_type<paged_attention>()) {
+        _network.paged_attention_head_size = _node->as<paged_attention>().get_primitive()->head_size;
     }
     _impl_params->strm = _network.get_stream_ptr();
     for (size_t i = 0; i < get_node().get_output_layouts().size(); ++i) {
