@@ -93,10 +93,12 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         add_internal_buffers(layouts, _kernels_data[Stage::KV_CACHE_UPDATE]);
         add_internal_buffers(layouts, _kernels_data[Stage::PA_SDPA]);
 
+        GPU_DEBUG_TRACE_DETAIL << "PA KERNEL INTERNAL LAYOUTS " << layouts.size() << "\n";
+
         return layouts;
     }
 
-    kernel_arguments_data get_arguments(const paged_attention_inst& instance, size_t stage, size_t kernel_idx) const {
+    kernel_arguments_data get_arguments(const paged_attention_inst& instance, size_t stage, size_t kernel_idx, bool is_mixed_mode) const {
         const auto desc = instance.get_node().as<paged_attention>().get_primitive();
 
         kernel_arguments_data args;
@@ -135,7 +137,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
                                 instance.block_indices_memory_ptr(),
                                 instance.block_indices_begins_memory_ptr() };
 
-                if (kernel_idx == 1) {
+                if (is_mixed_mode) {
                     // Multi tokens kernel version has additional subsequence_begins_memory memory
                     // dependency
                     args.inputs.push_back(instance.subsequence_begins_memory_ptr());
@@ -146,6 +148,12 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
                 }
             } else {
                 args.inputs = { instance.past_lens_memory_ptr() };
+
+                if (is_mixed_mode) {
+                    // Multi tokens kernel version has additional subsequence_begins_memory memory
+                    // dependency
+                    args.inputs.push_back(instance.subsequence_begins_memory_ptr());
+                }
             }
 
             args.outputs = { instance.output_memory_ptr(0) };
@@ -159,7 +167,8 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
                                  6, /* PA_SDPA multiple tokens mode */ };
     };
 
-    void execute_stage(const std::vector<event::ptr>& events, paged_attention_inst& instance, std::vector<event::ptr>& all_events, size_t stage) {
+    void execute_stage(const std::vector<event::ptr>& events,
+                       paged_attention_inst& instance, std::vector<event::ptr>& all_events, size_t stage, bool is_mixed_mode) {
         stream& stream = instance.get_network().get_stream();
         std::vector<event::ptr> tmp_events(events);
         size_t kernel_offset = 0;
@@ -187,7 +196,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
 
             auto& params = _kernels_data[stage].kernels[kd_idx].params;
 
-            auto args = get_arguments(instance, stage, kd_idx);
+            auto args = get_arguments(instance, stage, kd_idx, is_mixed_mode);
             args.scalars = &params.scalars;
 
             const auto& intermediate_memories = instance.get_intermediates_memories();
@@ -217,14 +226,15 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
     event::ptr execute_impl(const std::vector<event::ptr>& events, paged_attention_inst& instance) override {
         std::vector<event::ptr> res_events;
         const auto stage = get_paged_attention_stage(*instance.get_impl_params());
+        const auto is_mixed_mode = stage == PagedAttentionStage::MIXED;
 
-        execute_stage(events, instance, res_events, Stage::KV_CACHE_UPDATE);
+        execute_stage(events, instance, res_events, Stage::KV_CACHE_UPDATE, is_mixed_mode);
 
         std::vector<event::ptr> dep_events(res_events.begin(), res_events.end());
         if (stage == PagedAttentionStage::PREFILL) {
-            execute_stage(dep_events, instance, res_events, Stage::SDPA);
+            execute_stage(dep_events, instance, res_events, Stage::SDPA, is_mixed_mode);
         } else if (stage == PagedAttentionStage::GENERATE || stage == PagedAttentionStage::MIXED) {
-            execute_stage(dep_events, instance, res_events, Stage::PA_SDPA);
+            execute_stage(dep_events, instance, res_events, Stage::PA_SDPA, is_mixed_mode);
         }
 
         return instance.get_network().get_stream().aggregate_events(res_events, res_events.size() > 1);

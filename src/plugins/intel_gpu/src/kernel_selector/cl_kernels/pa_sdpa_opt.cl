@@ -351,17 +351,29 @@ KERNEL(pa_sdpa_opt)(
 REQD_SUB_GROUP_SIZE(SUBGROUP_SIZE)
 KERNEL(pa_sdpa_finalization_stage)(
     const __global INPUT3_TYPE* past_lens,
+#if MULTI_TOKENS_PROCESSING
+    const __global INPUT6_TYPE* subsequence_begins,
+#endif
     __global OUTPUT_TYPE* output,
     const __global SOFTMAX_ACCUMULATOR_TYPE* exp_sums,
     const __global SOFTMAX_ACCUMULATOR_TYPE* max_logits,
     const __global OUTPUT_TYPE* tmp_out,
+#if MULTI_TOKENS_PROCESSING
+    const __global int* gws_subseq_mapping,
+#endif
     const uint total_partitions_num) {
     const uint seq_idx = get_global_id(0);
     const uint head_num_idx = get_global_id(1);
     const uint head_size_idx = get_global_id(2);
     const uint sglid = get_sub_group_local_id();
 
+#if MULTI_TOKENS_PROCESSING
+    const int subsequence_idx = gws_subseq_mapping[seq_idx];
+    const int subsequence_begin = subsequence_begins[subsequence_idx];
+    const uint seq_len = past_lens[subsequence_idx] + 1 + (seq_idx - subsequence_begin);
+#else
     const uint seq_len = past_lens[seq_idx] + 1;
+#endif
 
     const uint num_of_partitions = CEIL_DIV(seq_len, SEQ_LEN_PARTITION_SIZE);
 
