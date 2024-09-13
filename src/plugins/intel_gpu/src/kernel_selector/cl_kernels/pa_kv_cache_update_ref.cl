@@ -4,6 +4,8 @@
 
 #include "include/batch_headers/common.cl"
 
+REQD_SUB_GROUP_SIZE(SUBGROUP_SIZE)
+__attribute__((reqd_work_group_size(1, 1, SUBGROUP_SIZE)))
 KERNEL(pa_kv_cache_update)(
     OPTIONAL_SHAPE_INFO_ARG
     __global const INPUT0_TYPE* key_data,

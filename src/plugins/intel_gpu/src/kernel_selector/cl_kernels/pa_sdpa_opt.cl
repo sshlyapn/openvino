@@ -215,7 +215,11 @@ KERNEL(pa_sdpa_opt)(
             // TODO: const uint global_data_idx = partition_idx * SEQ_LEN_PARTITION_SIZE + local_data_idx
             const uint global_data_idx = partition_idx * SEQ_LEN_PARTITION_SIZE + qk_idx * (SUBGROUPS_PER_WG * SUBGROUP_SIZE) + sgid * SUBGROUP_SIZE + sglid;
 
+#if SEQ_LEN_PARTITION_SIZE % SUBGROUPS_PER_WG * SUBGROUP_SIZE == 0
             if (global_data_idx < seq_len) {
+#else
+            if (global_data_idx < seq_len && local_data_idx < SEQ_LEN_PARTITION_SIZE) {
+#endif
                 SOFTMAX_ACCUMULATOR_TYPE qk_new = native_exp(TO_SOFTMAX_ACCUMULATOR_TYPE(slm_qk_vals[local_data_idx]) - qk_max);
                 slm_qk_vals[local_data_idx] = TO_OUTPUT_TYPE(qk_new);
 
@@ -242,7 +246,11 @@ KERNEL(pa_sdpa_opt)(
             const uint local_data_idx = qk_idx * (SUBGROUPS_PER_WG * SUBGROUP_SIZE) + sgid * SUBGROUP_SIZE + sglid;
             const uint global_data_idx = partition_idx * SEQ_LEN_PARTITION_SIZE + qk_idx * (SUBGROUPS_PER_WG * SUBGROUP_SIZE) + sgid * SUBGROUP_SIZE + sglid;
 
+#if SEQ_LEN_PARTITION_SIZE % SUBGROUPS_PER_WG * SUBGROUP_SIZE == 0
             if (global_data_idx < seq_len) {
+#else
+            if (global_data_idx < seq_len && local_data_idx < SEQ_LEN_PARTITION_SIZE) {
+#endif
                 SOFTMAX_ACCUMULATOR_TYPE qk_new = TO_SOFTMAX_ACCUMULATOR_TYPE(slm_qk_vals[local_data_idx]) / exp_sum;
                 slm_qk_vals[local_data_idx] = TO_OUTPUT_TYPE(qk_new);
             }

@@ -20,22 +20,14 @@ PagedAttentionStage get_paged_attention_stage(const kernel_impl_params& impl_par
 
 struct CustomPATimer {
     CustomPATimer(std::string timer_id = "") {
-        start_time = std::chrono::high_resolution_clock::now();
         id = timer_id;
     }
 
     ~CustomPATimer() {
-        end_time = std::chrono::high_resolution_clock::now();
-
-        auto time_diff = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
-        if (print_time)
-            std::cout << "Time of " << id << " time_diff = " << time_diff << " mcs\n";
     }
 
-    bool print_time = false;
     std::string id;
-    std::chrono::_V2::system_clock::time_point start_time;
-    std::chrono::_V2::system_clock::time_point end_time;
+
 };
 
 template <>
