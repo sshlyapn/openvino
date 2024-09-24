@@ -31,9 +31,24 @@ std::vector<layout> dynamic_quantize_inst::__calc_output_layouts(const layout &a
     };
 
     std::vector<uint64_t> shape_group_size(act_layout.get<ShapeType>().size(), 1);
-    shape_group_size.back() = group_size;
+    shape_group_size[act_layout.get<ShapeType>().size() - 1] = group_size;
+
+    GPU_DEBUG_GET_INSTANCE(debug_config);
+    GPU_DEBUG_IF(debug_config->enable_kv_cache_compression != 1) { // per-token compression
+        shape_group_size[act_layout.get<ShapeType>().size() - 2] = group_size;
+    }
+
+    // auto print_arr = [&](const std::vector<uint64_t>& vec, size_t max_len, std::string name) {
+    //     std::stringstream ss;
+    //     for (size_t i = 0; i < std::min(max_len, vec.size()); i++) {
+    //         ss << vec[i] << ", ";
+    //     }
+    //     std::cout << "Array " << name << " (len=" << vec.size() << ") content: " << ss.str() << "\n";
+    // };
+    // print_arr(shape_group_size, shape_group_size.size(), "shape_group_size");
 
     auto output_shapes = ov::op::internal::DynamicQuantize::shape_infer(&op, input_shapes, shape_group_size);
+    GPU_DEBUG_TRACE_DETAIL << "shape infer dynamic" << output_shapes[0] << " " << output_shapes[1] << "\n";
 
     return { layout(output_shapes[0], data_types::i8, output_format), layout(output_shapes[1], data_types::f16, output_format) };
 }
@@ -56,6 +71,12 @@ std::string dynamic_quantize_inst::to_string(dynamic_quantize_node const& node) 
 
     std::stringstream primitive_description;
 
+    json_composite dynamic_quantize_info;
+    dynamic_quantize_info.add("group size", desc->group_size);
+    dynamic_quantize_info.add("activation dt", desc->get_output_data_type(0).value_or(data_types::undefined));
+    dynamic_quantize_info.add("scale dt", desc->get_output_data_type(1).value_or(data_types::undefined));
+
+    node_info->add("dynamic_quantize info", dynamic_quantize_info);
     node_info->dump(primitive_description);
 
     return primitive_description.str();

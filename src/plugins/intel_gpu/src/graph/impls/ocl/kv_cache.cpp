@@ -200,7 +200,6 @@ struct kv_cache_impl : multi_stage_primitive<kv_cache> {
 
         if (desc->compressed) {
             const auto scale_alloc_type = engine.get_preferred_memory_allocation_type(false);
-            // need to add scale state to VariableStateIndirectKVCache
             auto comp_scale_state =
                 dynamic_cast<ov::intel_gpu::VariableStateIndirectKVCache&>(variable).get_compression_scale_state();
             auto comp_scale_layout = instance.get_impl_params()->output_layouts[1];

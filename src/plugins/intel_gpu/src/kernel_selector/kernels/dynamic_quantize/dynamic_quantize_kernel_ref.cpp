@@ -33,8 +33,7 @@ CommonDispatchData DynamicQuantizeKernelRef::SetDefault(const dynamic_quantize_p
     GPU_DEBUG_GET_INSTANCE(debug_config);
     CommonDispatchData dispatchData;
 
-    // TODO: check this assert
-    // OPENVINO_ASSERT(params.outputs[0].GetLayout() == DataLayout::bfyx, "It supports only 4d tensor");
+    OPENVINO_ASSERT(params.outputs[0].GetLayout() == DataLayout::bfyx, "It supports only 4d tensor");
     dispatchData.gws = {params.outputs[0].Batch().v * params.outputs[0].Feature().v, 1, 1};
     GPU_DEBUG_IF(debug_config->enable_kv_cache_compression == 1) { // per-head compression
         dispatchData.gws[1] = params.outputs[0].Y().v;

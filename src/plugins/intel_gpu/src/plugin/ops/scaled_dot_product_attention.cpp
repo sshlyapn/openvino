@@ -33,6 +33,7 @@ static void CreateScaledDotProductAttentionOp(ProgramBuilder& p, const std::shar
     auto sdpa_prim = cldnn::scaled_dot_product_attention(layerName,
                                                          inputs,
                                                          is_causal,
+                                                         false,
                                                          -1,
                                                          order,
                                                          order,

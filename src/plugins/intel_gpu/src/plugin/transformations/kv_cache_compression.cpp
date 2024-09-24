@@ -27,7 +27,8 @@
 #include "openvino/pass/visualize_tree.hpp"
 #include "transformations/utils/utils.hpp"
 #include "intel_gpu/op/indirect_sdpa.hpp"
-#include "intel_gpu/op/dynamic_quantize.hpp"
+
+#include "ov_ops/dynamic_quantize.hpp"
 
 namespace ov {
 namespace intel_gpu {
@@ -53,7 +54,7 @@ KVCacheCompressionMatcher::KVCacheCompressionMatcher() {
         printf("YES_KV_CACHE_COMP\n");
         first = false;
     }
-    
+
     auto query = any_input();
 
     auto k_past = any_input();
@@ -77,12 +78,12 @@ KVCacheCompressionMatcher::KVCacheCompressionMatcher() {
             return false;
         }
         const auto& pattern_map = m.get_pattern_value_map();
-        
+
         auto k_new_token_node = pattern_map.at(k_new_token).get_node_shared_ptr();
         auto key_node = std::dynamic_pointer_cast<ov::intel_gpu::op::KVCache>(pattern_map.at(key).get_node_shared_ptr());
         auto value_node = std::dynamic_pointer_cast<ov::intel_gpu::op::KVCache>(pattern_map.at(value).get_node_shared_ptr());
         auto org_sdpa = std::dynamic_pointer_cast<ov::intel_gpu::op::IndirectSDPA>(pattern_map.at(present).get_node_shared_ptr());
-        
+
         if (true
             // || org_sdpa->get_friendly_name().find(".h.0.") != std::string::npos
         // || org_sdpa->get_friendly_name().find(".h.1.") != std::string::npos
@@ -91,8 +92,12 @@ KVCacheCompressionMatcher::KVCacheCompressionMatcher() {
         // || org_sdpa->get_friendly_name().find(".h.4.") != std::string::npos
         // || org_sdpa->get_friendly_name().find(".h.5.") != std::string::npos
             ) {
-            std::cout << "pattern matched! " << org_sdpa->get_friendly_name() << std::endl;   
-            auto k_dyn_quan = std::make_shared<op::DynamicQuantize>(key_node->get_input_node_shared_ptr(1));
+            std::cout << "pattern matched! " << org_sdpa->get_friendly_name() << std::endl;
+            auto rank = key_node->get_input_partial_shape(0).size();
+            std::vector<uint64_t> shape_group_size(rank, 1);
+            shape_group_size.back() = UINT64_MAX;
+
+            auto k_dyn_quan = std::make_shared<ov::op::internal::DynamicQuantize>(key_node->get_input_node_shared_ptr(1), shape_group_size, element::f16);
             k_dyn_quan->set_friendly_name("dyn_quan_key");
 
             // FIXME: need to tell whether it is direct KV cache or indirect kv cache
@@ -108,7 +113,7 @@ KVCacheCompressionMatcher::KVCacheCompressionMatcher() {
             new_kv_cache_k->set_friendly_name(key_node->get_friendly_name());
             ov::copy_runtime_info(key_node, new_kv_cache_k);
 
-            auto v_dyn_quan = std::make_shared<op::DynamicQuantize>(value_node->get_input_node_shared_ptr(1));
+            auto v_dyn_quan = std::make_shared<ov::op::internal::DynamicQuantize>(value_node->get_input_node_shared_ptr(1), shape_group_size, element::f16);
             v_dyn_quan->set_friendly_name("dyn_quan_value");
             // FIXME: need to tell whether it is direct KV cache or indirect kv cache
             auto new_kv_cache_v = std::make_shared<op::KVCache>(value_node->get_input_node_shared_ptr(0),

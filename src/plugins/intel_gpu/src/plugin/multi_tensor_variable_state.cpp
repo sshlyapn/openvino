@@ -175,7 +175,7 @@ ov::PartialShape VariableStateIndirectKVCache::get_compression_scale_shape(const
     ov::PartialShape compression_scale_shape(std::vector<size_t>(rank, 1));
     compression_scale_shape[0] = kv_cache_shape[0];
     compression_scale_shape[1] = kv_cache_shape[1];
-    
+
     GPU_DEBUG_IF(debug_config->enable_kv_cache_compression == 1) { // per-head compression
         compression_scale_shape[2] = kv_cache_shape[2];
     }

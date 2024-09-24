@@ -1883,6 +1883,9 @@ primitive_inst::primitive_inst(network & network, program_node const& node, bool
             _dynamic_impl = _impl->clone();
         }
     }
+    if (_node) {
+        GPU_DEBUG_TRACE_DETAIL << _node->type()->to_string(*_node) << "\n";
+    }
     _impl_params->strm = _network.get_stream_ptr();
     for (size_t i = 0; i < get_node().get_output_layouts().size(); ++i) {
         if (_outputs.size() > i) {

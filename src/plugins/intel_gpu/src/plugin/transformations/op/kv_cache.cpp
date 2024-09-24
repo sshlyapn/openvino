@@ -130,9 +130,11 @@ std::vector<ov::PartialShape> shape_infer(const KVCache* op, std::vector<ov::Par
     std::vector<ov::PartialShape> out_shapes;
     out_shapes.resize(op->get_output_size());
 
+    // std::cout << "kv_cache shape infer " << op->get_output_size() << "\n";
+
     const auto& gather_axis = op->get_gather_axis();
     const auto& concat_axis = ov::util::normalize(op->get_concat_axis(), input_shapes[0].size());
-    if (op->get_output_size() == 2) {
+    if (op->get_output_size() >= 2) {
         out_shapes[0] = input_shapes[0];
         out_shapes[0][gather_axis] = input_shapes[2][0];
         out_shapes[0][concat_axis] += input_shapes[1][concat_axis];
@@ -148,10 +150,10 @@ std::vector<ov::PartialShape> shape_infer(const KVCache* op, std::vector<ov::Par
             ov::PartialShape scale_shape(std::vector<size_t>(out_shapes[0].size(), 1));
             scale_shape[0] = out_shapes[0][0];
             scale_shape[1] = out_shapes[0][1];
-            GPU_DEBUG_IF(debug_config->enable_kv_cache_compression == 1) { // per-head compression
+            GPU_DEBUG_IF(cldnn::debug_configuration::get_instance()->enable_kv_cache_compression == 1) { // per-head compression
                 scale_shape[2] = out_shapes[0][2];
             }
-            out_shapes.push_back(scale_shape);
+            out_shapes[2] = scale_shape;
         }
     } else {
         out_shapes[0] = input_shapes[0];
