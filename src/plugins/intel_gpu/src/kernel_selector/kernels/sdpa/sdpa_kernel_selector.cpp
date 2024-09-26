@@ -13,11 +13,21 @@
 namespace kernel_selector {
 
 sdpa_kernel_selector::sdpa_kernel_selector() {
-    Attach<SDPAKernelOpt>();
-    Attach<SDPAKernelRef>();
-#ifdef ENABLE_ONEDNN_FOR_GPU
-    Attach<SDPAKernelMicro>();
-#endif
+    int USE_REF = 0;
+    if (const auto env_var = std::getenv("USE_REF")) {
+        std::istringstream ss(env_var);
+        ss >> USE_REF;
+    }
+
+    if (!USE_REF) {
+        Attach<SDPAKernelOpt>();
+        Attach<SDPAKernelRef>();
+    #ifdef ENABLE_ONEDNN_FOR_GPU
+        // Attach<SDPAKernelMicro>();
+    #endif
+    } else {
+        Attach<SDPAKernelRef>();
+    }
 }
 
 KernelsData sdpa_kernel_selector::GetBestKernels(const Params& params) const {

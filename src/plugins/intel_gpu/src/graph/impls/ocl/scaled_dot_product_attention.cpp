@@ -133,6 +133,20 @@ protected:
             for (size_t i = 0; i < instance.get_intermediates_memories().size(); i++)
                 args.intermediates.push_back(instance.get_intermediates_memories()[i]);
 
+            GPU_DEBUG_TRACE_DETAIL << "Configured kernel arguments:\n";
+            for (size_t i = 0; i < _kernels_data[stage].kernels[kd_idx].params.arguments.size(); i++) {
+                GPU_DEBUG_TRACE_DETAIL << "\t" << i << ": type=" << static_cast<int>(_kernels_data[stage].kernels[kd_idx].params.arguments[i].t) << " "
+                                       << "index=" << _kernels_data[stage].kernels[kd_idx].params.arguments[i].index << "\n";
+            }
+
+            GPU_DEBUG_TRACE_DETAIL << "Memory buffers:"
+                                   << "shape_info=" << args.shape_info << " "
+                                   << "inputs=" << args.inputs.size() << " "
+                                   << "outputs=" << args.outputs.size() << " "
+                                   << "intermediates=" << args.intermediates.size() << " "
+                                   << "weights=" << args.weights << " "
+                                   << "scalars=" << (args.scalars ? args.scalars->size() : 0) << "\n";
+
             stream.set_arguments(*_kernels[idx_final], _kernels_data[stage].kernels[kd_idx].params, args);
 
             const auto& gws = params.workGroups.global;
@@ -216,6 +230,9 @@ protected:
             config.head_size = query_shape[query_shape.size() - 1].get_length();
 
         config.is_causal = desc->is_causal;
+        config.is_kv_compressed = desc->is_kv_compressed;
+
+        GPU_DEBUG_TRACE << "Set is_kv_compressed to " << config.is_kv_compressed << "\n";
 
         return config;
     }
@@ -228,6 +245,9 @@ public:
         auto data_inputs_num = impl_param.input_layouts.size();
         if (has_indirect_inputs(impl_param))
             data_inputs_num--;
+
+        if (desc->is_kv_compressed)
+            data_inputs_num -= 2; // key and value compression scales are handled separately
 
         params.inputs.resize(data_inputs_num);
         for (size_t i = 0; i < data_inputs_num; i++) {
@@ -246,15 +266,31 @@ public:
             params.indirect_axis = desc->indirect_axis;
         }
 
-        params.set_dynamic_shape_offsets();
+        if (desc->is_kv_compressed) {
+            params.key_cache_comp_scale = convert_data_tensor(impl_param.get_input_layout(data_inputs_num));
+            params.value_cache_comp_scale = convert_data_tensor(impl_param.get_input_layout(data_inputs_num + 1));
+        }
 
-        // Need to adjust sdpa kernel offset to consider beam table input
-        if (has_indirect_inputs(impl_param)) {
-            auto out_offset = params.outputs[0].get_dynamic_shape_offset();
-            if (indirect)
-                params.beam_table.SetDynamicShapeOffset(out_offset);
+        const auto& in_offsets_map = impl_param.in_port_to_shape_info_offset;
+        std::map<size_t, size_t> in_tensor_to_offset_map;
+        for (size_t i = 0; i < data_inputs_num; i++) {
+            in_tensor_to_offset_map[i] = in_offsets_map.at(i);
+        }
 
-            params.outputs[0].SetDynamicShapeOffset(out_offset + kernel_selector::DataTensor::max_rank());
+        const auto& out_offsets_map = impl_param.out_port_to_shape_info_offset;
+        std::map<size_t, size_t> out_tensor_to_offset_map = {
+            {0, out_offsets_map.at(0)},
+        };
+
+        params.set_dynamic_shape_offsets(in_tensor_to_offset_map, out_tensor_to_offset_map);
+
+        if (desc->is_kv_compressed) {
+            params.key_cache_comp_scale.SetDynamicShapeOffset(in_offsets_map.at(data_inputs_num));
+            params.value_cache_comp_scale.SetDynamicShapeOffset(in_offsets_map.at(data_inputs_num + 1));
+        }
+
+        if (indirect && has_indirect_inputs(impl_param)) {
+            params.beam_table.SetDynamicShapeOffset(get_beam_table_id(desc));
         }
 
         return params;
@@ -300,6 +336,7 @@ attach_scaled_dot_product_attention_impl::attach_scaled_dot_product_attention_im
     auto types = {
         data_types::f32,
         data_types::f16,
+        data_types::i8,
     };
 
     auto formats = {

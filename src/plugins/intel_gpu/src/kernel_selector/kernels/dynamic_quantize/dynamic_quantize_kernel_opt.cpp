@@ -14,7 +14,7 @@ static std::pair<size_t, size_t> get_input_bf_size(const dynamic_quantize_params
     size_t input_f = params.inputs[0].Feature().v;
     size_t input_batch = params.inputs[0].Batch().v;
     // 3D input
-    if (params.outputs[0].GetLayout() == DataLayout::bfyx) {
+    if (params.outputs[0].GetLayout() == DataLayout::bfyx && false) {
         input_f = params.inputs[0].Y().v * params.inputs[0].X().v;
         input_batch = params.inputs[0].Batch().v * params.inputs[0].Feature().v;
     }

@@ -35,6 +35,9 @@ CommonDispatchData DynamicQuantizeKernelRef::SetDefault(const dynamic_quantize_p
 
     OPENVINO_ASSERT(params.outputs[0].GetLayout() == DataLayout::bfyx, "It supports only 4d tensor");
     dispatchData.gws = {params.outputs[0].Batch().v * params.outputs[0].Feature().v, 1, 1};
+    GPU_DEBUG_IF(debug_config->enable_kv_cache_compression == 1) { // per-head compression
+        dispatchData.gws[1] = params.outputs[0].Y().v;
+    }
     dispatchData.lws = {1, 1, 1};
 
     return dispatchData;
@@ -88,6 +91,17 @@ KernelsData DynamicQuantizeKernelRef::GetKernelsData(const Params& params) const
 
 KernelsPriority DynamicQuantizeKernelRef::GetKernelsPriority(const Params& /*params*/) const {
     return FORCE_PRIORITY_8;
+}
+
+// TODO: need this func?
+Datatype DynamicQuantizeKernelRef::GetAccumulatorType(const dynamic_quantize_params& params) const {
+    Datatype types[] = { Datatype::F32, Datatype::F16, Datatype::INT64, Datatype::INT32, Datatype::UINT32};
+
+    for (Datatype type : types)
+        for (auto& in : params.inputs)
+            if (in.GetDType() == type)
+                return type;
+    return Datatype::F32;
 }
 
 bool DynamicQuantizeKernelRef::Validate(const Params& params) const {

@@ -88,6 +88,7 @@ struct sdpa_configuration {
 
     bool is_causal = false;
     bool has_alibi_input = false;
+    bool is_kv_compressed = false;
 
     // Paged Attention configuration
     bool is_paged_attention = false;
@@ -110,6 +111,8 @@ struct sdpa_params : public base_params {
     int64_t indirect_axis = -1;
 
     DataTensor beam_table;
+    DataTensor key_cache_comp_scale;
+    DataTensor value_cache_comp_scale;
 
     sdpa_configuration conf;
 };
