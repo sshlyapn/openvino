@@ -12,7 +12,7 @@ namespace ov {
 namespace intel_gpu {
 namespace op {
 
-/// \brief Similar to common v6::ReadValue, but it's not derived from ReadValueBase class to avoid ReadValue-Assign pairing check
+/// \brief Similar to common v6::CompressedReadValue, but it's not derived from ReadValueBase class to avoid ReadValue-Assign pairing check
 /// This is needed to have ReadValue-KVCache pair instead of ReadValue-Assign
 class ReadValue : public ov::op::Op, public ov::op::util::VariableExtension {
 public:
@@ -22,6 +22,28 @@ public:
 
     ReadValue(const std::shared_ptr<ov::op::util::Variable>& variable);
     ReadValue(const Output<Node>& variable_initializer, const std::shared_ptr<ov::op::util::Variable>& variable);
+
+    bool visit_attributes(ov::AttributeVisitor& visitor) override;
+
+    void validate_and_infer_types() override;
+
+    std::shared_ptr<Node> clone_with_new_inputs(const ov::OutputVector& new_args) const override;
+
+    std::string get_variable_id() const override {
+        OPENVINO_ASSERT(m_variable, "Variable is not initialized. Variable_id is unavailable");
+        return m_variable->get_info().variable_id;
+    }
+};
+
+/// \brief Similar to common v6::ReadValue, but it's not derived from ReadValueBase class to avoid ReadValue-Assign pairing check
+/// This is needed to have ReadValue-KVCache pair instead of ReadValue-Assign
+class CompressedReadValue : public ReadValue {
+public:
+    OPENVINO_OP("CompressedReadValue", "gpu_opset");
+
+    CompressedReadValue() = default;
+
+    CompressedReadValue(const Output<Node>& compressed_variable_initializer, const Output<Node>& compressed_variable_initializer_scale, const std::shared_ptr<ov::op::util::Variable>& variable);
 
     bool visit_attributes(ov::AttributeVisitor& visitor) override;
 

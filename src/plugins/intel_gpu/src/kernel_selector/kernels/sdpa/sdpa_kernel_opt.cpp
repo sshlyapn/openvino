@@ -4,6 +4,7 @@
 
 #include "sdpa_kernel_opt.h"
 #include "kernel_selector_utils.h"
+#include "common_types.h"
 #include <string>
 #include <vector>
 
@@ -126,6 +127,7 @@ static std::string GetKernelName(std::string base_name, KernelsTypes type, const
 
 ParamsKey SDPAKernelOpt::GetSupportedKey() const {
     ParamsKey k;
+    k.EnableInputDataType(Datatype::INT8);  // For KV cache compression
     k.EnableInputDataType(Datatype::F16);
     k.EnableInputDataType(Datatype::F32);
     k.EnableInputDataType(Datatype::INT32);
@@ -307,8 +309,21 @@ KernelsData SDPAKernelOpt::GetKernelsData(const Params& params) const {
                          static_cast<int>(prim_params.outputs.size()),
                          prim_params.is_shape_agnostic);
 
-        if (prim_params.indirect_axis != -1 && kernel_idx != KernelsTypes::FINALIZATION)
-            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INPUT, static_cast<uint32_t>(prim_params.inputs.size())});
+        auto beam_table_idx = prim_params.inputs.size();
+        if (prim_params.conf.is_kv_compressed && kernel_idx != KernelsTypes::FINALIZATION) {
+            GPU_DEBUG_TRACE_DETAIL << "COMPRESSED???\n";
+            auto key_cache_compression_scale_idx = static_cast<uint32_t>(prim_params.inputs.size());
+            auto value_cache_compression_scale_idx = static_cast<uint32_t>(prim_params.inputs.size() + 1);
+
+            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INPUT, key_cache_compression_scale_idx});
+            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INPUT, value_cache_compression_scale_idx});
+
+            beam_table_idx += 2;
+        }
+
+        if (prim_params.indirect_axis != -1 && kernel_idx != KernelsTypes::FINALIZATION) {
+            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INPUT, static_cast<uint32_t>(beam_table_idx)});
+        }
 
         kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 0});
         kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 1});
@@ -391,6 +406,6 @@ void SDPAKernelOpt::GetUpdateDispatchDataFunc(KernelData& kd) const {
 }
 
 KernelsPriority SDPAKernelOpt::GetKernelsPriority(const Params& params) const {
-    return params.engineInfo.supports_immad ?  FORCE_PRIORITY_2 : FORCE_PRIORITY_1;
+    return FORCE_PRIORITY_1;
 }
 }  // namespace kernel_selector

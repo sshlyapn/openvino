@@ -26,6 +26,7 @@ public:
 
     std::vector<layout> get_shape_info_input_layouts() const override {
         std::vector<layout> res;
+        GPU_DEBUG_TRACE_DETAIL << "get_shape_info_input_layouts, get_dependencies.size()=" << get_dependencies().size() << "\n";
         for (size_t i = 0; i < get_dependencies().size(); i++) {
             const auto& d = get_dependency_with_port(i);
             res.push_back(d.first->get_output_layout(false, d.second));
@@ -33,6 +34,10 @@ public:
 
         if (get_primitive()->indirect) { // insert an additional input with beam table past layout
             res.push_back(layout(ov::PartialShape::dynamic(4), data_types::i32, format::bfyx));
+        }
+
+        if (get_primitive()->compressed) { // insert an additional input with compressed_scale past layout
+            res.push_back(layout(ov::PartialShape::dynamic(4), data_types::f16, format::bfyx));
         }
 
         return res;

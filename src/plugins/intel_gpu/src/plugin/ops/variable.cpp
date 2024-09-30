@@ -16,6 +16,7 @@ namespace ov {
 namespace op {
 namespace internal {
 using ReadValue = ov::intel_gpu::op::ReadValue;
+using CompressedReadValue = ov::intel_gpu::op::CompressedReadValue;
 }  // namespace internal
 }  // namespace op
 }  // namespace ov
@@ -55,6 +56,20 @@ void CreateReadValueOp(ProgramBuilder& p, const std::shared_ptr<ov::intel_gpu::o
     CreateVariableAccessPrimitive<cldnn::read_value>(p, op, op->get_variable_id());
 }
 
+void CreateCompressedReadValueOp(ProgramBuilder& p, const std::shared_ptr<ov::intel_gpu::op::CompressedReadValue>& op) {
+    validate_inputs_count(op, {2});
+
+    static bool warned = false;
+    if (!warned) {
+        std::cerr << "******************************************************************************\n";
+        std::cerr << "WARNING: CompressedReadValue uses generic read_value primitive - need to implement logic to save init scales\n";
+        std::cerr << "******************************************************************************\n";
+        warned = true;
+    }
+
+    CreateVariableAccessPrimitive<cldnn::read_value>(p, op, op->get_variable_id());
+}
+
 void CreateAssignOp(ProgramBuilder& p, const std::shared_ptr<ov::op::v3::Assign>& op) {
     validate_inputs_count(op, {1});
     CreateVariableAccessPrimitive<cldnn::assign>(p, op, op->get_variable_id());
@@ -77,6 +92,7 @@ REGISTER_FACTORY_IMPL(v6, Assign);
 REGISTER_FACTORY_IMPL(v3, ReadValue);
 REGISTER_FACTORY_IMPL(v6, ReadValue);
 REGISTER_FACTORY_IMPL(internal, ReadValue);
+REGISTER_FACTORY_IMPL(internal, CompressedReadValue);
 
 }  // namespace intel_gpu
 }  // namespace ov

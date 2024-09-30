@@ -198,6 +198,8 @@ static void print_help_messages() {
                                " Currently, other layers except input-layer('parameter' type) are loading binaries for only input."
                                " Different input or output tensors are seperated by ','. Different layers are separated by space. For example, "
                                " \"[input_layer_name1]:[binary_dumped_file1],[binary_dump_file2] [input_layer_name2]:[binary_dump_1],[binary_dump_2]\"");
+    message_list.emplace_back("OV_GPU_EnableKVCacheCompression",
+                              "Enable KV cache compression. 1 is for per-head compression, 2 is for per-token compression");
 
     auto max_name_length_item = std::max_element(message_list.begin(), message_list.end(),
         [](std::pair<std::string, std::string>& a, std::pair<std::string, std::string>& b){
@@ -254,7 +256,8 @@ debug_configuration::debug_configuration()
         , disable_primitive_fusing(0)
         , disable_fake_alignment(0)
         , dynamic_quantize_group_size(0)
-        , disable_horizontal_fc_fusion(0) {
+        , disable_horizontal_fc_fusion(0)
+        , enable_kv_cache_compression(0) {
 #ifdef GPU_DEBUG_CONFIG
     get_gpu_debug_env_var("Help", help);
     get_common_debug_env_var("Verbose", verbose);
@@ -315,6 +318,7 @@ debug_configuration::debug_configuration()
     get_gpu_debug_env_var("LoadDumpRawBinary", load_dump_raw_bin_str);
     std::string dynamic_quantize_layers_without_onednn_str;
     get_gpu_debug_env_var("DynamicQuantizeLayersWithoutOnednn", dynamic_quantize_layers_without_onednn_str);
+    get_gpu_debug_env_var("EnableKVCacheCompression", enable_kv_cache_compression);
 
     if (help > 0) {
         print_help_messages();

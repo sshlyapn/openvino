@@ -847,8 +847,24 @@ void prepare_buffer_fusing::run(program& p) {
             if (!rv_prim)
                 return;
 
-            if (kv_out_layout.data_type != rv_prim->get_output_layout().data_type)
+            int DISABLE_KV_OPT = 0;
+            static bool warned = false;
+            if (const auto env_var = std::getenv("DISABLE_KV_OPT")) {
+                std::istringstream ss(env_var);
+                ss >> DISABLE_KV_OPT;
+
+                if (!warned) {
+                    std::cout << "Opt " << DISABLE_KV_OPT << " for kvcache\n";
+                    warned = true;
+                }
+            }
+
+            if (kv_out_layout.data_type != rv_prim->get_output_layout().data_type || DISABLE_KV_OPT) {
+                GPU_DEBUG_TRACE_DETAIL << node.id() << " can't optimize because of different formats: " << kv_out_layout.to_short_string() << " vs " << rv_prim->get_output_layout().to_short_string() << "\n";
                 return;
+            } else {
+                GPU_DEBUG_TRACE_DETAIL << node.id() << " can optimize because of different formats: " << kv_out_layout.to_short_string() << " vs " << rv_prim->get_output_layout().to_short_string() << "\n";
+            }
 
             auto concat_axis = node.get_primitive()->concat_axis;
 

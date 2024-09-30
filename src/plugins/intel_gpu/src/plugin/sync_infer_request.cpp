@@ -643,17 +643,20 @@ void SyncInferRequest::allocate_states() {
         bool indirect_kv_cache = false;
         int64_t beam_axis = 0;
         int64_t concat_axis = 0;
+        bool compressed = false;
         auto kv_cache_shape = vi.second.m_layout.get_partial_shape();
         for (auto& p : state_prims) {
             if (auto kv_cache_prim = dynamic_cast<const cldnn::kv_cache*>(p)) {
                 indirect_kv_cache = kv_cache_prim->indirect;
                 beam_axis = ov::util::normalize(kv_cache_prim->gather_axis, kv_cache_shape.size());
                 concat_axis = ov::util::normalize(kv_cache_prim->concat_axis, kv_cache_shape.size());
+                compressed = kv_cache_prim->compressed;
             }
         }
 
+        // TODO: barnch for compressed w/o indirectness
         if (indirect_kv_cache) {
-            m_variables.emplace(vi.first, std::make_shared<VariableStateIndirectKVCache>(vi.second, m_context, m_shape_predictor, beam_axis, concat_axis));
+            m_variables.emplace(vi.first, std::make_shared<VariableStateIndirectKVCache>(vi.second, m_context, m_shape_predictor, beam_axis, concat_axis, compressed));
         } else {
             m_variables.emplace(vi.first, std::make_shared<VariableState>(vi.second, m_context, m_shape_predictor));
         }
@@ -736,6 +739,19 @@ std::vector<cldnn::event::ptr> SyncInferRequest::prepare_input(const std::string
     auto network = m_graph->get_network();
     auto& engine = m_graph->get_engine();
     auto& stream = network->get_stream();
+
+    auto print_arr = [&](int64_t* vec, size_t max_len, std::string name) {
+        std::stringstream ss;
+        for (size_t i = 0; i < max_len; i++) {
+            ss << vec[i] << ", ";
+        }
+        std::cout << "Array " << name << " (len=" << max_len << ") content: " << ss.str() << "\n";
+    };
+
+
+    if (internal_name == "parameter:input_ids") {
+        print_arr(user_tensor->data<int64_t>(), user_tensor->get_size(), "parameter:input_ids");
+    }
 
     auto need_lockable_mem = network->does_node_need_lockable_output(internal_name);
 

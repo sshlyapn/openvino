@@ -296,7 +296,7 @@ void primitive_inst::update_shape() {
         auto new_layout = variable.get_layout();
 
         // If variable is not set and we have an initializer - use it's shape as shape of variable
-        if (!variable.is_set() && _impl_params->input_layouts.size() == 1) {
+        if (!variable.is_set() && _impl_params->input_layouts.size() >= 1) {
             new_layout = _impl_params->get_input_layout(0);
         }
 
@@ -311,6 +311,7 @@ void primitive_inst::update_shape() {
             new_layout.set_partial_shape(pshape);
         }
 
+        GPU_DEBUG_TRACE_DETAIL << id() << " set new layout " << new_layout.to_short_string() << "\n";
         variable.set_layout(new_layout);
 
         if (!_impl_params->state_layout.has_value() || _impl_params->state_layout.value() != new_layout) {
@@ -644,7 +645,8 @@ event::ptr primitive_inst::realloc_if_needed() {
 
                 // dynamic quantization is only applied to activation of FC
                 if (get_node().is_type<dynamic_quantize>()) {
-                    auto dyn_quan_scale_layout = dynamic_quantize_inst::__calc_output_layouts<ov::PartialShape>(updated_layouts[dep_idx], 0);
+                    const auto& desc = get_node().as<dynamic_quantize>().get_primitive();
+                    auto dyn_quan_scale_layout = dynamic_quantize_inst::__calc_output_layouts<ov::PartialShape>(updated_layouts[dep_idx], desc->group_sizes);
                     GPU_DEBUG_TRACE_DETAIL << "update layout of dynamic quantize scale parameter layout "
                                         << dyn_quan_scale_layout[1].to_short_string() << std::endl;
                     updated_params.output_layouts[1] = dyn_quan_scale_layout[1];
@@ -748,6 +750,7 @@ event::ptr primitive_inst::realloc_if_needed() {
                 auto& present_layout = _impl_params->output_layouts[i];
                 const auto present_layout_rank = present_layout.get_partial_shape().size();
                 const auto sequence_axis = kv_cache_inst::get_sequence_axis(desc->concat_axis, present_layout_rank);
+                GPU_DEBUG_TRACE_DETAIL << "get_max_pad: " << present_layout.to_short_string() << " " << _max_output_layout_count[0] << " " << sequence_axis << "\n";
                 auto max_pad = kv_cache_inst::get_max_pad(present_layout,
                                                           _max_output_layout_count[i],
                                                           sequence_axis,
@@ -809,6 +812,7 @@ event::ptr primitive_inst::realloc_if_needed() {
         }
         if (present_layout.data_padding._dynamic_dims_mask[sequence_axis] == 1) {
             // Apply padding of variable to make it be optimized in the next iteration
+            GPU_DEBUG_TRACE_DETAIL << "get_max_pad: " << present_layout.to_short_string() << " " << _max_output_layout_count[0] << " " << sequence_axis << "\n";
             auto max_pad = kv_cache_inst::get_max_pad(present_layout,
                                                       _max_output_layout_count[0],
                                                       sequence_axis,
@@ -1220,6 +1224,7 @@ void primitive_inst::do_runtime_in_place_kv_cache() {
 
     GPU_DEBUG_TRACE_DETAIL << "[do runtime kv_cache opt] " << id() << " initial present_layout : " << present_layout.to_string() << std::endl;
     GPU_DEBUG_TRACE_DETAIL << "[do runtime kv_cache opt] " << id() << " initial past_layout : " << past_layout.to_string() << std::endl;
+    GPU_DEBUG_TRACE_DETAIL << "get_max_pad: " << past_layout.to_short_string() << " " << _deps[0].first->_max_output_layout_count[0] << " " << sequence_axis << "\n";
     auto max_pad = kv_cache_inst::get_max_pad(past_layout, _deps[0].first->_max_output_layout_count[0], sequence_axis, "past_layout");
     const auto new_seq_len = static_cast<int64_t>(new_layout.get_shape()[sequence_axis]);
     // In chatbot scenario, when chat history must be stored in kvcache, new_seq_len may not be 1 even if max_pad is greater than 0
@@ -1882,6 +1887,9 @@ primitive_inst::primitive_inst(network & network, program_node const& node, bool
             GPU_DEBUG_TRACE_DETAIL << id() << ": initialize impl with dynamic impl " << _impl->get_kernel_name() << std::endl;
             _dynamic_impl = _impl->clone();
         }
+    }
+    if (_node) {
+        GPU_DEBUG_TRACE_DETAIL << _node->type()->to_string(*_node) << "\n";
     }
     _impl_params->strm = _network.get_stream_ptr();
     for (size_t i = 0; i < get_node().get_output_layouts().size(); ++i) {

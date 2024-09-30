@@ -89,6 +89,47 @@ std::shared_ptr<Node> ReadValue::clone_with_new_inputs(const ov::OutputVector& n
     }
 }
 
+CompressedReadValue::CompressedReadValue(const Output<Node>& variable_initializer,
+                                         const Output<Node>& compressed_variable_initializer_scale,
+                                         const std::shared_ptr<ov::op::util::Variable>& past_values) : ReadValue(variable_initializer, past_values) {
+    const auto scales_input_idx = get_input_size();
+    set_argument(scales_input_idx, compressed_variable_initializer_scale);
+    validate_and_infer_types();
+}
+
+bool CompressedReadValue::visit_attributes(ov::AttributeVisitor& visitor) {
+    visitor.on_attribute("variable_id", m_variable);
+
+    auto variable_info = m_variable->get_info();
+    visitor.on_attribute("variable_type", variable_info.data_type);
+    visitor.on_attribute("variable_shape", variable_info.data_shape);
+    m_variable->update(variable_info);
+    return true;
+}
+
+void CompressedReadValue::validate_and_infer_types() {
+    OPENVINO_ASSERT(m_variable, "Variable is not initialized.");
+
+    OPENVINO_ASSERT(get_input_size() == 2);
+    ReadValue::validate_and_infer_types();
+
+    const auto& scale_type = get_input_element_type(1);
+    const auto& scale_shape = get_input_partial_shape(1);
+
+    set_output_type(1, scale_type, scale_shape);
+}
+
+std::shared_ptr<Node> CompressedReadValue::clone_with_new_inputs(const ov::OutputVector& new_args) const {
+    check_new_args_count(this, new_args);
+
+    OPENVINO_ASSERT(new_args.size() == 2, "Unable to clone CompressedReadValue ",
+                    this->get_friendly_name(),
+                    " Incorrect number of inputs. Expected: 2. Actual: ",
+                    new_args.size());
+
+    return std::make_shared<CompressedReadValue>(new_args[0], new_args[1], m_variable);
+}
+
 }  // namespace op
 }  // namespace intel_gpu
 }  // namespace ov

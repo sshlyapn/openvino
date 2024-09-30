@@ -125,6 +125,10 @@ KERNEL(sdpa_ref)(
     const __global INPUT4_TYPE* scale,
 #endif
     __global OUTPUT_TYPE* output,
+#if IS_KV_COMPRESSED
+    const __global KEY_COMPRESSION_SCALE_TYPE* key_scale,
+    const __global VALUE_COMPRESSION_SCALE_TYPE* val_scale,
+#endif
 #ifdef BEAM_TABLE_TYPE
     const __global BEAM_TABLE_TYPE* beam_table,
 #endif
@@ -162,7 +166,18 @@ KERNEL(sdpa_ref)(
 #else
                 INPUT0_TYPE q_val = query_input[query_offset];
 #endif
+#if IS_KV_COMPRESSED
+                INPUT1_TYPE k_val_comp = key_input[key_offset];
+                half k_val = (half)k_val_comp;
+#ifdef COMPRESSED_PER_HEAD
+                const uint key_scale_comp_offset = GET_DATA_INDEX_6D_SAFE(KEY_COMPRESSION_SCALE, b_idx, s, 0, 0, b1, 0);
+#else
+                const uint key_scale_comp_offset = GET_DATA_INDEX_6D_SAFE(KEY_COMPRESSION_SCALE, b_idx, s, 0, 0, 0, 0);
+#endif
+                k_val *= key_scale[key_scale_comp_offset];
+#else
                 INPUT1_TYPE k_val = key_input[key_offset];
+#endif
                 acc += q_val * k_val;
             }
 
@@ -236,7 +251,19 @@ KERNEL(sdpa_ref)(
 #endif
         uint value_offset = FUNC_CALL(get_input2_index)(OPTIONAL_SHAPE_INFO_TENSOR b_idx, b1, 0, 0, s, head_size_idx);
 
+#if IS_KV_COMPRESSED
+        INPUT2_TYPE __value = value_input[value_offset];
+        half value = (half)__value;
+    #ifdef COMPRESSED_PER_HEAD
+        const uint value_scale_comp_offset = GET_DATA_INDEX_6D_SAFE(VALUE_COMPRESSION_SCALE, b_idx, s, 0, 0, b1, 0);
+    #else
+        const uint value_scale_comp_offset = GET_DATA_INDEX_6D_SAFE(VALUE_COMPRESSION_SCALE, b_idx, s, 0, 0, 0, 0);
+    #endif
+        value *= val_scale[value_scale_comp_offset];
+        acc += tmp_buf[tmp_buf_offset] * value;
+#else
         acc += tmp_buf[tmp_buf_offset] * value_input[value_offset];
+#endif
     }
 
     uint output_offset = OUTPUT_GET_INDEX(b0, b1, target_seq_idx, head_size_idx);

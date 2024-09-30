@@ -284,6 +284,7 @@ REGISTER_FACTORY(internal, RMS);
 REGISTER_FACTORY(internal, GatherCompressed);
 REGISTER_FACTORY(internal, KVCache);
 REGISTER_FACTORY(internal, ReadValue);
+REGISTER_FACTORY(internal, CompressedReadValue);
 REGISTER_FACTORY(internal, Gemm);
 REGISTER_FACTORY(internal, SwiGLU);
 REGISTER_FACTORY(internal, IndirectGemm);
