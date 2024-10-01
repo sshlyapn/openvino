@@ -44,6 +44,7 @@ public:
 
     VariableState::Ptr get_compression_scale_state() const;
     ov::PartialShape get_compression_scale_shape(const ov::PartialShape& kv_cache_shape);
+    void set_scales_layout(const cldnn::layout& new_layout);
 
 private:
     size_t m_beam_axis = 0;

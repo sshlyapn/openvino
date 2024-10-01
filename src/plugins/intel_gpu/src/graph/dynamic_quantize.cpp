@@ -22,7 +22,7 @@ layout dynamic_quantize_inst::calc_output_layout(dynamic_quantize_node const& no
 }
 
 template<typename ShapeType>
-std::vector<layout> dynamic_quantize_inst::__calc_output_layouts(const layout &act_layout, const std::vector<uint64_t>& group_sizes) {
+std::vector<layout> dynamic_quantize_inst::__calc_output_layouts(const layout &act_layout, const std::vector<uint64_t>& group_sizes, const std::vector<uint64_t>& scales_output_order) {
     ov::op::internal::DynamicQuantize op;
     auto output_format = act_layout.format;
 
@@ -30,19 +30,30 @@ std::vector<layout> dynamic_quantize_inst::__calc_output_layouts(const layout &a
         act_layout.get<ShapeType>(),
     };
 
-    auto output_shapes = ov::op::internal::DynamicQuantize::shape_infer(&op, input_shapes, group_sizes);
+    auto print_arr = [&](const std::vector<uint64_t>& vec, size_t max_len, std::string name) {
+        std::stringstream ss;
+        for (size_t i = 0; i < std::min(max_len, vec.size()); i++) {
+            ss << vec[i] << ", ";
+        }
+        std::cout << "Array " << name << " for calc_shape (len=" << vec.size() << ") content: " << ss.str() << "\n";
+    };
+
+    print_arr(scales_output_order, scales_output_order.size(), "scales_output_order");
+    print_arr(group_sizes, group_sizes.size(), "group_sizes");
+
+    auto output_shapes = ov::op::internal::DynamicQuantize::shape_infer(&op, input_shapes, group_sizes, scales_output_order);
     GPU_DEBUG_TRACE_DETAIL << "shape infer dynamic" << output_shapes[0] << " " << output_shapes[1] << "\n";
 
     return { layout(output_shapes[0], data_types::i8, output_format), layout(output_shapes[1], data_types::f16, output_format) };
 }
 
-template std::vector<layout> dynamic_quantize_inst::__calc_output_layouts<ov::PartialShape>(const layout &act_layout, const std::vector<uint64_t>& group_sizes);
+template std::vector<layout> dynamic_quantize_inst::__calc_output_layouts<ov::PartialShape>(const layout &act_layout, const std::vector<uint64_t>& group_sizes, const std::vector<uint64_t>& scales_output_order);
 
 template<typename ShapeType>
 std::vector<layout> dynamic_quantize_inst::calc_output_layouts(dynamic_quantize_node const& /*node*/, const kernel_impl_params& impl_param) {
     auto desc = impl_param.typed_desc<dynamic_quantize>();
     const auto& input_layout = impl_param.get_input_layout();
-    return __calc_output_layouts<ov::PartialShape>(input_layout, desc->group_sizes);
+    return __calc_output_layouts<ov::PartialShape>(input_layout, desc->group_sizes, desc->scales_output_order);
 }
 
 template std::vector<layout> dynamic_quantize_inst::calc_output_layouts<ov::PartialShape>(dynamic_quantize_node const& node,

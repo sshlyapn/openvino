@@ -190,6 +190,25 @@ IndirectSDPAOpt::IndirectSDPAOpt() {
         auto order_out = sdpa->get_output_transpose_order();
         auto is_causal = sdpa->get_causal();
 
+        auto input0_transpose_order = sdpa->get_input0_transpose_order();
+        auto input1_transpose_order = sdpa->get_input1_transpose_order();
+        auto input2_transpose_order = sdpa->get_input2_transpose_order();
+        auto output_transpose_order = sdpa->get_output_transpose_order();
+
+        auto print_arr2 = [&](const std::vector<int64_t>& vec, size_t max_len, std::string name) {
+            std::stringstream ss;
+            for (size_t i = 0; i < std::min(max_len, vec.size()); i++) {
+                ss << vec[i] << ", ";
+            }
+            // std::cout << "-> Orig SDPA Array " << name << " (len=" << vec.size() << ") content: " << ss.str() << "\n";
+        };
+
+        print_arr2(input0_transpose_order, input0_transpose_order.size(), "input0_transpose_order");
+        print_arr2(input1_transpose_order, input1_transpose_order.size(), "input1_transpose_order");
+        print_arr2(input2_transpose_order, input2_transpose_order.size(), "input2_transpose_order");
+        print_arr2(output_transpose_order, output_transpose_order.size(), "output_transpose_order");
+
+
         OutputVector data_inputs;
         data_inputs.push_back(sdpa->get_input_node_shared_ptr(0)); // Q
         data_inputs.push_back(sdpa->get_input_node_shared_ptr(1)); // K

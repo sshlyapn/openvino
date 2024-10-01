@@ -12,6 +12,9 @@ namespace kernel_selector {
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 struct dynamic_quantize_params : public base_params {
     dynamic_quantize_params() : base_params(KernelType::DYNAMIC_QUANTIZE) {}
+
+    std::vector<uint64_t> group_sizes;
+    std::vector<uint64_t> scales_output_order;
 };
 
 class DynamicQuantizeKernelRef : public KernelBaseOpenCL {

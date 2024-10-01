@@ -36,8 +36,14 @@ std::vector<layout> kv_cache_inst::calc_output_layouts(kv_cache_node const& node
 
     std::vector<ShapeType> input_shapes = {impl_param.get_input_layout(0).get<ShapeType>(),
                                            impl_param.get_input_layout(1).get<ShapeType>()};
-    if (desc->num_outputs > 1)
+    if (desc->indirect) {
         input_shapes.push_back(impl_param.get_input_layout(2).get<ShapeType>());
+    }
+
+    if (desc->compressed) {
+        input_shapes.push_back(impl_param.get_input_layout(3).get<ShapeType>());
+        input_shapes.push_back(impl_param.get_input_layout(4).get<ShapeType>());
+    }
 
     std::vector<ShapeType> output_shapes = shape_infer(&op, input_shapes);
 
@@ -127,22 +133,22 @@ void kv_cache_inst::update_shape_info_tensor(const kernel_impl_params& params) {
         fill_shape_info_data(bt_layout, bt_state->get_initial_layout(), shape_info_ptr, offset);
     }
 
-    if (params.typed_desc<kv_cache>()->compressed) {
-        auto& var = dynamic_cast<ov::intel_gpu::VariableStateIndirectKVCache&>(get_network().get_variable(variable_id()));
-        const auto& scale_state = var.get_compression_scale_state();
-        auto scale_layout = scale_state->get_layout();
-        if (scale_layout.is_dynamic()) {
-            auto bt_shape = scale_layout.get_partial_shape();
-            for (auto& d : bt_shape) {
-                if (d.is_dynamic())
-                    d = 0;
-            }
-            scale_layout.set_partial_shape(bt_shape);
-        }
+    // if (params.typed_desc<kv_cache>()->compressed) {
+    //     auto& var = dynamic_cast<ov::intel_gpu::VariableStateIndirectKVCache&>(get_network().get_variable(variable_id()));
+    //     const auto& scale_state = var.get_compression_scale_state();
+    //     auto scale_layout = scale_state->get_layout();
+    //     if (scale_layout.is_dynamic()) {
+    //         auto bt_shape = scale_layout.get_partial_shape();
+    //         for (auto& d : bt_shape) {
+    //             if (d.is_dynamic())
+    //                 d = 0;
+    //         }
+    //         scale_layout.set_partial_shape(bt_shape);
+    //     }
 
-        GPU_DEBUG_TRACE_DETAIL << id() << " : update shape_info for input[" << i++ << "]" << std::endl;
-        fill_shape_info_data(scale_layout, scale_state->get_initial_layout(), shape_info_ptr, offset);
-    }
+    //     GPU_DEBUG_TRACE_DETAIL << id() << " : update shape_info for input[" << i++ << "]" << std::endl;
+    //     fill_shape_info_data(scale_layout, scale_state->get_initial_layout(), shape_info_ptr, offset);
+    // }
 
     for (size_t i = 0; i < _node->get_output_layouts().size(); i++) {
         GPU_DEBUG_TRACE_DETAIL << id() << " : update shape_info for output[" << i << "]" << std::endl;

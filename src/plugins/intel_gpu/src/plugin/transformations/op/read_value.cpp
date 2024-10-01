@@ -46,6 +46,10 @@ void ReadValue::validate_and_infer_types() {
         const auto compatible_type = variable_type.is_dynamic() || initial_type == variable_type;
         const auto compatible_shape = variable_shape.relaxes(initial_shape);
 
+        if (get_friendly_name() == "ReadValue_179538") {
+            std::cout << "input name" << get_input_node_shared_ptr(0)->get_friendly_name() << " " << get_input_node_shared_ptr(0)->get_type_name() << "\n";
+        }
+
         OPENVINO_ASSERT(compatible_shape,
                         "The shape specified in the Variable has to extend (relax) the shape "
                         "inferred from the initializing subgraph.",
@@ -59,7 +63,8 @@ void ReadValue::validate_and_infer_types() {
                         " Variable type: ",
                         variable_type,
                         " Initialization type: ",
-                        initial_type);
+                        initial_type, " ", get_friendly_name(), " ", std::string(get_type_name()));
+
         // workaround:
         // dynamic rank/type can be derived from the IRs generated via the prev versions of OV,
         // but dynamic rank/type are not supported in plugins,

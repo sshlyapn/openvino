@@ -22,6 +22,12 @@ public:
 
     KVCache(const Output<Node>& past,
             const Output<Node>& new_token_data,
+            const std::shared_ptr<ov::op::util::Variable>& past_values,
+            int64_t concat_axis,
+            const ov::element::Type output_type = ov::element::undefined);
+
+    KVCache(const Output<Node>& past,
+            const Output<Node>& new_token_data,
             const Output<Node>& beam_idx,
             const std::shared_ptr<ov::op::util::Variable>& past_values,
             int64_t concat_axis,
@@ -30,14 +36,9 @@ public:
 
     KVCache(const Output<Node>& past,
             const Output<Node>& new_token_data,
-            const std::shared_ptr<ov::op::util::Variable>& past_values,
-            int64_t concat_axis,
-            const ov::element::Type output_type = ov::element::undefined);
-
-    KVCache(const Output<Node>& past,
-            const Output<Node>& new_token_data,
-            const Output<Node>& new_token_scale,
             const Output<Node>& beam_idx,
+            const Output<Node>& past_scale,
+            const Output<Node>& new_token_scale,
             const std::shared_ptr<ov::op::util::Variable>& past_values,
             int64_t concat_axis,
             int64_t gather_axis,

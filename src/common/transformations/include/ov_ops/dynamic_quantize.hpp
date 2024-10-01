@@ -22,7 +22,7 @@ public:
     /// \param data Input tensor with data
     /// \param group_sizes Group sizes for dynamic quantization
     /// \param dt_scale Data type for scale output
-    DynamicQuantize(const Output<Node>& data, std::vector<uint64_t> group_sizes, element::Type dt_scale);
+    DynamicQuantize(const Output<Node>& data, std::vector<uint64_t> group_sizes, element::Type dt_scale, std::vector<uint64_t> scales_output_order = {});
 
     void validate_and_infer_types() override;
 
@@ -30,12 +30,17 @@ public:
     const std::vector<uint64_t>& get_group_sizes() const {
         return m_group_sizes;
     };
+    const std::vector<uint64_t>& get_scales_output_order() const {
+        return m_scales_output_order;
+    };
     static std::vector<ov::PartialShape> shape_infer(const DynamicQuantize* op,
                                                      const std::vector<ov::PartialShape>& input_shapes,
-                                                     const std::vector<uint64_t>& group_sizes);
+                                                     const std::vector<uint64_t>& group_sizes,
+                                                     const std::vector<uint64_t>& scales_output_order = {});
 
 private:
     std::vector<uint64_t> m_group_sizes;
+    std::vector<uint64_t> m_scales_output_order;
     element::Type m_dt_scale;
 };
 

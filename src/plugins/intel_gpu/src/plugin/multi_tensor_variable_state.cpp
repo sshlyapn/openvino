@@ -170,20 +170,24 @@ VariableState::Ptr VariableStateIndirectKVCache::get_beam_table_state() const {
 
 ov::PartialShape VariableStateIndirectKVCache::get_compression_scale_shape(const ov::PartialShape& kv_cache_shape) {
     // FIXME: add assert to confirm that it is compressed
-    GPU_DEBUG_GET_INSTANCE(debug_config);
-    auto rank = kv_cache_shape.size();
-    ov::PartialShape compression_scale_shape(std::vector<size_t>(rank, 1));
-    compression_scale_shape[0] = kv_cache_shape[0];
-    compression_scale_shape[1] = kv_cache_shape[1];
+    // GPU_DEBUG_GET_INSTANCE(debug_config);
+    // auto rank = kv_cache_shape.size();
+    // ov::PartialShape compression_scale_shape(std::vector<size_t>(rank, 1));
+    // compression_scale_shape[0] = kv_cache_shape[0];
+    // compression_scale_shape[1] = kv_cache_shape[1];
 
-    GPU_DEBUG_IF(debug_config->enable_kv_cache_compression == 1) { // per-head compression
-        compression_scale_shape[2] = kv_cache_shape[2];
-    }
-    return compression_scale_shape;
+    // GPU_DEBUG_IF(debug_config->enable_kv_cache_compression == 1) { // per-head compression
+    //     compression_scale_shape[2] = kv_cache_shape[2];
+    // }
+    return ov::PartialShape::dynamic(kv_cache_shape.size());
 }
 
 VariableState::Ptr VariableStateIndirectKVCache::get_compression_scale_state() const {
     return m_hidden_states[2];
+}
+
+void VariableStateIndirectKVCache::set_scales_layout(const cldnn::layout& new_layout) {
+    m_hidden_states[2]->set_layout(new_layout);
 }
 
 }  // namespace intel_gpu

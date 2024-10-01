@@ -37,6 +37,7 @@
 #include "graph_optimizer/prepare_buffer_fusing.h"
 
 #include "intel_gpu/plugin/common_utils.hpp"
+#include "intel_gpu/plugin/multi_tensor_variable_state.hpp"
 #include "intel_gpu/graph/network.hpp"
 #include "intel_gpu/graph/serialization/set_serializer.hpp"
 #include "intel_gpu/runtime/engine.hpp"
@@ -301,22 +302,50 @@ void primitive_inst::update_shape() {
         }
 
         // If we still have a dynamic dimension, which basiclly means that we don't have an initializer, then replace dynamic dims with 0
-        if (new_layout.is_dynamic()) {
-            auto pshape = new_layout.get_partial_shape();
-            for (auto& d : pshape) {
-                if (d.is_dynamic()) {
-                    d = 0;
+        auto update_layout = [](layout& layout) {
+            if (layout.is_dynamic()) {
+                auto pshape = layout.get_partial_shape();
+                for (auto& d : pshape) {
+                    if (d.is_dynamic()) {
+                        d = 0;
+                    }
                 }
+                layout.set_partial_shape(pshape);
             }
-            new_layout.set_partial_shape(pshape);
-        }
+        };
+        update_layout(new_layout);
 
         GPU_DEBUG_TRACE_DETAIL << id() << " set new layout " << new_layout.to_short_string() << "\n";
         variable.set_layout(new_layout);
 
-        if (!_impl_params->state_layout.has_value() || _impl_params->state_layout.value() != new_layout) {
-            _impl_params->state_layout = new_layout;
+        if (_impl_params->state_layouts.empty()) {
+            _impl_params->state_layouts.resize(1);
+        }
+
+        if (_impl_params->state_layouts[0] != new_layout) {
+            _impl_params->state_layouts[0] = new_layout;
             input_shape_changed = true;
+        }
+
+        if (prim->compressed) {
+            _impl_params->state_layouts.resize(2);
+
+            auto multi_tensor_variable = downcast<ov::intel_gpu::VariableStateIndirectKVCache>(variable);
+            auto new_scales_layout = multi_tensor_variable.get_compression_scale_state()->get_layout();
+
+            if (!variable.is_set() && _impl_params->input_layouts.size() >= 2) {
+                new_scales_layout = _impl_params->get_input_layout(1);
+            }
+
+            update_layout(new_scales_layout);
+
+            GPU_DEBUG_TRACE_DETAIL << id() << " set new scales layout " << new_scales_layout.to_short_string() << "\n";
+            multi_tensor_variable.set_scales_layout(new_scales_layout);
+
+            if (_impl_params->state_layouts[1] != new_scales_layout) {
+                _impl_params->state_layouts[1] = new_scales_layout;
+                input_shape_changed = true;
+            }
         }
     }
 
@@ -646,7 +675,7 @@ event::ptr primitive_inst::realloc_if_needed() {
                 // dynamic quantization is only applied to activation of FC
                 if (get_node().is_type<dynamic_quantize>()) {
                     const auto& desc = get_node().as<dynamic_quantize>().get_primitive();
-                    auto dyn_quan_scale_layout = dynamic_quantize_inst::__calc_output_layouts<ov::PartialShape>(updated_layouts[dep_idx], desc->group_sizes);
+                    auto dyn_quan_scale_layout = dynamic_quantize_inst::__calc_output_layouts<ov::PartialShape>(updated_layouts[dep_idx], desc->group_sizes, desc->scales_output_order);
                     GPU_DEBUG_TRACE_DETAIL << "update layout of dynamic quantize scale parameter layout "
                                         << dyn_quan_scale_layout[1].to_short_string() << std::endl;
                     updated_params.output_layouts[1] = dyn_quan_scale_layout[1];

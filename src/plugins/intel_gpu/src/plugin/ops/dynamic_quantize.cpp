@@ -28,9 +28,12 @@ static void CreateDynamicQuantizeOp(ProgramBuilder& p, const std::shared_ptr<ov:
         OPENVINO_ASSERT(group_sizes.back() == UINT64_MAX, "Not supported group size: ", group_sizes.back());
     }
 
+    GPU_DEBUG_TRACE_DETAIL << "Create DQ " << primitive_name << " with scales " << op->get_scales_output_order().size() << " number\n";
+
     auto prim = cldnn::dynamic_quantize(primitive_name,
                                         inputs[0],
                                         group_sizes,
+                                        op->get_scales_output_order(),
                                         get_output_data_types(op));
     p.add_primitive(*op, prim);
 }

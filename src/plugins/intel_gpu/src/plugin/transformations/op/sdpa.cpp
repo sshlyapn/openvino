@@ -29,6 +29,20 @@ SDPA::SDPA(const OutputVector& inputs,
     , m_order_v(order_v)
     , m_order_out(order_out)
     , m_output_type(output_type) {
+
+    auto print_arr = [&](const std::vector<int64_t>& vec, size_t max_len, std::string name) {
+        std::stringstream ss;
+        for (size_t i = 0; i < std::min(max_len, vec.size()); i++) {
+            ss << vec[i] << ", ";
+        }
+        // std::cout << "Init Array " << name << " (len=" << vec.size() << ") content: " << ss.str() << "\n";
+    };
+
+    print_arr(m_order_q, m_order_q.size(), "m_order_q");
+    print_arr(m_order_k, m_order_k.size(), "m_order_k");
+    print_arr(m_order_v, m_order_v.size(), "m_order_v");
+    print_arr(m_order_out, m_order_out.size(), "m_order_out");
+
     set_arguments(inputs);
     set_causal(is_causal);
     validate_and_infer_types();
@@ -62,6 +76,19 @@ void SDPA::validate_and_infer_types() {
     for (size_t i = 0; i < input_size; i++) {
         input_shapes.push_back(get_input_partial_shape(i));
     }
+
+    auto print_arr = [&](const std::vector<int64_t>& vec, size_t max_len, std::string name) {
+        std::stringstream ss;
+        for (size_t i = 0; i < std::min(max_len, vec.size()); i++) {
+            ss << vec[i] << ", ";
+        }
+        // std::cout << "Array " << name << " (len=" << vec.size() << ") content: " << ss.str() << "\n";
+    };
+
+    print_arr(m_order_q, m_order_q.size(), "m_order_q");
+    print_arr(m_order_k, m_order_k.size(), "m_order_k");
+    print_arr(m_order_v, m_order_v.size(), "m_order_v");
+    print_arr(m_order_out, m_order_out.size(), "m_order_out");
 
     auto out_shapes = shape_infer(this,
                                   input_shapes,
@@ -97,6 +124,7 @@ std::vector<ov::PartialShape> shape_infer(const SDPA* op,
     auto transpose_pshape = [](const ov::PartialShape pshape, const std::vector<int64_t>& order) {
         auto transposed_pshape = ov::PartialShape::dynamic(pshape.rank());
         for (size_t i = 0; i < order.size(); i++) {
+            // std::cout << "Check order " << order[i] << "\n";
             transposed_pshape[i] = pshape[order[i]];
         }
 

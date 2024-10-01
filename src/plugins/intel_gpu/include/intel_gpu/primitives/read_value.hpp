@@ -31,10 +31,12 @@ struct read_value : public primitive_base<read_value> {
             : primitive_base(id, inputs, 1, {optional_data_type{output_layout.data_type}}),
               variable_id{variable_id},
               output_layout{output_layout},
+              compressed(false),
               user_specified_type(user_specified_type) {}
 
     std::string variable_id;
     layout output_layout;
+    bool compressed;
     ov::element::Type user_specified_type;
 
     bool operator==(const primitive& rhs) const override {

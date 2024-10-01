@@ -35,7 +35,15 @@ public:
         auto desc = impl_param.typed_desc<read_value>();
         const auto& default_layout = desc->output_layout;
 
-        return { impl_param.state_layout.value_or(default_layout) };
+        std::vector<layout> output_layouts;
+        output_layouts.push_back(impl_param.state_layouts.size() >= 1 ? impl_param.state_layouts[0] : default_layout);
+
+        if (desc->compressed) {
+            const auto default_layout = layout{ov::PartialShape::dynamic(4), data_types::f16, format::get_default_format(4)};
+            output_layouts.push_back(impl_param.state_layouts.size() >= 2 ? impl_param.state_layouts[1] : default_layout);
+        }
+
+        return output_layouts;
     }
 
     static layout calc_output_layout(const read_value_node& node, kernel_impl_params const& impl_param);

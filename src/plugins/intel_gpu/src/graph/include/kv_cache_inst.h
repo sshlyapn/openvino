@@ -36,9 +36,7 @@ public:
             res.push_back(layout(ov::PartialShape::dynamic(4), data_types::i32, format::bfyx));
         }
 
-        if (get_primitive()->compressed) { // insert an additional input with compressed_scale past layout
-            res.push_back(layout(ov::PartialShape::dynamic(4), data_types::f16, format::bfyx));
-        }
+        GPU_DEBUG_TRACE_DETAIL << "Total shape info input layouts: " << res.size() << "\n";
 
         return res;
     }
