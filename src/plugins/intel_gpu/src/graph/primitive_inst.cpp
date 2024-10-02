@@ -751,6 +751,12 @@ event::ptr primitive_inst::realloc_if_needed() {
 
     for (size_t i = 0; i < actual_layouts.size(); ++i) {
         bool can_reuse_buffer = (_outputs[i] && updated_layouts[i].get_linear_size() <= _max_output_layout_count[i]);
+
+        // TODO: this can be removed if the 2nd output of read_value will be replaced
+        // How it should be handled in case of variable initialization?
+        // if (_node->is_type<read_value>() && i == 1 )
+        //     continue;
+
         std::pair<bool, ov::Shape> prealloc_info;
         if (_node->is_type<kv_cache>() && i == 0) {
             const auto& desc = _node->as<kv_cache>().get_primitive();

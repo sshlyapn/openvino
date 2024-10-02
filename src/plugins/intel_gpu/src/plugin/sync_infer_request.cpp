@@ -740,18 +740,18 @@ std::vector<cldnn::event::ptr> SyncInferRequest::prepare_input(const std::string
     auto& engine = m_graph->get_engine();
     auto& stream = network->get_stream();
 
-    auto print_arr = [&](int64_t* vec, size_t max_len, std::string name) {
-        std::stringstream ss;
-        for (size_t i = 0; i < max_len; i++) {
-            ss << vec[i] << ", ";
-        }
-        std::cout << "Array " << name << " (len=" << max_len << ") content: " << ss.str() << "\n";
-    };
+    // auto print_arr = [&](int64_t* vec, size_t max_len, std::string name) {
+    //     std::stringstream ss;
+    //     for (size_t i = 0; i < max_len; i++) {
+    //         ss << vec[i] << ", ";
+    //     }
+    //     std::cout << "Array " << name << " (len=" << max_len << ") content: " << ss.str() << "\n";
+    // };
 
 
-    if (internal_name == "parameter:input_ids") {
-        print_arr(user_tensor->data<int64_t>(), user_tensor->get_size(), "parameter:input_ids");
-    }
+    // if (internal_name == "parameter:input_ids") {
+    //     print_arr(user_tensor->data<int64_t>(), user_tensor->get_size(), "parameter:input_ids");
+    // }
 
     auto need_lockable_mem = network->does_node_need_lockable_output(internal_name);
 

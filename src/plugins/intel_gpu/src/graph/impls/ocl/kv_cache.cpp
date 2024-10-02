@@ -205,18 +205,31 @@ struct kv_cache_impl : multi_stage_primitive<kv_cache> {
             auto comp_scale_shape = comp_scale_layout.get_shape();
 
             bool skip_first_kernel = true;
+            const auto preallocation_size = instance.get_prealloc_iter_num();
+            // const auto preallocation_size = 4;
+            if (compression_scale) {
+                GPU_DEBUG_TRACE_DETAIL << "Has compression, mem=" << compression_scale->get_layout().to_short_string() << ", req size" << ov::shape_size(comp_scale_shape) << ", has " << compression_scale->count() << "\n";
+            } else {
+                GPU_DEBUG_TRACE_DETAIL << "Has compression, mem=" << compression_scale << ", req size" << ov::shape_size(comp_scale_shape) << "\n";
+            }
+
             if (!compression_scale || compression_scale->count() < ov::shape_size(comp_scale_shape)) {
                 const auto concat_axis = 2;
                 auto alloc_shape = comp_scale_shape;
-                alloc_shape[concat_axis] += instance.get_prealloc_iter_num();
+                alloc_shape[concat_axis] += preallocation_size;
                 const layout comp_scale_alloc_layout = {alloc_shape, comp_scale_layout.data_type, comp_scale_layout.format};
                 GPU_DEBUG_TRACE_DETAIL << "Realloc compression scale table to " << comp_scale_alloc_layout.to_short_string() << std::endl;
                 compression_scale = engine.allocate_memory(comp_scale_alloc_layout, scale_alloc_type, false);
 
                 skip_first_kernel = comp_scale_state->get_layout().count() == 0;
+
+                if (comp_scale_state->get_layout().count() > 64) {
+                    GPU_DEBUG_TRACE_DETAIL << "Reallocation of scales buffer. Prev " << comp_scale_state->get_layout().to_short_string() << " new: " << comp_scale_alloc_layout.to_short_string() << "(prealloc=" << preallocation_size << ")\n";
+                }
             }
 
             instance.set_output_memory(compression_scale, false, 2);
+            GPU_DEBUG_TRACE_DETAIL << "Override Variable memory\n";
             comp_scale_state->set_memory(compression_scale, instance.get_impl_params()->output_layouts[2]);
 
             auto comp_scale_kernel_params = get_compression_scale_update_kernel_params(impl_param, comp_scale_state->is_set());

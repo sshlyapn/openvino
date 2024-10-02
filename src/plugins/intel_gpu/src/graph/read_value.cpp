@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include <read_value_inst.h>
+#include "read_value_inst.h"
 #include "primitive_type_base.h"
+
+#include "intel_gpu/plugin/multi_tensor_variable_state.hpp"
+
 #include <sstream>
 #include <json_object.h>
 
@@ -45,5 +48,18 @@ void read_value_inst::update_output_memory() {
     GPU_DEBUG_TRACE_DETAIL << " - layout " << variable.get_layout().to_string() << std::endl;
     GPU_DEBUG_TRACE_DETAIL << " - actual_size " << variable.get_actual_mem_size() << " bytes" << std::endl;
     set_output_memory(variable.get_memory(), false, 0);
+
+    auto desc = _impl_params->typed_desc<read_value>();
+    if (desc->compressed) {
+        auto multi_tensor_variable = downcast<const ov::intel_gpu::VariableStateIndirectKVCache>(variable);
+        auto scales_variable = multi_tensor_variable.get_compression_scale_state();
+
+        GPU_DEBUG_TRACE_DETAIL << id() << " Update output memory with variable " << scales_variable->get_name() << std::endl;
+        GPU_DEBUG_TRACE_DETAIL << " - ptr : " << scales_variable->get_memory()->buffer_ptr() << std::endl;
+        GPU_DEBUG_TRACE_DETAIL << " - layout " << scales_variable->get_layout().to_string() << std::endl;
+        GPU_DEBUG_TRACE_DETAIL << " - actual_size " << scales_variable->get_actual_mem_size() << " bytes" << std::endl;
+        set_output_memory(scales_variable->get_memory(), false, 1);
+    }
+    GPU_DEBUG_TRACE_DETAIL << id() << variable_id() << std::endl;
 }
 } // namespace cldnn

@@ -57,7 +57,7 @@ JitConstants DynamicQuantizeKernelRef::GetJitConstants(const dynamic_quantize_pa
         }
 
         jit.AddConstant(MakeJitConstant("SCALES_OUTPUT_ORDER", ss.str()));
-        std::cout << "SCALES_OUTPUT_ORDER: " << ss.str() << "\n";
+        GPU_DEBUG_TRACE_DETAIL << "SCALES_OUTPUT_ORDER: " << ss.str() << "\n";
     }
 
     print_arr(params.group_sizes, params.group_sizes.size(), "group_sizes");

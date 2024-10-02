@@ -153,8 +153,9 @@ std::vector<ov::PartialShape> shape_infer(const KVCache* op, std::vector<ov::Par
         // FIXME: indirect kv cache and compression are orthogonal feature. it can be selective.
         // If KV cache is compressed
         if (op->get_output_size() == 3){
+            const auto scales_concat_axis = 2;
             ov::PartialShape compression_scale_shape = input_shapes[3];
-            compression_scale_shape[concat_axis] += input_shapes[4][concat_axis];
+            compression_scale_shape[scales_concat_axis] += input_shapes[4][scales_concat_axis];
             out_shapes[2] = compression_scale_shape;
 
             // ov::PartialShape compression_scale_shape(std::vector<size_t>(out_shapes[0].size(), 1));

@@ -420,10 +420,13 @@ bool crop_in_place_optimization::can_crop_be_optimized_simple_data_format(const 
 }
 
 static bool can_read_value_be_optimize(const read_value_node& node) {
-    if (node.get_users().size() == 1)
+    GPU_DEBUG_TRACE_DETAIL << "Check " << node.id() << " users:" << node.get_users().size() << "\n";
+    std::unordered_set<const cldnn::program_node*> unique_users(node.get_users().begin(), node.get_users().end());
+
+    if (unique_users.size() == 1)
         return true;
 
-    const auto non_shape_of_users_count = std::count_if(node.get_users().begin(), node.get_users().end(), [](const program_node* user) {
+    const auto non_shape_of_users_count = std::count_if(unique_users.begin(), unique_users.end(), [](const program_node* user) {
         return !user->is_type<shape_of>();
     });
     if (non_shape_of_users_count <= 1)
@@ -921,7 +924,7 @@ void prepare_buffer_fusing::run(program& p) {
             // TODO: Allow optimizations for the case above too. Looks like it can be achieved by more careful
             // topological sort (i.e. if we ensure that all read_value users are completed before assign is run)
             node.can_be_optimized(can_read_value_be_optimize(node));
-            GPU_DEBUG_TRACE_DETAIL << "[prepare_buffer_fusing] : " << node.id() << " can be optimized" << std::endl;
+            GPU_DEBUG_TRACE_DETAIL << "[prepare_buffer_fusing] : " << node.id() << " can be optimized = " << node.can_be_optimized() << std::endl;
         });
     }
 }
