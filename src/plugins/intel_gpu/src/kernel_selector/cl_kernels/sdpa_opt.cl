@@ -246,7 +246,7 @@ KERNEL(sdpa_opt)(
                 // const uint key_scale_comp_offset = GET_DATA_INDEX_6D_SAFE(KEY_COMPRESSION_SCALE, b_idx, seq_len, 0, 0, 0, 0);
                 const uint key_scale_comp_offset = GET_DATA_INDEX_6D_SAFE(KEY_COMPRESSION_SCALE, b_idx, 0, 0, 0, seq_len, 0);
 #endif
-                // KEY_COMPRESSION_SCALE_TYPE key_comp_scale = key_scale[key_scale_comp_offset];
+                KEY_COMPRESSION_SCALE_TYPE key_comp_scale = key_scale[key_scale_comp_offset];
 #endif
 
                 uint head_idx_index = 0;
@@ -261,7 +261,7 @@ KERNEL(sdpa_opt)(
 
 #if IS_KV_COMPRESSED
                     KEY_BLOCK key_vals_compressed = KEY_BLOCK_READ(key_input, key_offset + head_idx_index);
-                    KEY_BLOCK_UNCOMPRESSED key_vals = TO_KEY_BLOCK_UNCOMPRESSED_TYPE(key_vals_compressed);
+                    KEY_BLOCK_UNCOMPRESSED key_vals = TO_KEY_BLOCK_UNCOMPRESSED_TYPE(key_vals_compressed) * key_comp_scale;
 #else
                     KEY_BLOCK key_vals = KEY_BLOCK_READ(key_input, key_offset + head_idx_index);
 #endif
@@ -291,7 +291,7 @@ KERNEL(sdpa_opt)(
 
 #if IS_KV_COMPRESSED
                     KEY_BLOCK key_vals_compressed = KEY_BLOCK_READ(key_input, key_offset + head_idx_index);
-                    KEY_BLOCK_UNCOMPRESSED key_vals = TO_KEY_BLOCK_UNCOMPRESSED_TYPE(key_vals_compressed);
+                    KEY_BLOCK_UNCOMPRESSED key_vals = TO_KEY_BLOCK_UNCOMPRESSED_TYPE(key_vals_compressed) * key_comp_scale;
 #else
                     KEY_BLOCK key_vals = KEY_BLOCK_READ(key_input, key_offset + head_idx_index);
 #endif
@@ -321,7 +321,7 @@ KERNEL(sdpa_opt)(
 
 #if IS_KV_COMPRESSED
                     KEY_BLOCK key_vals_compressed = KEY_BLOCK_READ(key_input, key_offset + head_idx_index);
-                    KEY_BLOCK_UNCOMPRESSED key_vals = TO_KEY_BLOCK_UNCOMPRESSED_TYPE(key_vals_compressed);
+                    KEY_BLOCK_UNCOMPRESSED key_vals = TO_KEY_BLOCK_UNCOMPRESSED_TYPE(key_vals_compressed) * key_comp_scale;
 #else
                     KEY_BLOCK key_vals = KEY_BLOCK_READ(key_input, key_offset + head_idx_index);
 #endif
@@ -351,7 +351,7 @@ KERNEL(sdpa_opt)(
 
 #if IS_KV_COMPRESSED
                     KEY_BLOCK key_vals_compressed = KEY_BLOCK_READ(key_input, key_offset + head_idx_index);
-                    KEY_BLOCK_UNCOMPRESSED key_vals = TO_KEY_BLOCK_UNCOMPRESSED_TYPE(key_vals_compressed);
+                    KEY_BLOCK_UNCOMPRESSED key_vals = TO_KEY_BLOCK_UNCOMPRESSED_TYPE(key_vals_compressed) * key_comp_scale;
 #else
                     KEY_BLOCK key_vals = KEY_BLOCK_READ(key_input, key_offset + head_idx_index);
 #endif
@@ -535,7 +535,7 @@ KERNEL(sdpa_opt)(
             // const uint value_scale_comp_offset = GET_DATA_INDEX_6D_SAFE(VALUE_COMPRESSION_SCALE, b_idx, (seq_len * SUBGROUP_SIZE) + sglid, 0, 0, 0, 0);
             const uint value_scale_comp_offset = GET_DATA_INDEX_6D_SAFE(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, 0, (seq_len * SUBGROUP_SIZE) + sglid, 0);
 #endif
-            // VALUE_COMPRESSION_SCALE_TYPE value_comp_scale = val_scale[value_scale_comp_offset];
+            VALUE_COMPRESSION_SCALE_TYPE value_comp_scale = val_scale[value_scale_comp_offset];
 #endif
 
             OUTPUT_TYPE qk_val[TARGET_SEQ_LEN_BLOCK_SIZE];
@@ -550,7 +550,7 @@ KERNEL(sdpa_opt)(
 #else
                 INPUT2_TYPE value_val_compressed = VALUE_BLOCK_READ(value_input, value_offset);
 #endif
-                VALUE_COMPRESSION_SCALE_TYPE value_val = TO_VALUE_COMPRESSION_SCALE_TYPE(value_val_compressed);
+                VALUE_COMPRESSION_SCALE_TYPE value_val = value_val_compressed * sub_group_broadcast(value_comp_scale, i);
 #else
 #ifdef BEAM_TABLE_TYPE
                 INPUT2_TYPE value_val = VALUE_BLOCK_READ(value_input, sub_group_broadcast(value_offset, i));
@@ -593,7 +593,7 @@ KERNEL(sdpa_opt)(
             // const uint value_scale_comp_offset = GET_DATA_INDEX_6D_SAFE(VALUE_COMPRESSION_SCALE, b_idx, seq_len, 0, 0, 0, 0);
             const uint value_scale_comp_offset = GET_DATA_INDEX_6D_SAFE(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, 0, seq_len, 0);
 #endif
-            // VALUE_COMPRESSION_SCALE_TYPE value_comp_scale = val_scale[value_scale_comp_offset];
+            VALUE_COMPRESSION_SCALE_TYPE value_comp_scale = val_scale[value_scale_comp_offset];
 #endif
 
             OUTPUT_TYPE qk_val[TARGET_SEQ_LEN_BLOCK_SIZE];
@@ -603,7 +603,7 @@ KERNEL(sdpa_opt)(
 
 #if IS_KV_COMPRESSED
             INPUT2_TYPE value_val_compressed = VALUE_BLOCK_READ(value_input, value_offset);
-            VALUE_COMPRESSION_SCALE_TYPE value_val = TO_VALUE_COMPRESSION_SCALE_TYPE(value_val_compressed);
+            VALUE_COMPRESSION_SCALE_TYPE value_val = value_val_compressed * value_comp_scale;
 #else
             INPUT2_TYPE value_val = VALUE_BLOCK_READ(value_input, value_offset);
 #endif
@@ -969,7 +969,7 @@ KERNEL(sdpa_opt)(
                 // const uint key_scale_comp_offset = GET_DATA_INDEX_6D_SAFE(KEY_COMPRESSION_SCALE, b_idx, seq_len + sglid, 0, 0, 0, 0);
                 const uint key_scale_comp_offset = GET_DATA_INDEX_6D_SAFE(KEY_COMPRESSION_SCALE, b_idx, 0, 0, 0, seq_len + sglid, 0);
 #endif
-                // KEY_COMPRESSION_SCALE_TYPE key_comp_scale = key_scale[key_scale_comp_offset];
+                KEY_COMPRESSION_SCALE_TYPE key_comp_scale = key_scale[key_scale_comp_offset];
                 // printf("[0]key_scale_comp_offset=%d, sglid=%d: %f\n", key_scale_comp_offset, sglid, key_comp_scale);
 #endif
 
@@ -992,7 +992,7 @@ KERNEL(sdpa_opt)(
 #else
                         INPUT1_TYPE key_vals_compressed = KEY_BLOCK_READ(key_input, key_offset + key_row_idx * key_pitch + head_idx_index);
 #endif
-                        KEY_COMPRESSION_SCALE_TYPE key_vals = TO_KEY_COMPRESSION_SCALE_TYPE(key_vals_compressed);
+                        KEY_COMPRESSION_SCALE_TYPE key_vals = TO_KEY_COMPRESSION_SCALE_TYPE(key_vals_compressed) * sub_group_broadcast(key_comp_scale, key_row_idx);
 #else
 #ifdef BEAM_TABLE_TYPE
                         INPUT1_TYPE key_vals = KEY_BLOCK_READ(key_input, sub_group_broadcast(key_offset, key_row_idx) + head_idx_index);
@@ -1018,7 +1018,7 @@ KERNEL(sdpa_opt)(
                 // const uint key_scale_comp_offset = GET_DATA_INDEX_6D_SAFE(KEY_COMPRESSION_SCALE, b_idx, seq_len + sglid, 0, 0, 0, 0);
                 const uint key_scale_comp_offset = GET_DATA_INDEX_6D_SAFE(KEY_COMPRESSION_SCALE, b_idx, 0, 0, 0, seq_len + sglid, 0);
 #endif
-                // KEY_COMPRESSION_SCALE_TYPE key_comp_scale = key_scale[key_scale_comp_offset];
+                KEY_COMPRESSION_SCALE_TYPE key_comp_scale = key_scale[key_scale_comp_offset];
                 // printf("[1]key_scale_comp_offset=%d, sglid=%d: %f\n", key_scale_comp_offset, sglid, key_comp_scale);
 #endif
                 __attribute__((opencl_unroll_hint(1)))
@@ -1047,7 +1047,7 @@ KERNEL(sdpa_opt)(
     #else
                         key_vec[key_row_idx] = TO_KEY_COMPRESSION_SCALE_TYPE(KEY_BLOCK_READ(key_input, key_offset + key_row_idx * key_pitch + head_idx_index));
     #endif
-                        // key_vec[key_row_idx] *= sub_group_broadcast(key_comp_scale, key_row_idx);
+                        key_vec[key_row_idx] *= sub_group_broadcast(key_comp_scale, key_row_idx);
     #else
     #ifdef BEAM_TABLE_TYPE
                         key_vec[key_row_idx] = KEY_BLOCK_READ(key_input, sub_group_broadcast(key_offset, key_row_idx) + head_idx_index);
@@ -1072,7 +1072,7 @@ KERNEL(sdpa_opt)(
                             // printf("_%d %d %d. Loads key [%d] = %f\n", get_global_id(0), get_global_id(1), get_global_id(2), key_offset + key_row_idx * key_pitch + head_idx_index, key_vals);
                         }
     #endif
-                        // key_vals *= sub_group_broadcast(key_comp_scale, key_row_idx);
+                        key_vals *= sub_group_broadcast(key_comp_scale, key_row_idx);
     #else
     #ifdef BEAM_TABLE_TYPE
                         INPUT1_TYPE key_vals = 0;
@@ -1236,7 +1236,7 @@ KERNEL(sdpa_opt)(
                     // const uint value_scale_comp_offset = GET_DATA_INDEX_6D_SAFE(VALUE_COMPRESSION_SCALE, b_idx, start_partition_idx + (seq_len) + sglid, 0, 0, 0, 0);
                     const uint value_scale_comp_offset = GET_DATA_INDEX_6D_SAFE(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, 0, start_partition_idx + (seq_len) + sglid, 0);
 #endif
-                    // VALUE_COMPRESSION_SCALE_TYPE value_comp_scale = val_scale[value_scale_comp_offset];
+                    VALUE_COMPRESSION_SCALE_TYPE value_comp_scale = val_scale[value_scale_comp_offset];
                     // printf("[0]value_scale_comp_offset=%d, sglid=%d: %f\n", value_scale_comp_offset, sglid, value_comp_scale);
 #endif
 
@@ -1250,7 +1250,7 @@ KERNEL(sdpa_opt)(
 #endif
 
 #if IS_KV_COMPRESSED
-                        // value_val *= sub_group_broadcast(value_comp_scale, i);
+                        value_val *= sub_group_broadcast(value_comp_scale, i);
 #endif
                         unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
                             acc_output_res[seq_idx] = mad(sub_group_broadcast(qk_val[seq_idx], i), value_val, acc_output_res[seq_idx]);
@@ -1302,7 +1302,7 @@ KERNEL(sdpa_opt)(
                     // const uint value_scale_comp_offset = GET_DATA_INDEX_6D_SAFE(VALUE_COMPRESSION_SCALE, b_idx, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, 0, 0, 0, 0);
                     const uint value_scale_comp_offset = GET_DATA_INDEX_6D_SAFE(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, 0, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, 0);
 #endif
-                    // VALUE_COMPRESSION_SCALE_TYPE value_comp_scale = val_scale[value_scale_comp_offset];
+                    VALUE_COMPRESSION_SCALE_TYPE value_comp_scale = val_scale[value_scale_comp_offset];
                     // printf("[1]value_scale_comp_offset=%d, sglid=%d: %f\n", value_scale_comp_offset, sglid, value_comp_scale);
 #endif
 
@@ -1321,7 +1321,7 @@ KERNEL(sdpa_opt)(
 #endif
 
 #if IS_KV_COMPRESSED
-                        // value_val *= sub_group_broadcast(value_comp_scale, i);
+                        value_val *= sub_group_broadcast(value_comp_scale, i);
 #endif
 
                         unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
@@ -1377,7 +1377,7 @@ KERNEL(sdpa_opt)(
                     // const uint value_scale_comp_offset = GET_DATA_INDEX_6D_SAFE(VALUE_COMPRESSION_SCALE, b_idx, start_partition_idx + seq_len_leftovers_start + sglid, 0, 0, 0, 0);
                     const uint value_scale_comp_offset = GET_DATA_INDEX_6D_SAFE(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, 0, start_partition_idx + seq_len_leftovers_start + sglid, 0);
 #endif
-                    // VALUE_COMPRESSION_SCALE_TYPE value_comp_scale = val_scale[value_scale_comp_offset];
+                    VALUE_COMPRESSION_SCALE_TYPE value_comp_scale = val_scale[value_scale_comp_offset];
                     // printf("[2]value_scale_comp_offset=%d, sglid=%d: %f\n", value_scale_comp_offset, sglid, value_comp_scale);
 #endif
 
@@ -1391,7 +1391,7 @@ KERNEL(sdpa_opt)(
 #endif
 
 #if IS_KV_COMPRESSED
-                        // value_val *= sub_group_broadcast(value_comp_scale, seq_len_idx);
+                        value_val *= sub_group_broadcast(value_comp_scale, seq_len_idx);
 #endif
 
                         for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
