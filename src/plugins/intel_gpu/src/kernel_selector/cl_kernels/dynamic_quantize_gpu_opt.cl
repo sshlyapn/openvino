@@ -16,7 +16,7 @@
 #define AS_INPUT_TYPE_N(x) AS_TYPE_N(INPUT0_TYPE, VEC_SIZE, x)
 
 REQD_SUB_GROUP_SIZE(SIMD)
-KERNEL(dynamic_quantize_gpu_opt)(
+KERNEL(dynamic_quantize_gpu_opt_generic)(
     OPTIONAL_SHAPE_INFO_ARG
     const __global INPUT0_TYPE* input,
     __global OUTPUT_TYPE* output,

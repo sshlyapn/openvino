@@ -30,16 +30,16 @@ std::vector<layout> dynamic_quantize_inst::__calc_output_layouts(const layout &a
         act_layout.get<ShapeType>(),
     };
 
-    auto print_arr = [&](const std::vector<uint64_t>& vec, size_t max_len, std::string name) {
-        std::stringstream ss;
-        for (size_t i = 0; i < std::min(max_len, vec.size()); i++) {
-            ss << vec[i] << ", ";
-        }
-        std::cout << "Array " << name << " for calc_shape (len=" << vec.size() << ") content: " << ss.str() << "\n";
-    };
+    // auto print_arr = [&](const std::vector<uint64_t>& vec, size_t max_len, std::string name) {
+    //     std::stringstream ss;
+    //     for (size_t i = 0; i < std::min(max_len, vec.size()); i++) {
+    //         ss << vec[i] << ", ";
+    //     }
+    //     std::cout << "Array " << name << " for calc_shape (len=" << vec.size() << ") content: " << ss.str() << "\n";
+    // };
 
-    print_arr(scales_output_order, scales_output_order.size(), "scales_output_order");
-    print_arr(group_sizes, group_sizes.size(), "group_sizes");
+    // print_arr(scales_output_order, scales_output_order.size(), "scales_output_order");
+    // print_arr(group_sizes, group_sizes.size(), "group_sizes");
 
     auto output_shapes = ov::op::internal::DynamicQuantize::shape_infer(&op, input_shapes, group_sizes, scales_output_order);
     GPU_DEBUG_TRACE_DETAIL << "shape infer dynamic" << output_shapes[0] << " " << output_shapes[1] << "\n";
