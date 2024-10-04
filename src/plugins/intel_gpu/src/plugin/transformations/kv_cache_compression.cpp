@@ -102,7 +102,6 @@ KVCacheCompressionMatcher::KVCacheCompressionMatcher() {
         // || org_sdpa->get_friendly_name().find(".h.4.") != std::string::npos
         // || org_sdpa->get_friendly_name().find(".h.5.") != std::string::npos
             ) {
-            std::cout << "pattern matched! " << org_sdpa->get_friendly_name() << std::endl;
             auto rank = key_node->get_input_partial_shape(0).size();
             auto get_shape_group_sizes = [&](const std::vector<int64_t>& transposed_order) {
                 std::vector<uint64_t> shape_group_size(rank, 1);
@@ -137,19 +136,21 @@ KVCacheCompressionMatcher::KVCacheCompressionMatcher() {
             auto value_variable = value_past_node->get_variable();
             value_variable->update_data_type(element::i8);
 
-            auto print_arr = [&](const std::vector<uint64_t>& vec, size_t max_len, std::string name) {
+            auto print_arr = [&](const std::vector<uint64_t>& vec, size_t max_len) {
                 std::stringstream ss;
                 for (size_t i = 0; i < std::min(max_len, vec.size()); i++) {
                     ss << vec[i] << ", ";
                 }
-                std::cout << "Array " << name << " (len=" << vec.size() << ") content: " << ss.str() << "\n";
+
+                return ss.str();
             };
 
             auto shape_group_size = get_shape_group_sizes(org_sdpa->get_input1_transpose_order());
-            print_arr(shape_group_size, shape_group_size.size(), "shape_group_size");
-
             auto scales_output_order = get_scales_output_order(org_sdpa->get_input1_transpose_order());
-            print_arr(scales_output_order, scales_output_order.size(), "scales_output_order");
+
+            std::cout << "pattern matched! " << org_sdpa->get_friendly_name() << "; "
+                      << "groups: " << print_arr(shape_group_size, shape_group_size.size()) << "; "
+                      << "scales_order: " << print_arr(scales_output_order, scales_output_order.size()) << std::endl;
 
             auto replace_read_value_node = [](const std::shared_ptr<Node>& target,
                                               const std::shared_ptr<Node>& replacement) {
@@ -197,7 +198,7 @@ KVCacheCompressionMatcher::KVCacheCompressionMatcher() {
                 auto k_init_dyn_quan = std::make_shared<ov::op::internal::DynamicQuantize>(key_past_node->get_input_node_shared_ptr(0), shape_group_size, element::f16, scales_output_order);
                 auto new_key_past_node = std::make_shared<ov::intel_gpu::op::CompressedReadValue>(k_init_dyn_quan->output(0), k_init_dyn_quan->output(1), key_past_node->get_variable());
                 k_init_dyn_quan->set_friendly_name(key_node->get_friendly_name() + "_init_dyn_quan");
-                std::cout << "Key outputs: " << key_past_node->get_output_size() << " " << new_key_past_node->get_output_size() << "\n";
+                // std::cout << "Key outputs: " << key_past_node->get_output_size() << " " << new_key_past_node->get_output_size() << "\n";
                 ov::copy_runtime_info(key_past_node, new_key_past_node);
 
                 // TODO: Old ReadValue node is kept in the graph and goes to ShapeOf - this needs to be fixed
@@ -211,7 +212,7 @@ KVCacheCompressionMatcher::KVCacheCompressionMatcher() {
                 auto v_init_dyn_quan = std::make_shared<ov::op::internal::DynamicQuantize>(value_past_node->get_input_node_shared_ptr(0), shape_group_size, element::f16, scales_output_order);
                 auto new_value_past_node = std::make_shared<ov::intel_gpu::op::CompressedReadValue>(v_init_dyn_quan->output(0), v_init_dyn_quan->output(1), value_past_node->get_variable());
 
-                std::cout << "Value outputs: " << value_past_node->get_output_size() << " " << new_value_past_node->get_output_size() << "\n";
+                // std::cout << "Value outputs: " << value_past_node->get_output_size() << " " << new_value_past_node->get_output_size() << "\n";
 
                 v_init_dyn_quan->set_friendly_name(value_node->get_friendly_name() + "_init_dyn_quan");
                 ov::copy_runtime_info(value_past_node, new_value_past_node);
@@ -267,18 +268,18 @@ KVCacheCompressionMatcher::KVCacheCompressionMatcher() {
             auto input2_transpose_order = org_sdpa->get_input2_transpose_order();
             auto output_transpose_order = org_sdpa->get_output_transpose_order();
 
-            auto print_arr2 = [&](const std::vector<int64_t>& vec, size_t max_len, std::string name) {
-                std::stringstream ss;
-                for (size_t i = 0; i < std::min(max_len, vec.size()); i++) {
-                    ss << vec[i] << ", ";
-                }
-                std::cout << "-> Array " << name << " (len=" << vec.size() << ") content: " << ss.str() << "\n";
-            };
+            // auto print_arr2 = [&](const std::vector<int64_t>& vec, size_t max_len, std::string name) {
+            //     std::stringstream ss;
+            //     for (size_t i = 0; i < std::min(max_len, vec.size()); i++) {
+            //         ss << vec[i] << ", ";
+            //     }
+            //     std::cout << "-> Array " << name << " (len=" << vec.size() << ") content: " << ss.str() << "\n";
+            // };
 
-            print_arr2(input0_transpose_order, input0_transpose_order.size(), "input0_transpose_order");
-            print_arr2(input1_transpose_order, input1_transpose_order.size(), "input1_transpose_order");
-            print_arr2(input2_transpose_order, input2_transpose_order.size(), "input2_transpose_order");
-            print_arr2(output_transpose_order, output_transpose_order.size(), "output_transpose_order");
+            // print_arr2(input0_transpose_order, input0_transpose_order.size(), "input0_transpose_order");
+            // print_arr2(input1_transpose_order, input1_transpose_order.size(), "input1_transpose_order");
+            // print_arr2(input2_transpose_order, input2_transpose_order.size(), "input2_transpose_order");
+            // print_arr2(output_transpose_order, output_transpose_order.size(), "output_transpose_order");
 
 
             auto new_sdpa = std::make_shared<op::IndirectSDPA>(sdpa_inputs,
