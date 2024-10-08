@@ -194,10 +194,10 @@ CommonDispatchData DynamicQuantizeKernelOptGeneric::SetDefault(const dynamic_qua
 
     const auto total_batched_elements = get_elements_number_per_batch(params);
     // const auto total_grouped_elements = get_elements_number_per_group(params);
-    const auto per_iter_elements_number = get_per_iter_elements_number(params);
+    // const auto per_iter_elements_number = get_per_iter_elements_number(params);
 
-    dispatchData.gws = {total_batched_elements, per_iter_elements_number, 1};
-    dispatchData.lws = {1, per_iter_elements_number, 1};
+    dispatchData.gws = {total_batched_elements, 32 * 16, 1};
+    dispatchData.lws = {1, 32 * 16, 1};
 
     return dispatchData;
 }

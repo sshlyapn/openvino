@@ -229,13 +229,13 @@ CommonDispatchData SDPAKernelOpt::SetDefault(const sdpa_params& params, size_t k
         const size_t heads_num = output.f_dim().v;
         const size_t target_seq_len = dims_q.y_dim().v;
         const size_t head_size = static_cast<size_t>(params.conf.head_size);
-        const size_t num_of_partitions = get_partitions_num(params, kernel_idx);
+        // const size_t num_of_partitions = get_partitions_num(params, kernel_idx);
         const size_t target_seq_len_block_size = kernel_idx == 1 ? get_target_seq_len_block_size() : 1;
 
         if (kernel_idx == KernelsTypes::SINGLE_TOKEN) {
             dispatch_data.gws = { batch_size * heads_num,
                                   CeilDiv(target_seq_len, target_seq_len_block_size),
-                                  head_size * num_of_partitions };
+                                  head_size };
             dispatch_data.lws = { 1, 1, head_size };
         } else if (kernel_idx == KernelsTypes::MULTI_TOKENS) {
             const size_t sg_num_scale = get_sg_number_scale_factor(params, kernel_idx);
@@ -391,7 +391,7 @@ void SDPAKernelOpt::GetUpdateDispatchDataFunc(KernelData& kd) const {
             auto dispatch_data3 = SetDefault(prim_params, KernelsTypes::FINALIZATION);
             kernel_data.kernels[KernelsTypes::FINALIZATION].params.workGroups.global = dispatch_data3.gws;
             kernel_data.kernels[KernelsTypes::FINALIZATION].params.workGroups.local = dispatch_data3.lws;
-            kernel_data.kernels[KernelsTypes::FINALIZATION].skip_execution = is_prefill || num_of_partitions == 1;
+            kernel_data.kernels[KernelsTypes::FINALIZATION].skip_execution = is_prefill || num_of_partitions == 1 || true;
 
             kernel_data.kernels[KernelsTypes::FINALIZATION].params.scalars.clear();
             kernel_data.kernels[KernelsTypes::FINALIZATION].params.scalars.push_back(num_of_partitions_scalar);
