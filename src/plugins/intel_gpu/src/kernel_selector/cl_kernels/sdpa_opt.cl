@@ -126,7 +126,7 @@ inline uint FUNC(get_bt_index_value)(OPTIONAL_SHAPE_INFO_ARG uint b, uint f, uin
 /* This version is used for 2nd token */
 
 REQD_SUB_GROUP_SIZE(SUBGROUP_SIZE)
-__attribute__((reqd_work_group_size(1, 1, HEAD_SIZE)))
+__attribute__((reqd_work_group_size(1, 1, HEAD_SIZE * SG_SCALE_FACTOR)))
 KERNEL(sdpa_opt)(
     OPTIONAL_SHAPE_INFO_ARG
     const __global INPUT0_TYPE* query_input,
@@ -156,7 +156,14 @@ KERNEL(sdpa_opt)(
     const uint b1_idx = batch_idx % NUM_HEADS; /* HEADS_NUM dim */
     const uint target_seq_idx = get_global_id(1);
     const uint lid = get_local_id(2);
+
+    #if SG_SCALE_FACTOR == 2
+    const uint head_size_idx = lid % HEAD_SIZE;
+    #elif SG_SCALE_FACTOR == 1
     const uint head_size_idx = lid;
+    #else
+    #error "Unsupported scale factor"
+    #endif
 
     const uint sgid = get_sub_group_id();
     const uint sglid = get_sub_group_local_id();
@@ -206,13 +213,19 @@ KERNEL(sdpa_opt)(
                 uint query_offset = INPUT0_GET_INDEX(b0_idx, b1_idx, target_seq_idx, (sgid * SUBGROUP_SIZE));
                 const uint query_pitch = QUERY_STEP_LOCAL;
 #endif
-                for (uint seq_idx = 0; seq_idx < seq_idx_end; seq_idx++) {
-                    #define QUERY_BLOCK_SIZE 1
+    #if SG_SCALE_FACTOR == 2
+                if (sgid < HEAD_SIZE / SUBGROUP_SIZE) {
+    #else
+                {
+    #endif
+                    for (uint seq_idx = 0; seq_idx < seq_idx_end; seq_idx++) {
+                        #define QUERY_BLOCK_SIZE 1
 
-                    INPUT0_TYPE val = BLOCK_READN(INPUT0_TYPE, QUERY_BLOCK_SIZE, query_input, query_offset);
-                    query_local[query_local_offset] = val * scale_val;
-                    query_local_offset += QUERY_STEP_LOCAL;
-                    query_offset += query_pitch;
+                        INPUT0_TYPE val = BLOCK_READN(INPUT0_TYPE, QUERY_BLOCK_SIZE, query_input, query_offset);
+                        query_local[query_local_offset] = val * scale_val;
+                        query_local_offset += QUERY_STEP_LOCAL;
+                        query_offset += query_pitch;
+                    }
                 }
                 #undef QUERY_BLOCK_SIZE
                 #undef QUERY_STEP
@@ -223,7 +236,7 @@ KERNEL(sdpa_opt)(
             // Main Gemm1 calculation loop
             // Each SG performs element-wise multiplications of Q[HEAD_SIZE]xK[HEAD_SIZE] values
             // HEAD_SIZE / SUBGROUPS_PER_WG times in the loop and saves the result to the qk_local SLM buffer
-            for (uint seq_len = sgid; seq_len < partition_seq_len; seq_len += (HEAD_SIZE / SUBGROUP_SIZE)) {
+            for (uint seq_len = sgid; seq_len < partition_seq_len; seq_len += (HEAD_SIZE / SUBGROUP_SIZE) * SG_SCALE_FACTOR) {
 #ifdef INPUT1_DIMS_ORDER
 #ifdef BEAM_TABLE_TYPE
                 const uint b_idx = beam_table[FUNC_CALL(get_bt_index_key)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, start_partition_idx + seq_len, 0)];
@@ -403,7 +416,7 @@ KERNEL(sdpa_opt)(
                 const uint seq_idx_end = 1;
                 for (uint seq_idx = 0; seq_idx < seq_idx_end; seq_idx++) {
                     // Iterate over all values QK values in SLM and apply scale and attention mask
-                    for (uint seq_len = sgid * SUBGROUP_SIZE + sglid; seq_len < partition_seq_len; seq_len += (HEAD_SIZE)) {
+                    for (uint seq_len = sgid * SUBGROUP_SIZE + sglid; seq_len < partition_seq_len; seq_len += (HEAD_SIZE * SG_SCALE_FACTOR)) {
                         // Read value from SLM and apply scale
                         qk_val[seq_idx] = qk_local[seq_idx * SEQ_LEN_PARTITION_SIZE + seq_len];
 
@@ -446,6 +459,10 @@ KERNEL(sdpa_opt)(
             for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
                 qk_max[seq_idx] = SOFTMAX_ACCUMULATOR_VAL_MIN;
 
+                #if SUBGROUPS_PER_WG > SUBGROUP_SIZE
+                #error "Number of subgroups per work group should be less than subgroup_size
+                #endif
+
                 if (sglid < SUBGROUPS_PER_WG)
                     qk_max[seq_idx] = qk_max_vals[seq_idx * SUBGROUPS_PER_WG + sglid];
 
@@ -456,7 +473,7 @@ KERNEL(sdpa_opt)(
             SOFTMAX_ACCUMULATOR_TYPE exp_sum[TARGET_SEQ_LEN_BLOCK_SIZE] = {SOFTMAX_ACCUMULATOR_VAL_ZERO};
             const uint qk_num_per_wi = CEIL_DIV(partition_seq_len, SUBGROUPS_PER_WG * SUBGROUP_SIZE);
             for (uint qk_idx = 0; qk_idx < qk_num_per_wi; qk_idx++) {
-                const uint local_data_idx = qk_idx * (SUBGROUPS_PER_WG * SUBGROUP_SIZE) + head_size_idx;
+                const uint local_data_idx = qk_idx * (SUBGROUPS_PER_WG * SUBGROUP_SIZE) + lid;
                 if (local_data_idx < partition_seq_len) {
                     for (uint seq_idx = 0; seq_idx < seq_idx_end; seq_idx++) {
                         SOFTMAX_ACCUMULATOR_TYPE qk_new = native_exp(TO_SOFTMAX_ACCUMULATOR_TYPE(qk_local[seq_idx * SEQ_LEN_PARTITION_SIZE + local_data_idx]) - qk_max[seq_idx]);
@@ -479,6 +496,10 @@ KERNEL(sdpa_opt)(
             unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
                 exp_sum[seq_idx] = SOFTMAX_ACCUMULATOR_VAL_ZERO;
 
+                #if SUBGROUPS_PER_WG > SUBGROUP_SIZE
+                #error "Number of subgroups per work group should be less than subgroup_size
+                #endif
+
                 if (sglid < SUBGROUPS_PER_WG)
                     exp_sum[seq_idx] = qk_sum_vals[seq_idx * SUBGROUPS_PER_WG + sglid];
 
@@ -488,7 +509,7 @@ KERNEL(sdpa_opt)(
 
             // const SOFTMAX_ACCUMULATOR_TYPE inv_exp_sum = SOFTMAX_ACCUMULATOR_VAL_ONE / exp_sum[seq_idx];
             for (uint qk_idx = 0; qk_idx < qk_num_per_wi; qk_idx++) {
-                const uint local_data_idx = qk_idx * (SUBGROUPS_PER_WG * SUBGROUP_SIZE) + sgid * SUBGROUP_SIZE + sglid;
+                const uint local_data_idx = qk_idx * (SUBGROUPS_PER_WG * SUBGROUP_SIZE) + lid;
                 if (local_data_idx < partition_seq_len) {
                     for (uint seq_idx = 0; seq_idx < seq_idx_end; seq_idx++) {
                         SOFTMAX_ACCUMULATOR_TYPE qk_new = TO_SOFTMAX_ACCUMULATOR_TYPE(qk_local[seq_idx * SEQ_LEN_PARTITION_SIZE + local_data_idx]) / exp_sum[seq_idx];
@@ -502,7 +523,7 @@ KERNEL(sdpa_opt)(
             {
                 // If the number of partitions is greater than 1, save exm_sums and max_logits to the temporary buffers
                 // Use single WI in the WG, since all the WIs have the same value
-                if (num_of_partitions > 1 && head_size_idx == 0) {
+                if (num_of_partitions > 1 && lid == 0) {
                     for (uint seq_idx = 0; seq_idx < seq_idx_end; seq_idx++) {
                         const uint exp_sums_offset = b0_idx * (NUM_HEADS * TARGET_SEQ_LEN * num_of_partitions) +
                                                      b1_idx * (TARGET_SEQ_LEN * num_of_partitions) +
@@ -531,8 +552,18 @@ KERNEL(sdpa_opt)(
 #endif
 #endif
 
-        for (uint seq_len = 0; seq_len < partition_seq_len / SUBGROUP_SIZE; seq_len++) {
+#if SG_SCALE_FACTOR > 1
+        // SUBGROUPS_PER_WG (HEAD_SIZE * SG_SCALE_FACTOR / SUBGROUP_SIZE)
+        const uint seq_len_start = (sgid / (HEAD_SIZE / SUBGROUP_SIZE)) * (SEQ_LEN_PARTITION_SIZE / SG_SCALE_FACTOR / SUBGROUP_SIZE);
+        const uint seq_len_end = min(seq_len_start + (SEQ_LEN_PARTITION_SIZE / SG_SCALE_FACTOR / SUBGROUP_SIZE), partition_seq_len / SUBGROUP_SIZE);
+#else
+        const uint seq_len_start = 0;
+        const uint seq_len_end = partition_seq_len / SUBGROUP_SIZE;
+#endif
+
+        for (uint seq_len = seq_len_start; seq_len < seq_len_end; seq_len++) {
 #ifdef BEAM_TABLE_TYPE
+            // TODO: Handle beam search
             uint b_idx = beam_table[FUNC_CALL(get_bt_index_value)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, sgid * SUBGROUP_SIZE)];
             uint value_offset = FUNC_CALL(get_input2_index)(OPTIONAL_SHAPE_INFO_TENSOR b_idx, b1_idx, 0, 0, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, sgid * SUBGROUP_SIZE);
 #else
@@ -597,8 +628,12 @@ KERNEL(sdpa_opt)(
             }
         }
 
-        const uint seq_len_leftovers_start = (partition_seq_len / SUBGROUP_SIZE) * SUBGROUP_SIZE;
-        for (uint seq_len = seq_len_leftovers_start; seq_len < partition_seq_len; seq_len++) {
+
+#if SG_SCALE_FACTOR > 1
+        if (sgid >= HEAD_SIZE / SUBGROUP_SIZE) {
+#endif
+
+        for (uint seq_len = (partition_seq_len / SUBGROUP_SIZE) * SUBGROUP_SIZE; seq_len < partition_seq_len; seq_len++) {
 #ifdef INPUT2_DIMS_ORDER
 #ifdef BEAM_TABLE_TYPE
             const uint b_idx = beam_table[FUNC_CALL(get_bt_index_value)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, start_partition_idx + seq_len, head_size_idx)];
@@ -645,8 +680,27 @@ KERNEL(sdpa_opt)(
             }
         }
 
+#if SG_SCALE_FACTOR > 1
+        } // if (sgid >= HEAD_SIZE / SUBGROUP_SIZE)
+#endif
+
+#if SG_SCALE_FACTOR > 1
+        if ((partition_seq_len > (SEQ_LEN_PARTITION_SIZE / SG_SCALE_FACTOR)) || (partition_seq_len % SUBGROUP_SIZE != 0)) {
+            if (sgid >= HEAD_SIZE / SUBGROUP_SIZE) {
+                query_local[head_size_idx] = acc[0];
+            }
+            barrier(CLK_LOCAL_MEM_FENCE);
+            if (sgid < HEAD_SIZE / SUBGROUP_SIZE) {
+                acc[0] += query_local[head_size_idx];
+            }
+        }
+#endif
+
         // If the number of partitions is greater than 1, save results to the temporary buffer;
         // otherwise, save results directly to the main output.
+#if SG_SCALE_FACTOR > 1
+        if (sgid < HEAD_SIZE / SUBGROUP_SIZE) {
+#endif
         if (num_of_partitions > 1) {
             const uint seq_idx_end = 1;
             for (uint seq_idx = 0; seq_idx < seq_idx_end; seq_idx++) {
@@ -666,6 +720,9 @@ KERNEL(sdpa_opt)(
                 output[output_offset] = acc[seq_idx];
             }
         }
+#if SG_SCALE_FACTOR > 1
+        } // if (sgid < HEAD_SIZE / SUBGROUP_SIZE) {
+#endif
     } // Gemm2 calculation end
 }
 

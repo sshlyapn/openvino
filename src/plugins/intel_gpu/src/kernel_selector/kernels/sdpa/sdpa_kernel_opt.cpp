@@ -27,6 +27,18 @@ static size_t get_sg_number_scale_factor(const sdpa_params& sdpa_params, size_t 
         if (sdpa_params.conf.head_size * optimal_scale_factor <= sdpa_params.engineInfo.maxWorkGroupSize) {
             return optimal_scale_factor;
         }
+    } else if (kernel_type == KernelsTypes::SINGLE_TOKEN) {
+        int USE_SCALE_FACTOR = 0;
+        if (const auto env_var = std::getenv("USE_SCALE_FACTOR")) {
+            std::istringstream ss(env_var);
+            ss >> USE_SCALE_FACTOR;
+        }
+        if (USE_SCALE_FACTOR) {
+            const size_t optimal_scale_factor = 2;
+            if (sdpa_params.conf.head_size * optimal_scale_factor <= sdpa_params.engineInfo.maxWorkGroupSize) {
+                return optimal_scale_factor;
+            }
+        }
     }
 
     return 1;
@@ -233,10 +245,11 @@ CommonDispatchData SDPAKernelOpt::SetDefault(const sdpa_params& params, size_t k
         const size_t target_seq_len_block_size = kernel_idx == 1 ? get_target_seq_len_block_size() : 1;
 
         if (kernel_idx == KernelsTypes::SINGLE_TOKEN) {
+            const size_t sg_num_scale = get_sg_number_scale_factor(params, kernel_idx);
             dispatch_data.gws = { batch_size * heads_num,
                                   CeilDiv(target_seq_len, target_seq_len_block_size),
-                                  head_size * num_of_partitions };
-            dispatch_data.lws = { 1, 1, head_size };
+                                  head_size * num_of_partitions * sg_num_scale };
+            dispatch_data.lws = { 1, 1, head_size * sg_num_scale };
         } else if (kernel_idx == KernelsTypes::MULTI_TOKENS) {
             const size_t sg_num_scale = get_sg_number_scale_factor(params, kernel_idx);
             dispatch_data.gws = { batch_size * heads_num,
