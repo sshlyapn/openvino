@@ -7,7 +7,7 @@
 #include <string>
 
 
-static constexpr size_t simd = 16;
+static constexpr size_t subgroup_size = 16;
 
 namespace kernel_selector {
 static Tensor::NDims get_normalized_dims(const DataTensor& tensor) {
@@ -145,12 +145,18 @@ JitConstants DynamicQuantizeKernelOptGeneric::GetJitConstants(const dynamic_quan
         else
             grouped_dims.push_back(default_dims[i]);
     }
+
+    const auto& input_dims = get_normalized_dims(params.inputs[0]);
     const auto total_grouped_elements = get_elements_number_per_group(params);
     const auto per_iter_elements_number = get_per_iter_elements_number(params);
+    const auto total_subgroups_number = total_grouped_elements / input_dims.back().v;
+
+    // drop the last dimensions, since it will be processed inside kernel
+    grouped_dims.pop_back();
 
     jit.AddConstant(MakeJitConstant("DECLARE_BATCHED_DIMS_INDEXES(data_idx)", generate_dims_indexes_calculation(batch_dims)));
     jit.AddConstant(MakeJitConstant("DECLARE_GROUPED_DIMS_INDEXES(data_idx)", generate_dims_indexes_calculation(grouped_dims)));
-    jit.AddConstant(MakeJitConstant("LWS_SIZE", per_iter_elements_number));
+    jit.AddConstant(MakeJitConstant("SUBGROUPS_NUMBER", total_subgroups_number));
 
     const auto iterations_number = total_grouped_elements / per_iter_elements_number;
 
@@ -192,12 +198,16 @@ JitConstants DynamicQuantizeKernelOptGeneric::GetJitConstants(const dynamic_quan
 CommonDispatchData DynamicQuantizeKernelOptGeneric::SetDefault(const dynamic_quantize_params& params) const {
     CommonDispatchData dispatchData;
 
+    const auto& input_dims = get_normalized_dims(params.inputs[0]);
     const auto total_batched_elements = get_elements_number_per_batch(params);
-    // const auto total_grouped_elements = get_elements_number_per_group(params);
+    const auto total_grouped_elements = get_elements_number_per_group(params);
+    const auto total_subgroups_number = total_grouped_elements / input_dims.back().v;
     // const auto per_iter_elements_number = get_per_iter_elements_number(params);
 
-    dispatchData.gws = {total_batched_elements, 32 * 16, 1};
-    dispatchData.lws = {1, 32 * 16, 1};
+    // TODO: add check that input_dims.back().v / SUBGROUP_SIZE is enough to allocate private array inside kernel
+
+    dispatchData.gws = {subgroup_size, total_subgroups_number, total_batched_elements};
+    dispatchData.lws = {subgroup_size, total_subgroups_number, 1};
 
     return dispatchData;
 }
@@ -273,6 +283,10 @@ bool DynamicQuantizeKernelOptGeneric::Validate(const Params& params) const {
             return false;
         }
     }
+
+    // last dimension should be static, reduced by group_sizes configuration and divisible by 16
+    if (group_sizes.back() == 1 || input_dims.back().is_dynamic || input_dims.back().v % subgroup_size != 0)
+        return false;
 
     if (dq_params.inputs[0].GetPaddedVal() != 0 || dq_params.outputs[0].GetPaddedVal() != 0)
         return false;

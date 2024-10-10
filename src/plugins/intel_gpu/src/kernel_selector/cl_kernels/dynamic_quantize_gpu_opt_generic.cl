@@ -35,33 +35,33 @@ inline uint FUNC(get_scales_offset)(OPTIONAL_SHAPE_INFO_ARG uint b, uint f, uint
 }
 
 #define SUBGROUP_SIZE 16
-#define HEAD_SIZE 128
-#define NUM_HEADS 32
+#define INNERMOST_DIM_VALUE INPUT0_SIZE_X
 #define INPUT_BLOCK_READ(ptr, offset) BLOCK_READN(INPUT0_TYPE, 1, ptr, offset)
 #define OUTPUT_BLOCK_WRITE(ptr, offset, val) BLOCK_WRITEN(OUTPUT_TYPE, 1, ptr, offset, val)
 
-__attribute__((reqd_work_group_size(1, NUM_HEADS * SUBGROUP_SIZE, 1)))
+__attribute__((reqd_work_group_size(SUBGROUP_SIZE, SUBGROUPS_NUMBER, 1)))
 REQD_SUB_GROUP_SIZE(SUBGROUP_SIZE)
-KERNEL(dynamic_quantize_gpu_opt)(
+KERNEL(dynamic_quantize_gpu_opt_generic)(
     OPTIONAL_SHAPE_INFO_ARG
     const __global INPUT0_TYPE* input,
     __global OUTPUT_TYPE* output,
     __global OUTPUT1_TYPE* output_scale)
 {
-    const uint batch_indexes = get_global_id(0);
-    const uint head_idx = get_global_id(1) / SUBGROUP_SIZE;
     const uint sglid = get_sub_group_local_id();
-    // const uint data_indexes = get_global_id(1);
+    const uint grouped_indexes = get_global_id(1);
+    const uint batch_indexes = get_global_id(2);
 
     DECLARE_BATCHED_DIMS_INDEXES(batch_indexes);
-    const uint f = head_idx;
+    DECLARE_GROUPED_DIMS_INDEXES(grouped_indexes);
+
+    // the innermost dimension is always handled in the loop inside the kernel
     const uint x = 0;
 
     half max_value = 0.0001h;
-    half val[HEAD_SIZE / SUBGROUP_SIZE];
+    half val[INNERMOST_DIM_VALUE / SUBGROUP_SIZE];
 
     const uint data_offset = INPUT0_GET_INDEX(b, f, y, x);
-    unroll_for (uint i = 0; i < HEAD_SIZE / SUBGROUP_SIZE; i++) {
+    unroll_for (uint i = 0; i < INNERMOST_DIM_VALUE / SUBGROUP_SIZE; i++) {
         // val[i] = input[data_offset + i * SUBGROUP_SIZE + sglid];
         val[i] = INPUT_BLOCK_READ(input, data_offset + i * SUBGROUP_SIZE);
         max_value = fmax(max_value, fabs(val[i]));
@@ -71,7 +71,7 @@ KERNEL(dynamic_quantize_gpu_opt)(
 
     half scale = 127.0h / max_value;
 
-    unroll_for (uint i = 0; i < HEAD_SIZE / SUBGROUP_SIZE; i++) {
+    unroll_for (uint i = 0; i < INNERMOST_DIM_VALUE / SUBGROUP_SIZE; i++) {
         OUTPUT_BLOCK_WRITE(output, data_offset + i * SUBGROUP_SIZE, convert_char(val[i] * scale));
         // output[data_offset + i * SUBGROUP_SIZE + sglid] = convert_char(val[i] * scale);
     }
@@ -82,6 +82,6 @@ KERNEL(dynamic_quantize_gpu_opt)(
     const uint scale_idx = OUTPUT1_GET_INDEX_SAFE(b, f, y, x);
 #endif
 
-    if (get_global_id(1) == 0 && get_global_id(2) == 0)
+    if (grouped_indexes == 0 && sglid == 0)
         output_scale[scale_idx] = 1.0h / scale;
 }
