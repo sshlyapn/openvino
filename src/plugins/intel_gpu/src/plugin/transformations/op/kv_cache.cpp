@@ -8,6 +8,7 @@
 #include "openvino/core/partial_shape.hpp"
 #include "openvino/core/validation_util.hpp"
 #include "openvino/op/concat.hpp"
+#include "ov_ops/dynamic_quantize.hpp"
 #include "intel_gpu/runtime/debug_configuration.hpp"
 
 namespace ov {
@@ -52,17 +53,23 @@ KVCache::KVCache(const Output<Node>& past,
                  const Output<Node>& new_token_data,
                  const Output<Node>& beam_idx,
                  const Output<Node>& past_scale,
-                 const Output<Node>& new_token_scale,
                  const std::shared_ptr<ov::op::util::Variable>& past_variable,
                  int64_t concat_axis,
                  int64_t gather_axis,
+                 const ov::element::Type compression_type,
+                 const std::vector<uint64_t>& group_sizes,
+                 const std::vector<uint64_t>& scales_output_order,
                  const ov::element::Type output_type)
-    : Op({past, new_token_data, beam_idx, past_scale, new_token_scale})
+    : Op({past, new_token_data, beam_idx, past_scale})
     , m_concat_axis(concat_axis)
     , m_gather_axis(gather_axis)
     , m_indirect(true)
     , m_compressed(true)
+    , m_group_sizes(group_sizes)
+    , m_scales_output_order(scales_output_order)
+    , m_compression_type(compression_type)
     , m_output_type(output_type) {
+    OPENVINO_ASSERT(compression_type == ov::element::i8, "[GPU] Only I8 data type is currently supported for KV-cache compression");
     m_variable = past_variable;
     size_t out_ports = 3;
     set_output_size(out_ports);
@@ -79,7 +86,13 @@ bool KVCache::visit_attributes(ov::AttributeVisitor& visitor) {
 }
 
 void KVCache::validate_and_infer_types() {
-    auto output_type = m_output_type == ov::element::undefined ? get_input_element_type(0) : m_output_type;
+    auto output_type = m_output_type;
+    if (m_compressed) {
+        output_type = m_compression_type;
+    } else if (m_output_type == ov::element::undefined) {
+        output_type = get_input_element_type(0);
+    }
+
     std::vector<ov::PartialShape> input_shapes = {m_variable->get_info().data_shape, get_input_partial_shape(1)};
     if (m_indirect) {
         input_shapes.push_back(get_input_partial_shape(2));
@@ -87,10 +100,9 @@ void KVCache::validate_and_infer_types() {
 
     if (m_compressed) {
         input_shapes.push_back(get_input_partial_shape(3));
-        input_shapes.push_back(get_input_partial_shape(4));
     }
 
-    auto shapes = shape_infer(this, input_shapes);
+    auto shapes = shape_infer(this, input_shapes, m_group_sizes, m_scales_output_order);
     size_t out_ports = 0;
     set_output_type(out_ports++, output_type, shapes[0]);
     // TODO: kv-cache compression is not supported for indirect kv cache
@@ -124,15 +136,20 @@ std::shared_ptr<Node> KVCache::clone_with_new_inputs(const ov::OutputVector& new
                                          new_args.at(1),
                                          new_args.at(2),
                                          new_args.at(3),
-                                         new_args.at(4),
                                          m_variable,
                                          m_concat_axis,
                                          m_gather_axis,
+                                         m_compression_type,
+                                         m_group_sizes,
+                                         m_scales_output_order,
                                          m_output_type);
     }
 }
 
-std::vector<ov::PartialShape> shape_infer(const KVCache* op, std::vector<ov::PartialShape> input_shapes) {
+std::vector<ov::PartialShape> shape_infer(const KVCache* op,
+                                          const std::vector<ov::PartialShape>& input_shapes,
+                                          const std::vector<uint64_t>& group_sizes,
+                                          const std::vector<uint64_t>& scales_output_order) {
     std::vector<ov::PartialShape> out_shapes;
     out_shapes.resize(op->get_output_size());
 
@@ -152,10 +169,14 @@ std::vector<ov::PartialShape> shape_infer(const KVCache* op, std::vector<ov::Par
 
         // FIXME: indirect kv cache and compression are orthogonal feature. it can be selective.
         // If KV cache is compressed
-        if (op->get_output_size() == 3){
+        if (op->get_output_size() == 3) {
+            // Replace this with custom code:
+            ov::op::internal::DynamicQuantize op;
+            auto new_token_data_quantized_shapes = ov::op::internal::DynamicQuantize::shape_infer(&op, {input_shapes[1]}, group_sizes, scales_output_order);
+
             const auto scales_concat_axis = 2;
             ov::PartialShape compression_scale_shape = input_shapes[3];
-            compression_scale_shape[scales_concat_axis] += input_shapes[4][scales_concat_axis];
+            compression_scale_shape[scales_concat_axis] += new_token_data_quantized_shapes[1][scales_concat_axis];
             out_shapes[2] = compression_scale_shape;
 
             // ov::PartialShape compression_scale_shape(std::vector<size_t>(out_shapes[0].size(), 1));

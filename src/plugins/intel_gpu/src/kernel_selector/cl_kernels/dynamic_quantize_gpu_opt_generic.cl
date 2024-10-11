@@ -26,7 +26,10 @@ inline uint FUNC(get_scales_offset_nt)(OPTIONAL_SHAPE_INFO_ARG uint b, uint f, u
     return OUTPUT1_GET_INDEX(b, f, y, x);
 }
 
-inline uint FUNC(get_scales_offset)(OPTIONAL_SHAPE_INFO_ARG uint b, uint f, uint y, uint x) {
+inline uint FUNC(get_scales_offset)(OPTIONAL_SHAPE_INFO_ARG uint b, uint f, uint y, uint x, uint axis_offset) {
+#ifdef APPEND_MODE
+    APPEND_AXIS_NAME += axis_offset;
+#endif
 #ifdef SCALES_OUTPUT_ORDER
     return FUNC_CALL(get_scales_offset_nt)(OPTIONAL_SHAPE_INFO_TENSOR SCALES_OUTPUT_ORDER);
 #else
@@ -45,7 +48,11 @@ KERNEL(dynamic_quantize_gpu_opt_generic)(
     OPTIONAL_SHAPE_INFO_ARG
     const __global INPUT0_TYPE* input,
     __global OUTPUT_TYPE* output,
-    __global OUTPUT1_TYPE* output_scale)
+    __global OUTPUT1_TYPE* output_scale
+#ifdef APPEND_MODE
+    , const uint axis_offset
+#endif
+    )
 {
     const uint sglid = get_sub_group_local_id();
     const uint grouped_indexes = get_global_id(1);
@@ -70,17 +77,29 @@ KERNEL(dynamic_quantize_gpu_opt_generic)(
 
     half scale = 127.0h / max_value;
 
+#ifdef APPEND_MODE
+    APPEND_AXIS_NAME += axis_offset;
+#endif
+
     const uint output_offset = OUTPUT_GET_INDEX(b, f, y, x);
     unroll_for (uint i = 0; i < INNERMOST_DIM_VALUE / SUBGROUP_SIZE; i++) {
         OUTPUT_BLOCK_WRITE(output, output_offset + i * SUBGROUP_SIZE, convert_char(val[i] * scale));
     }
 
-#ifdef SCALES_OUTPUT_ORDER
-    const uint scale_idx = FUNC_CALL(get_scales_offset)(OPTIONAL_SHAPE_INFO_TENSOR b, f, y, x);
+#ifdef APPEND_MODE
+    // const uint scale_axis_offset = axis_offset;
+    const uint scale_axis_offset = 0;
 #else
-    const uint scale_idx = OUTPUT1_GET_INDEX_SAFE(b, f, y, x);
+    const uint scale_axis_offset = 0;
 #endif
+    const uint scale_idx = FUNC_CALL(get_scales_offset)(OPTIONAL_SHAPE_INFO_TENSOR b, f, y, x, scale_axis_offset);
 
-    if (grouped_indexes == 0 && sglid == 0)
+    if (grouped_indexes == 0 && sglid == 0) {
+#ifdef APPEND_MODE
+        // if (axis_offset > 0) {
+        //     printf("Save scale_idx=%d, axis_offset=%d; output=%p, scale=%p; val=%f\n", scale_idx, axis_offset, output, output_scale, 1.0h / scale);
+        // }
+#endif
         output_scale[scale_idx] = 1.0h / scale;
+    }
 }

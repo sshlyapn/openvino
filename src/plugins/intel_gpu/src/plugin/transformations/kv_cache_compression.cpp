@@ -102,6 +102,8 @@ KVCacheCompressionMatcher::KVCacheCompressionMatcher() {
         // || org_sdpa->get_friendly_name().find(".h.4.") != std::string::npos
         // || org_sdpa->get_friendly_name().find(".h.5.") != std::string::npos
             ) {
+            const auto compression_type = ov::element::i8;
+
             auto rank = key_node->get_input_partial_shape(0).size();
             auto get_shape_group_sizes = [&](const std::vector<int64_t>& transposed_order) {
                 std::vector<uint64_t> shape_group_size(rank, 1);
@@ -145,6 +147,7 @@ KVCacheCompressionMatcher::KVCacheCompressionMatcher() {
                 return ss.str();
             };
 
+            // Rename this
             auto shape_group_size = get_shape_group_sizes(org_sdpa->get_input1_transpose_order());
             auto scales_output_order = get_scales_output_order(org_sdpa->get_input1_transpose_order());
 
@@ -222,33 +225,37 @@ KVCacheCompressionMatcher::KVCacheCompressionMatcher() {
                 value_past_node = new_value_past_node;
             }
 
-            auto k_dyn_quan = std::make_shared<ov::op::internal::DynamicQuantize>(key_node->get_input_node_shared_ptr(1), shape_group_size, element::f16, scales_output_order);
-            k_dyn_quan->set_friendly_name("dyn_quan_key");
+            // auto k_dyn_quan = std::make_shared<ov::op::internal::DynamicQuantize>(key_node->get_input_node_shared_ptr(1), shape_group_size, element::f16, scales_output_order);
+            // k_dyn_quan->set_friendly_name("dyn_quan_key");
 
             // FIXME: need to tell whether it is direct KV cache or indirect kv cache
             auto new_kv_cache_k = std::make_shared<op::KVCache>(key_past_node->output(0),
-                                                                k_dyn_quan->output(0),
+                                                                key_node->get_input_node_shared_ptr(1),
                                                                 key_node->get_input_node_shared_ptr(2),
                                                                 key_past_node->output(1),
-                                                                k_dyn_quan->output(1),
                                                                 key_node->get_variable(),
                                                                 key_node->get_concat_axis(),
-                                                                key_node->get_gather_axis());
+                                                                key_node->get_gather_axis(),
+                                                                compression_type,
+                                                                shape_group_size,
+                                                                scales_output_order);
 
             new_kv_cache_k->set_friendly_name(key_node->get_friendly_name());
             ov::copy_runtime_info(key_node, new_kv_cache_k);
 
-            auto v_dyn_quan = std::make_shared<ov::op::internal::DynamicQuantize>(value_node->get_input_node_shared_ptr(1), shape_group_size, element::f16, scales_output_order);
-            v_dyn_quan->set_friendly_name("dyn_quan_value");
+            // auto v_dyn_quan = std::make_shared<ov::op::internal::DynamicQuantize>(value_node->get_input_node_shared_ptr(1), shape_group_size, element::f16, scales_output_order);
+            // v_dyn_quan->set_friendly_name("dyn_quan_value");
             // FIXME: need to tell whether it is direct KV cache or indirect kv cache
             auto new_kv_cache_v = std::make_shared<op::KVCache>(value_past_node->output(0),
-                                                                v_dyn_quan->output(0),
+                                                                value_node->get_input_node_shared_ptr(1),
                                                                 value_node->get_input_node_shared_ptr(2),
                                                                 value_past_node->output(1),
-                                                                v_dyn_quan->output(1),
                                                                 value_node->get_variable(),
                                                                 value_node->get_concat_axis(),
-                                                                value_node->get_gather_axis());
+                                                                value_node->get_gather_axis(),
+                                                                compression_type,
+                                                                shape_group_size,
+                                                                scales_output_order);
 
             new_kv_cache_v->set_friendly_name(value_node->get_friendly_name());
             ov::copy_runtime_info(value_node, new_kv_cache_v);

@@ -35,6 +35,9 @@ struct kv_cache : public primitive_base<kv_cache> {
     int64_t gather_axis = 0;
     bool indirect = false;
     bool compressed = false;
+    std::vector<uint64_t> group_sizes = {};
+    std::vector<uint64_t> scales_output_order = {};
+    ov::element::Type compression_type = ov::element::undefined;
 
     size_t hash() const override {
         size_t seed = primitive::hash();
@@ -56,6 +59,7 @@ struct kv_cache : public primitive_base<kv_cache> {
                gather_axis == rhs_casted.gather_axis &&
                indirect == rhs_casted.indirect &&
                compressed == rhs_casted.compressed;
+        // TODO: add here
     }
 
     void save(BinaryOutputBuffer& ob) const override {
@@ -68,6 +72,7 @@ struct kv_cache : public primitive_base<kv_cache> {
         ob << gather_axis;
         ob << indirect;
         ob << compressed;
+        // TODO: add here
     }
 
     void load(BinaryInputBuffer& ib) override {
@@ -83,6 +88,7 @@ struct kv_cache : public primitive_base<kv_cache> {
         ib >> gather_axis;
         ib >> indirect;
         ib >> compressed;
+        // TODO: add here
     }
 };
 }  // namespace cldnn

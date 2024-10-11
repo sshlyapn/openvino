@@ -722,6 +722,18 @@ std::vector<cldnn::event::ptr> SyncInferRequest::prepare_input(const std::string
     auto user_tensor = user_tensor_wrapper.ptr;
     auto element_type = user_tensor->get_element_type();
 
+    // auto print_arr = [&](int64_t* vec, size_t max_len, std::string name) {
+    //     std::stringstream ss;
+    //     for (size_t i = 0; i < max_len; i++) {
+    //         ss << vec[i] << ", ";
+    //     }
+    //     std::cout << "Array " << name << " (len=" << max_len << ") content: " << ss.str() << "\n";
+    // };
+
+    // if (internal_name == "parameter:input_ids") {
+    //     print_arr(user_tensor->data<int64_t>(), user_tensor->get_size(), "parameter:input_ids");
+    // }
+
     auto remote_tensor_impl_ptr = std::dynamic_pointer_cast<RemoteTensorImpl>(user_tensor);
     auto iremote_tensor_ptr = std::dynamic_pointer_cast<IRemoteTensor>(user_tensor);
     auto usm_host_ptr = std::dynamic_pointer_cast<USMHostTensor>(user_tensor);

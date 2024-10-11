@@ -42,10 +42,11 @@ std::vector<layout> kv_cache_inst::calc_output_layouts(kv_cache_node const& node
 
     if (desc->compressed) {
         input_shapes.push_back(impl_param.get_input_layout(3).get<ShapeType>());
-        input_shapes.push_back(impl_param.get_input_layout(4).get<ShapeType>());
+        // input_shapes.push_back(impl_param.get_input_layout(4).get<ShapeType>());
     }
 
-    std::vector<ShapeType> output_shapes = shape_infer(&op, input_shapes);
+    std::vector<ShapeType> output_shapes = desc->compressed ? shape_infer(&op, input_shapes, desc->group_sizes, desc->scales_output_order)
+                                                            : shape_infer(&op, input_shapes);
 
     static const std::map<size_t, size_t> ports_map = {{0, 0}, {1, 2}};
 

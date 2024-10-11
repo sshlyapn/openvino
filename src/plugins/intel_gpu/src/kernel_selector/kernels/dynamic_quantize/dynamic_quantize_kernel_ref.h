@@ -13,6 +13,8 @@ namespace kernel_selector {
 struct dynamic_quantize_params : public base_params {
     dynamic_quantize_params() : base_params(KernelType::DYNAMIC_QUANTIZE) {}
 
+    int64_t append_axis = -1;
+    int64_t axis_offset = -1;
     std::vector<uint64_t> group_sizes;
     std::vector<uint64_t> scales_output_order;
 };

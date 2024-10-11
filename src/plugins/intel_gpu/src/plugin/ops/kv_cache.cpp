@@ -22,7 +22,7 @@ namespace intel_gpu {
 namespace {
 
 void CreateKVCacheOp(ProgramBuilder& p, const std::shared_ptr<ov::op::internal::KVCache>& op) {
-    validate_inputs_count(op, {2, 3, 5});
+    validate_inputs_count(op, {2, 3, 4});
     auto inputs = p.GetInputInfo(op);
     int64_t rank = op->get_input_partial_shape(0).size();
     auto prim = cldnn::kv_cache(layer_type_name_ID(op),
@@ -35,6 +35,12 @@ void CreateKVCacheOp(ProgramBuilder& p, const std::shared_ptr<ov::op::internal::
 
     prim.num_outputs = op->get_output_size();
     prim.output_data_types = get_output_data_types(op);
+
+    if (op->get_compressed()) {
+        prim.compression_type = op->get_compression_type();
+        prim.group_sizes = op->get_group_sizes();
+        prim.scales_output_order = op->get_scales_output_order();
+    }
 
     p.add_primitive(*op, prim);
 }

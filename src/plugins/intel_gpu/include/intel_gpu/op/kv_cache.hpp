@@ -38,10 +38,12 @@ public:
             const Output<Node>& new_token_data,
             const Output<Node>& beam_idx,
             const Output<Node>& past_scale,
-            const Output<Node>& new_token_scale,
             const std::shared_ptr<ov::op::util::Variable>& past_values,
             int64_t concat_axis,
             int64_t gather_axis,
+            const ov::element::Type compression_type,
+            const std::vector<uint64_t>& group_sizes,
+            const std::vector<uint64_t>& scales_output_order,
             const ov::element::Type output_type = ov::element::undefined);
 
     bool visit_attributes(ov::AttributeVisitor& visitor) override;
@@ -62,17 +64,30 @@ public:
     void set_gather_axis(int64_t axis) { m_gather_axis = axis; }
 
     bool get_indirect() const { return m_indirect; }
+
     bool get_compressed() const { return m_compressed; }
+    ov::element::Type get_compression_type() const { return m_compression_type; }
+    const std::vector<uint64_t>& get_group_sizes() const { return m_group_sizes; };
+    const std::vector<uint64_t>& get_scales_output_order() const { return m_scales_output_order; };
 
 private:
     int64_t m_concat_axis = 0;
     int64_t m_gather_axis = 0;
     bool m_indirect = false;
+
+    // KV-cache compression parameters
     bool m_compressed = false;
+    std::vector<uint64_t> m_group_sizes = {};
+    std::vector<uint64_t> m_scales_output_order = {};
+    ov::element::Type m_compression_type = ov::element::undefined;
+
     ov::element::Type m_output_type;
 };
 
-std::vector<ov::PartialShape> shape_infer(const KVCache* op, std::vector<ov::PartialShape> input_shapes);
+std::vector<ov::PartialShape> shape_infer(const KVCache* op,
+                                          const std::vector<ov::PartialShape>& input_shapes,
+                                          const std::vector<uint64_t>& group_sizes = {},
+                                          const std::vector<uint64_t>& scales_output_order = {});
 
 }   // namespace op
 }   // namespace intel_gpu

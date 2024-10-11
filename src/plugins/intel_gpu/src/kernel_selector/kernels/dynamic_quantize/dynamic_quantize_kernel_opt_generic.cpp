@@ -50,19 +50,25 @@ static size_t get_elements_number_per_group(const dynamic_quantize_params& param
     return total_elements_number;
 }
 
-static std::string generate_dims_indexes_calculation(std::vector<std::pair<std::string, std::string>> dims) {
-    std::reverse(dims.begin(), dims.end());
+static std::string generate_dims_indexes_calculation(std::vector<std::pair<std::string, std::string>> dims,
+                                                     std::pair<std::string, std::string> append_axis_info = {}) {
+    std::reverse(dims.begin(), dims.end()); // reorder dims in order from innermost to outermost dimensions
 
     auto generate_calc_function = [&](std::string data_type, std::string index_var, size_t dim_idx) {
         std::string index_calc_str;
-        index_calc_str += "const " + data_type + " " + dims[dim_idx].first + " = ";
-        index_calc_str += "(" + index_var + " / ";
+        index_calc_str += "" + data_type + " " + dims[dim_idx].first + " = ";
+        index_calc_str += "((" + index_var + " / ";
         index_calc_str += "(1";
         for (size_t i = 0; i < dim_idx; i++) {
             index_calc_str += " * " + dims[i].second;
         }
-        index_calc_str += ")) % " + dims[dim_idx].second + ";";
+        index_calc_str += ")) % " + dims[dim_idx].second + ")";
 
+        if (append_axis_info.first == dims[dim_idx].first) {
+            index_calc_str += " + " + append_axis_info.second;
+        }
+
+        index_calc_str += ";";
         return index_calc_str;
     };
 
@@ -154,7 +160,17 @@ JitConstants DynamicQuantizeKernelOptGeneric::GetJitConstants(const dynamic_quan
     // drop the last dimensions, since it will be processed inside kernel
     grouped_dims.pop_back();
 
-    jit.AddConstant(MakeJitConstant("DECLARE_BATCHED_DIMS_INDEXES(data_idx)", generate_dims_indexes_calculation(batch_dims)));
+    const bool append_mode = params.append_axis != -1;
+    std::pair<std::string, std::string> append_axis_info = {};
+    if (append_mode) {
+        // TODO: Is not needed???
+        // append_axis_info = { default_dims[params.append_axis].first, "axis_offset" }; // axis and input scalar name
+
+        jit.AddConstant(MakeJitConstant("APPEND_MODE", append_mode));
+        jit.AddConstant(MakeJitConstant("APPEND_AXIS_NAME", default_dims[params.append_axis].first));
+    }
+
+    jit.AddConstant(MakeJitConstant("DECLARE_BATCHED_DIMS_INDEXES(data_idx)", generate_dims_indexes_calculation(batch_dims, append_axis_info)));
     jit.AddConstant(MakeJitConstant("DECLARE_GROUPED_DIMS_INDEXES(data_idx)", generate_dims_indexes_calculation(grouped_dims)));
     jit.AddConstant(MakeJitConstant("SUBGROUPS_NUMBER", total_subgroups_number));
 
@@ -221,6 +237,15 @@ void DynamicQuantizeKernelOptGeneric::GetUpdateDispatchDataFunc(KernelData& kd) 
         kd.kernels[0].params.workGroups.local = dispatchData.lws;
         kd.kernels[0].skip_execution = false;
 
+        if (prim_params.append_axis != -1) {
+            kd.kernels[0].params.scalars.clear();
+
+            ScalarDescriptor axis_offset;
+            axis_offset.t = ScalarDescriptor::Types::UINT32;
+            axis_offset.v.u32 = static_cast<uint32_t>(prim_params.axis_offset);
+            kd.kernels[0].params.scalars.push_back(axis_offset);
+        }
+
         GPU_DEBUG_TRACE_DETAIL << "Update Dispatch data DynamicQuantizeKernelOptGeneric gws : " << dispatchData.gws[0] << ", "
                 << dispatchData.gws[1] << ", " << dispatchData.gws[2] << std::endl;
     };
@@ -257,6 +282,9 @@ KernelsData DynamicQuantizeKernelOptGeneric::GetKernelsData(const Params& params
                      GetFusedPrimitiveInputsCount(params),
                      static_cast<int>(prim_params.outputs.size()),
                      prim_params.is_shape_agnostic);
+
+    if (prim_params.append_axis != -1)
+        kernel.params.arguments.push_back({ArgumentDescriptor::Types::SCALAR, 0});
 
     return {kd};
 }
