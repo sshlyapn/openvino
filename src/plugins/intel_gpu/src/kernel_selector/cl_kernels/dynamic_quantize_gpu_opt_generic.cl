@@ -60,10 +60,9 @@ KERNEL(dynamic_quantize_gpu_opt_generic)(
     half max_value = 0.0001h;
     half val[INNERMOST_DIM_VALUE / SUBGROUP_SIZE];
 
-    const uint data_offset = INPUT0_GET_INDEX(b, f, y, x);
+    const uint input_offset = INPUT0_GET_INDEX(b, f, y, x);
     unroll_for (uint i = 0; i < INNERMOST_DIM_VALUE / SUBGROUP_SIZE; i++) {
-        // val[i] = input[data_offset + i * SUBGROUP_SIZE + sglid];
-        val[i] = INPUT_BLOCK_READ(input, data_offset + i * SUBGROUP_SIZE);
+        val[i] = INPUT_BLOCK_READ(input, input_offset + i * SUBGROUP_SIZE);
         max_value = fmax(max_value, fabs(val[i]));
     }
 
@@ -71,9 +70,9 @@ KERNEL(dynamic_quantize_gpu_opt_generic)(
 
     half scale = 127.0h / max_value;
 
+    const uint output_offset = OUTPUT_GET_INDEX(b, f, y, x);
     unroll_for (uint i = 0; i < INNERMOST_DIM_VALUE / SUBGROUP_SIZE; i++) {
-        OUTPUT_BLOCK_WRITE(output, data_offset + i * SUBGROUP_SIZE, convert_char(val[i] * scale));
-        // output[data_offset + i * SUBGROUP_SIZE + sglid] = convert_char(val[i] * scale);
+        OUTPUT_BLOCK_WRITE(output, output_offset + i * SUBGROUP_SIZE, convert_char(val[i] * scale));
     }
 
 #ifdef SCALES_OUTPUT_ORDER
