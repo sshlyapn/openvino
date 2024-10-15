@@ -258,13 +258,16 @@ KERNEL(sdpa_opt)(
 #endif
 #ifdef COMPRESSED_PER_HEAD
                 // const uint key_scale_comp_offset = GET_DATA_INDEX_6D(KEY_COMPRESSION_SCALE, b_idx, seq_len, 0, 0, b1_idx, 0);
-                const uint key_scale_comp_offset = GET_DATA_INDEX_6D(KEY_COMPRESSION_SCALE, b_idx, 0, 0, b1_idx / BROADCAST_GROUP_SIZE, start_partition_idx + seq_len, 0);
+                const uint key_scale_comp_offset = GET_DATA_INDEX(KEY_COMPRESSION_SCALE, b_idx, b1_idx / BROADCAST_GROUP_SIZE, start_partition_idx + seq_len, 0);
 
 #else
                 // const uint key_scale_comp_offset = GET_DATA_INDEX_6D(KEY_COMPRESSION_SCALE, b_idx, seq_len, 0, 0, 0, 0);
-                const uint key_scale_comp_offset = GET_DATA_INDEX_6D(KEY_COMPRESSION_SCALE, b_idx, 0, 0, 0, start_partition_idx + seq_len, 0);
+                const uint key_scale_comp_offset = GET_DATA_INDEX(KEY_COMPRESSION_SCALE, b_idx, 0, start_partition_idx + seq_len, 0);
 #endif
                 KEY_COMPRESSION_SCALE_TYPE key_comp_scale = key_scale[key_scale_comp_offset];
+#if ASYMMETRIC_COMPRESSED
+                KEY_COMPRESSION_SCALE_TYPE key_comp_zp = key_scale[key_scale_comp_offset + 1];
+#endif
 #endif
 
                 // ulong timer_start = intel_get_cycle_counter();
@@ -288,7 +291,11 @@ KERNEL(sdpa_opt)(
                     // KEY_BLOCK key_vals_compressed = KEY_BLOCK_READ(key_input, key_offset + head_idx_index);
                     // KEY_BLOCK_UNCOMPRESSED key_vals = TO_KEY_BLOCK_UNCOMPRESSED_TYPE(key_vals_compressed) * key_comp_scale;
                     KEY_BLOCK key_vals_compressed = KEY_BLOCK_READ(key_input, key_offset + head_idx_index);
+#if ASYMMETRIC_COMPRESSED
+                    KEY_BLOCK_UNCOMPRESSED key_vals = (TO_KEY_BLOCK_UNCOMPRESSED_TYPE(key_vals_compressed) - key_comp_zp) * key_comp_scale;
+#else
                     KEY_BLOCK_UNCOMPRESSED key_vals = TO_KEY_BLOCK_UNCOMPRESSED_TYPE(key_vals_compressed) * key_comp_scale;
+#endif
 #else
                     KEY_BLOCK key_vals = KEY_BLOCK_READ(key_input, key_offset + head_idx_index);
 #endif
@@ -318,7 +325,11 @@ KERNEL(sdpa_opt)(
 
 #if IS_KV_COMPRESSED
                     KEY_BLOCK key_vals_compressed = KEY_BLOCK_READ(key_input, key_offset + head_idx_index);
+#if ASYMMETRIC_COMPRESSED
+                    KEY_BLOCK_UNCOMPRESSED key_vals = (TO_KEY_BLOCK_UNCOMPRESSED_TYPE(key_vals_compressed) - key_comp_zp) * key_comp_scale;
+#else
                     KEY_BLOCK_UNCOMPRESSED key_vals = TO_KEY_BLOCK_UNCOMPRESSED_TYPE(key_vals_compressed) * key_comp_scale;
+#endif
 #else
                     KEY_BLOCK key_vals = KEY_BLOCK_READ(key_input, key_offset + head_idx_index);
 #endif
@@ -348,7 +359,11 @@ KERNEL(sdpa_opt)(
 
 #if IS_KV_COMPRESSED
                     KEY_BLOCK key_vals_compressed = KEY_BLOCK_READ(key_input, key_offset + head_idx_index);
+#if ASYMMETRIC_COMPRESSED
+                    KEY_BLOCK_UNCOMPRESSED key_vals = (TO_KEY_BLOCK_UNCOMPRESSED_TYPE(key_vals_compressed) - key_comp_zp) * key_comp_scale;
+#else
                     KEY_BLOCK_UNCOMPRESSED key_vals = TO_KEY_BLOCK_UNCOMPRESSED_TYPE(key_vals_compressed) * key_comp_scale;
+#endif
 #else
                     KEY_BLOCK key_vals = KEY_BLOCK_READ(key_input, key_offset + head_idx_index);
 #endif
@@ -378,7 +393,11 @@ KERNEL(sdpa_opt)(
 
 #if IS_KV_COMPRESSED
                     KEY_BLOCK key_vals_compressed = KEY_BLOCK_READ(key_input, key_offset + head_idx_index);
+#if ASYMMETRIC_COMPRESSED
+                    KEY_BLOCK_UNCOMPRESSED key_vals = (TO_KEY_BLOCK_UNCOMPRESSED_TYPE(key_vals_compressed) - key_comp_zp) * key_comp_scale;
+#else
                     KEY_BLOCK_UNCOMPRESSED key_vals = TO_KEY_BLOCK_UNCOMPRESSED_TYPE(key_vals_compressed) * key_comp_scale;
+#endif
 #else
                     KEY_BLOCK key_vals = KEY_BLOCK_READ(key_input, key_offset + head_idx_index);
 #endif
@@ -584,12 +603,15 @@ KERNEL(sdpa_opt)(
 #ifdef COMPRESSED_PER_HEAD
             // TODO: consider to change scales layout from [batch, seq_len, num_heads, 1] to [batch, num_heads, seq_len, 1]
             // const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, 0, 0, b1_idx, 0);
-            const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, b1_idx / BROADCAST_GROUP_SIZE, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, 0);
+            const uint value_scale_comp_offset = GET_DATA_INDEX(VALUE_COMPRESSION_SCALE, b_idx, b1_idx / BROADCAST_GROUP_SIZE, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, 0);
 #else
             // const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, 0, 0, 0, 0);
-            const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, 0, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, 0);
+            const uint value_scale_comp_offset = GET_DATA_INDEX(VALUE_COMPRESSION_SCALE, b_idx, 0, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, 0);
 #endif
             VALUE_COMPRESSION_SCALE_TYPE value_comp_scale = val_scale[value_scale_comp_offset];
+#if ASYMMETRIC_COMPRESSED
+            VALUE_COMPRESSION_SCALE_TYPE value_comp_zp = val_scale[value_scale_comp_offset + 1];
+#endif
 #endif
 
             OUTPUT_TYPE qk_val[TARGET_SEQ_LEN_BLOCK_SIZE];
@@ -610,7 +632,11 @@ KERNEL(sdpa_opt)(
 #else
                 INPUT2_TYPE value_val_compressed = VALUE_BLOCK_READ(value_input, value_offset);
 #endif
+#if ASYMMETRIC_COMPRESSED
+                VALUE_COMPRESSION_SCALE_TYPE value_val = (value_val_compressed - sub_group_broadcast(value_comp_zp, i)) * sub_group_broadcast(value_comp_scale, i);
+#else
                 VALUE_COMPRESSION_SCALE_TYPE value_val = value_val_compressed * sub_group_broadcast(value_comp_scale, i);
+#endif
 #else
 #ifdef BEAM_TABLE_TYPE
                 INPUT2_TYPE value_val = VALUE_BLOCK_READ(value_input, sub_group_broadcast(value_offset, i));
@@ -655,12 +681,15 @@ KERNEL(sdpa_opt)(
 #ifdef COMPRESSED_PER_HEAD
             // TODO: consider to change scales layout from [batch, seq_len, num_heads, 1] to [batch, num_heads, seq_len, 1]
             // const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, start_partition_idx + seq_len, 0, 0, b1_idx, 0);
-            const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, b1_idx / BROADCAST_GROUP_SIZE, start_partition_idx + seq_len, 0);
+            const uint value_scale_comp_offset = GET_DATA_INDEX(VALUE_COMPRESSION_SCALE, b_idx, b1_idx / BROADCAST_GROUP_SIZE, start_partition_idx + seq_len, 0);
 #else
             // const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, start_partition_idx + seq_len, 0, 0, 0, 0);
-            const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, 0, start_partition_idx + seq_len, 0);
+            const uint value_scale_comp_offset = GET_DATA_INDEX(VALUE_COMPRESSION_SCALE, b_idx, 0, start_partition_idx + seq_len, 0);
 #endif
             VALUE_COMPRESSION_SCALE_TYPE value_comp_scale = val_scale[value_scale_comp_offset];
+#if ASYMMETRIC_COMPRESSED
+            VALUE_COMPRESSION_SCALE_TYPE value_comp_zp = val_scale[value_scale_comp_offset + 1];
+#endif
 #endif
 
             OUTPUT_TYPE qk_val[TARGET_SEQ_LEN_BLOCK_SIZE];
@@ -670,7 +699,11 @@ KERNEL(sdpa_opt)(
 
 #if IS_KV_COMPRESSED
             INPUT2_TYPE value_val_compressed = VALUE_BLOCK_READ(value_input, value_offset);
+#if ASYMMETRIC_COMPRESSED
+            VALUE_COMPRESSION_SCALE_TYPE value_val = (value_val_compressed - value_comp_zp) * value_comp_scale;
+#else
             VALUE_COMPRESSION_SCALE_TYPE value_val = value_val_compressed * value_comp_scale;
+#endif
 #else
             INPUT2_TYPE value_val = VALUE_BLOCK_READ(value_input, value_offset);
 #endif
@@ -1059,12 +1092,15 @@ KERNEL(sdpa_opt)(
 #endif
 #ifdef COMPRESSED_PER_HEAD
                 // const uint key_scale_comp_offset = GET_DATA_INDEX_6D(KEY_COMPRESSION_SCALE, b_idx, seq_len + sglid, 0, 0, b1_idx, 0);
-                const uint key_scale_comp_offset = GET_DATA_INDEX_6D(KEY_COMPRESSION_SCALE, b_idx, 0, 0, b1_idx / BROADCAST_GROUP_SIZE, seq_len + sglid, 0);
+                const uint key_scale_comp_offset = GET_DATA_INDEX(KEY_COMPRESSION_SCALE, b_idx, b1_idx / BROADCAST_GROUP_SIZE, seq_len + sglid, 0);
 #else
                 // const uint key_scale_comp_offset = GET_DATA_INDEX_6D(KEY_COMPRESSION_SCALE, b_idx, seq_len + sglid, 0, 0, 0, 0);
-                const uint key_scale_comp_offset = GET_DATA_INDEX_6D(KEY_COMPRESSION_SCALE, b_idx, 0, 0, 0, seq_len + sglid, 0);
+                const uint key_scale_comp_offset = GET_DATA_INDEX(KEY_COMPRESSION_SCALE, b_idx, 0, seq_len + sglid, 0);
 #endif
                 KEY_COMPRESSION_SCALE_TYPE key_comp_scale = key_scale[key_scale_comp_offset];
+#if ASYMMETRIC_COMPRESSED
+                KEY_COMPRESSION_SCALE_TYPE key_comp_zp = key_scale[key_scale_comp_offset + 1];
+#endif
                 // printf("[0]key_scale_comp_offset=%d, sglid=%d: %f\n", key_scale_comp_offset, sglid, key_comp_scale);
 #endif
 
@@ -1087,7 +1123,11 @@ KERNEL(sdpa_opt)(
 #else
                         INPUT1_TYPE key_vals_compressed = KEY_BLOCK_READ(key_input, key_offset + key_row_idx * key_pitch + head_idx_index);
 #endif
+#if ASYMMETRIC_COMPRESSED
+                        KEY_COMPRESSION_SCALE_TYPE key_vals = (TO_KEY_COMPRESSION_SCALE_TYPE(key_vals_compressed) - sub_group_broadcast(key_comp_zp, key_row_idx)) * sub_group_broadcast(key_comp_scale, key_row_idx);
+#else
                         KEY_COMPRESSION_SCALE_TYPE key_vals = TO_KEY_COMPRESSION_SCALE_TYPE(key_vals_compressed) * sub_group_broadcast(key_comp_scale, key_row_idx);
+#endif
 #else
 #ifdef BEAM_TABLE_TYPE
                         INPUT1_TYPE key_vals = KEY_BLOCK_READ(key_input, sub_group_broadcast(key_offset, key_row_idx) + head_idx_index);
@@ -1108,12 +1148,15 @@ KERNEL(sdpa_opt)(
 #endif
 #ifdef COMPRESSED_PER_HEAD
                 // const uint key_scale_comp_offset = GET_DATA_INDEX_6D(KEY_COMPRESSION_SCALE, b_idx, seq_len + sglid, 0, 0, b1_idx, 0);
-                const uint key_scale_comp_offset = GET_DATA_INDEX_6D(KEY_COMPRESSION_SCALE, b_idx, 0, 0, b1_idx / BROADCAST_GROUP_SIZE, seq_len + sglid, 0);
+                const uint key_scale_comp_offset = GET_DATA_INDEX(KEY_COMPRESSION_SCALE, b_idx,b1_idx / BROADCAST_GROUP_SIZE, seq_len + sglid, 0);
 #else
                 // const uint key_scale_comp_offset = GET_DATA_INDEX_6D(KEY_COMPRESSION_SCALE, b_idx, seq_len + sglid, 0, 0, 0, 0);
-                const uint key_scale_comp_offset = GET_DATA_INDEX_6D(KEY_COMPRESSION_SCALE, b_idx, 0, 0, 0, seq_len + sglid, 0);
+                const uint key_scale_comp_offset = GET_DATA_INDEX(KEY_COMPRESSION_SCALE, b_idx, 0, seq_len + sglid, 0);
 #endif
                 KEY_COMPRESSION_SCALE_TYPE key_comp_scale = key_scale[key_scale_comp_offset];
+#if ASYMMETRIC_COMPRESSED
+                KEY_COMPRESSION_SCALE_TYPE key_comp_zp = key_scale[key_scale_comp_offset + 1];
+#endif
                 // printf("[1]key_scale_comp_offset=%d, sglid=%d: %f\n", key_scale_comp_offset, sglid, key_comp_scale);
 #endif
                 __attribute__((opencl_unroll_hint(1)))
@@ -1142,7 +1185,11 @@ KERNEL(sdpa_opt)(
     #else
                         key_vec[key_row_idx] = TO_KEY_COMPRESSION_SCALE_TYPE(KEY_BLOCK_READ(key_input, key_offset + key_row_idx * key_pitch + head_idx_index));
     #endif
+#if ASYMMETRIC_COMPRESSED
+                        key_vec[key_row_idx] = (key_vec[key_row_idx] - sub_group_broadcast(key_comp_zp, key_row_idx)) * sub_group_broadcast(key_comp_scale, key_row_idx);
+#else
                         key_vec[key_row_idx] *= sub_group_broadcast(key_comp_scale, key_row_idx);
+#endif
     #else
     #ifdef BEAM_TABLE_TYPE
                         key_vec[key_row_idx] = KEY_BLOCK_READ(key_input, sub_group_broadcast(key_offset, key_row_idx) + head_idx_index);
@@ -1167,7 +1214,11 @@ KERNEL(sdpa_opt)(
                             // printf("_%d %d %d. Loads key [%d] = %f\n", get_global_id(0), get_global_id(1), get_global_id(2), key_offset + key_row_idx * key_pitch + head_idx_index, key_vals);
                         }
     #endif
+#if ASYMMETRIC_COMPRESSED
+                        key_vals = (key_vals - sub_group_broadcast(key_comp_zp, key_row_idx)) * sub_group_broadcast(key_comp_scale, key_row_idx);
+#else
                         key_vals *= sub_group_broadcast(key_comp_scale, key_row_idx);
+#endif
     #else
     #ifdef BEAM_TABLE_TYPE
                         INPUT1_TYPE key_vals = 0;
@@ -1321,12 +1372,15 @@ KERNEL(sdpa_opt)(
 #endif
 #ifdef COMPRESSED_PER_HEAD
                     // const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, start_partition_idx + (seq_len) + sglid, 0, 0, b1_idx, 0);
-                    const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, b1_idx / BROADCAST_GROUP_SIZE, start_partition_idx + (seq_len) + sglid, 0);
+                    const uint value_scale_comp_offset = GET_DATA_INDEX(VALUE_COMPRESSION_SCALE, b_idx, b1_idx / BROADCAST_GROUP_SIZE, start_partition_idx + (seq_len) + sglid, 0);
 #else
                     // const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, start_partition_idx + (seq_len) + sglid, 0, 0, 0, 0);
-                    const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, 0, start_partition_idx + (seq_len) + sglid, 0);
+                    const uint value_scale_comp_offset = GET_DATA_INDEX(VALUE_COMPRESSION_SCALE, b_idx, 0, start_partition_idx + (seq_len) + sglid, 0);
 #endif
                     VALUE_COMPRESSION_SCALE_TYPE value_comp_scale = val_scale[value_scale_comp_offset];
+#if ASYMMETRIC_COMPRESSED
+                    VALUE_COMPRESSION_SCALE_TYPE value_comp_zp = val_scale[value_scale_comp_offset + 1];
+#endif
                     // printf("[0]value_scale_comp_offset=%d, sglid=%d: %f\n", value_scale_comp_offset, sglid, value_comp_scale);
 #endif
 
@@ -1340,7 +1394,11 @@ KERNEL(sdpa_opt)(
 #endif
 
 #if IS_KV_COMPRESSED
+#if ASYMMETRIC_COMPRESSED
+                        value_val = (value_val - sub_group_broadcast(value_comp_zp, i)) * sub_group_broadcast(value_comp_scale, i);
+#else
                         value_val *= sub_group_broadcast(value_comp_scale, i);
+#endif
 #endif
                         unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
                             acc_output_res[seq_idx] = mad(sub_group_broadcast(qk_val[seq_idx], i), value_val, acc_output_res[seq_idx]);
@@ -1387,12 +1445,15 @@ KERNEL(sdpa_opt)(
 #endif
 #ifdef COMPRESSED_PER_HEAD
                     // const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, 0, 0, b1_idx, 0);
-                    const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, b1_idx / BROADCAST_GROUP_SIZE, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, 0);
+                    const uint value_scale_comp_offset = GET_DATA_INDEX(VALUE_COMPRESSION_SCALE, b_idx, b1_idx / BROADCAST_GROUP_SIZE, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, 0);
 #else
                     // const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, 0, 0, 0, 0);
-                    const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, 0, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, 0);
+                    const uint value_scale_comp_offset = GET_DATA_INDEX(VALUE_COMPRESSION_SCALE, b_idx, 0, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, 0);
 #endif
                     VALUE_COMPRESSION_SCALE_TYPE value_comp_scale = val_scale[value_scale_comp_offset];
+#if ASYMMETRIC_COMPRESSED
+                    VALUE_COMPRESSION_SCALE_TYPE value_comp_zp = val_scale[value_scale_comp_offset + 1];
+#endif
                     // printf("[1]value_scale_comp_offset=%d, sglid=%d: %f\n", value_scale_comp_offset, sglid, value_comp_scale);
 #endif
 
@@ -1411,7 +1472,11 @@ KERNEL(sdpa_opt)(
 #endif
 
 #if IS_KV_COMPRESSED
+#if ASYMMETRIC_COMPRESSED
+                        value_val = (value_val - sub_group_broadcast(value_comp_zp, i)) * sub_group_broadcast(value_comp_scale, i);
+#else
                         value_val *= sub_group_broadcast(value_comp_scale, i);
+#endif
 #endif
 
                         unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
@@ -1462,12 +1527,15 @@ KERNEL(sdpa_opt)(
 #endif
 #ifdef COMPRESSED_PER_HEAD
                     // const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, start_partition_idx + seq_len_leftovers_start + sglid, 0, 0, b1_idx, 0);
-                    const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, b1_idx / BROADCAST_GROUP_SIZE, start_partition_idx + seq_len_leftovers_start + sglid, 0);
+                    const uint value_scale_comp_offset = GET_DATA_INDEX(VALUE_COMPRESSION_SCALE, b_idx, b1_idx / BROADCAST_GROUP_SIZE, start_partition_idx + seq_len_leftovers_start + sglid, 0);
 #else
                     // const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, start_partition_idx + seq_len_leftovers_start + sglid, 0, 0, 0, 0);
-                    const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, 0, start_partition_idx + seq_len_leftovers_start + sglid, 0);
+                    const uint value_scale_comp_offset = GET_DATA_INDEX(VALUE_COMPRESSION_SCALE, b_idx, 0, start_partition_idx + seq_len_leftovers_start + sglid, 0);
 #endif
                     VALUE_COMPRESSION_SCALE_TYPE value_comp_scale = val_scale[value_scale_comp_offset];
+#if ASYMMETRIC_COMPRESSED
+                    VALUE_COMPRESSION_SCALE_TYPE value_comp_zp = val_scale[value_scale_comp_offset + 1];
+#endif
                     // printf("[2]value_scale_comp_offset=%d, sglid=%d: %f\n", value_scale_comp_offset, sglid, value_comp_scale);
 #endif
 
@@ -1481,7 +1549,11 @@ KERNEL(sdpa_opt)(
 #endif
 
 #if IS_KV_COMPRESSED
+#if ASYMMETRIC_COMPRESSED
+                        value_val = (value_val - sub_group_broadcast(value_comp_zp, seq_len_idx)) * sub_group_broadcast(value_comp_scale, seq_len_idx);
+#else
                         value_val *= sub_group_broadcast(value_comp_scale, seq_len_idx);
+#endif
 #endif
 
                         for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {

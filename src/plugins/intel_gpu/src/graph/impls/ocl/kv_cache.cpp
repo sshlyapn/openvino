@@ -411,6 +411,8 @@ struct kv_cache_impl : multi_stage_primitive<kv_cache> {
         params.append_axis = primitive->concat_axis;
         params.group_sizes = primitive->group_sizes;
         params.scales_output_order = primitive->scales_output_order;
+        params.use_asymmetric_quantization = primitive->use_asymmetric_quantization;
+        params.group_scales_with_zp = true;
 
         if (!is_shape_agnostic) {
             const auto& past_kv_cache_shape = impl_param.input_layouts[0].get_partial_shape();

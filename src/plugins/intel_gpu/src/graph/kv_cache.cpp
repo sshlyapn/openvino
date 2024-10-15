@@ -45,8 +45,16 @@ std::vector<layout> kv_cache_inst::calc_output_layouts(kv_cache_node const& node
         // input_shapes.push_back(impl_param.get_input_layout(4).get<ShapeType>());
     }
 
+    if (desc->compressed && desc->use_asymmetric_quantization) {
+        input_shapes[3][3] /= 2;
+    }
+
     std::vector<ShapeType> output_shapes = desc->compressed ? shape_infer(&op, input_shapes, desc->group_sizes, desc->scales_output_order)
                                                             : shape_infer(&op, input_shapes);
+
+    if (desc->compressed && desc->use_asymmetric_quantization) {
+        output_shapes[2][3] *= 2;
+    }
 
     if (desc->num_outputs == 3)
         GPU_DEBUG_TRACE_DETAIL << desc->id << " scales output calculated shape: " << output_shapes[2] << "\n";

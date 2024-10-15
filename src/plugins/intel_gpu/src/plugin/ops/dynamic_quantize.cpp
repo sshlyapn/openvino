@@ -35,6 +35,9 @@ static void CreateDynamicQuantizeOp(ProgramBuilder& p, const std::shared_ptr<ov:
                                         group_sizes,
                                         op->get_scales_output_order(),
                                         get_output_data_types(op));
+
+    prim.use_asymmetric_quantization = op->get_quantization_mode() == ov::op::internal::DynamicQuantize::QuantizationMode::Asymmetric;
+
     p.add_primitive(*op, prim);
 }
 

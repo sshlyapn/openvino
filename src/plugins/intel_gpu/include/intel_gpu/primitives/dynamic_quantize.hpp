@@ -29,6 +29,7 @@ struct dynamic_quantize : public primitive_base<dynamic_quantize> {
              group_sizes(group_sizes),
              scales_output_order(scales_output_order) {}
 
+    bool use_asymmetric_quantization = false;
     std::vector<uint64_t> group_sizes;
     std::vector<uint64_t> scales_output_order;
 
@@ -50,6 +51,7 @@ struct dynamic_quantize : public primitive_base<dynamic_quantize> {
     void save(BinaryOutputBuffer& ob) const override {
         primitive_base<dynamic_quantize>::save(ob);
         ob << group_sizes;
+        // TODO: add more parameters
     }
 
     void load(BinaryInputBuffer& ib) override {

@@ -13,8 +13,9 @@ namespace ov {
 namespace op {
 namespace internal {
 
-DynamicQuantize::DynamicQuantize(const Output<Node>& data, std::vector<uint64_t> group_sizes, element::Type dt_scale, std::vector<uint64_t> scales_output_order)
+DynamicQuantize::DynamicQuantize(const Output<Node>& data, std::vector<uint64_t> group_sizes, element::Type dt_scale, QuantizationMode mode, std::vector<uint64_t> scales_output_order)
     : Op({data}),
+      m_mode(mode),
       m_group_sizes(std::move(group_sizes)),
       m_scales_output_order(std::move(scales_output_order)),
       m_dt_scale(dt_scale) {
@@ -38,7 +39,7 @@ void DynamicQuantize::validate_and_infer_types() {
 
 std::shared_ptr<Node> DynamicQuantize::clone_with_new_inputs(const ov::OutputVector& new_args) const {
     check_new_args_count(this, new_args);
-    return std::make_shared<DynamicQuantize>(new_args.at(0), m_group_sizes, m_dt_scale);
+    return std::make_shared<DynamicQuantize>(new_args.at(0), m_group_sizes, m_dt_scale, m_mode);
 }
 
 std::vector<ov::PartialShape> DynamicQuantize::shape_infer(const DynamicQuantize* op,

@@ -170,12 +170,19 @@ KERNEL(sdpa_ref)(
                 INPUT1_TYPE k_val_comp = key_input[key_offset];
                 half k_val = (half)k_val_comp;
 #ifdef COMPRESSED_PER_HEAD
-                const uint key_scale_comp_offset = GET_DATA_INDEX_6D_SAFE(KEY_COMPRESSION_SCALE, b_idx, 0, 0, 0, s, b1 / BROADCAST_GROUP_SIZE);
+                const uint key_scale_comp_offset = GET_DATA_INDEX(KEY_COMPRESSION_SCALE, b_idx, b1 / BROADCAST_GROUP_SIZE, s, 0);
 #else
                 // const uint key_scale_comp_offset = s;
-                const uint key_scale_comp_offset = GET_DATA_INDEX_6D_SAFE(KEY_COMPRESSION_SCALE, b_idx, 0, 0, 0, s, 0);
+                const uint key_scale_comp_offset = GET_DATA_INDEX(KEY_COMPRESSION_SCALE, b_idx, 0, s, 0);
 #endif
+#if ASYMMETRIC_COMPRESSED
+                if (b0 == 0 && b1 == 0 && target_seq_idx == 0 && head_size_idx == 0 && s == 0 && h == 0) {
+                    // printf("k=%f, zp=%f, scale=%f, res=%f\n", k_val, key_scale[key_scale_comp_offset + 1], key_scale[key_scale_comp_offset], ((k_val - key_scale[key_scale_comp_offset + 1]) * key_scale[key_scale_comp_offset]));
+                }
+                k_val = (k_val - key_scale[key_scale_comp_offset + 1]) * key_scale[key_scale_comp_offset];
+#else
                 k_val *= key_scale[key_scale_comp_offset];
+#endif
 #else
                 INPUT1_TYPE k_val = key_input[key_offset];
 #endif
@@ -256,12 +263,20 @@ KERNEL(sdpa_ref)(
         INPUT2_TYPE __value = value_input[value_offset];
         half value = (half)__value;
     #ifdef COMPRESSED_PER_HEAD
-        const uint value_scale_comp_offset = GET_DATA_INDEX_6D_SAFE(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, 0, s, b1 / BROADCAST_GROUP_SIZE);
+        const uint value_scale_comp_offset = GET_DATA_INDEX(VALUE_COMPRESSION_SCALE, b_idx, b1 / BROADCAST_GROUP_SIZE, s, 0);
     #else
         // const uint value_scale_comp_offset = s;
-        const uint value_scale_comp_offset = GET_DATA_INDEX_6D_SAFE(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, 0, s, 0);
+        const uint value_scale_comp_offset = GET_DATA_INDEX(VALUE_COMPRESSION_SCALE, b_idx, 0, s, 0);
     #endif
+#if ASYMMETRIC_COMPRESSED
+        // if (b0 == 0 && b1 == 0 && target_seq_idx == 0 && head_size_idx == 0 && s == 0) {
+        if (b0 == 0 && b1 == 0 && target_seq_idx == 0 && head_size_idx == 0 && s == 0) {
+            // printf("v=%f, zp=%f, scale=%f, res=%f\n", value, val_scale[value_scale_comp_offset + 1], val_scale[value_scale_comp_offset], ((value - val_scale[value_scale_comp_offset + 1]) * val_scale[value_scale_comp_offset]));
+        }
+        value = (value - val_scale[value_scale_comp_offset + 1]) * val_scale[value_scale_comp_offset];
+#else
         value *= val_scale[value_scale_comp_offset];
+#endif
         acc += tmp_buf[tmp_buf_offset] * value;
 #else
         acc += tmp_buf[tmp_buf_offset] * value_input[value_offset];

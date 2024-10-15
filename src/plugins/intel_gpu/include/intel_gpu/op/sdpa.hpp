@@ -52,6 +52,7 @@ public:
 protected:
     bool m_is_causal;
     bool m_is_kv_compressed;
+    bool m_is_asym_compressed;
     std::vector<int64_t> m_order_q;
     std::vector<int64_t> m_order_k;
     std::vector<int64_t> m_order_v;

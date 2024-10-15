@@ -89,6 +89,7 @@ struct sdpa_configuration {
     bool is_causal = false;
     bool has_alibi_input = false;
     bool is_kv_compressed = false;
+    bool is_asym_compressed = false;
 
     // Paged Attention configuration
     bool is_paged_attention = false;

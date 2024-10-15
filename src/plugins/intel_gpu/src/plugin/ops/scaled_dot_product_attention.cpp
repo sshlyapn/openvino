@@ -83,6 +83,10 @@ static void CreateIndirectSDPAOp(ProgramBuilder& p, const std::shared_ptr<ov::op
                                                          op->get_input2_transpose_order(),
                                                          op->get_output_transpose_order());
 
+    if (op->get_asym()) {
+        sdpa_prim.is_asym_compressed = true;
+    }
+
     p.add_primitive(*op, sdpa_prim);
 }
 

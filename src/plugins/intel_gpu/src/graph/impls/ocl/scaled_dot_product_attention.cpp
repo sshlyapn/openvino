@@ -231,8 +231,10 @@ protected:
 
         config.is_causal = desc->is_causal;
         config.is_kv_compressed = desc->is_kv_compressed;
+        config.is_asym_compressed = desc->is_asym_compressed;
 
         GPU_DEBUG_TRACE << "Set is_kv_compressed to " << config.is_kv_compressed << "\n";
+        GPU_DEBUG_TRACE << "Set is_asym_compressed to " << config.is_asym_compressed << "\n";
 
         return config;
     }

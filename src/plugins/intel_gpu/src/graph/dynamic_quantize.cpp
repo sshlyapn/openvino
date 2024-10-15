@@ -22,7 +22,7 @@ layout dynamic_quantize_inst::calc_output_layout(dynamic_quantize_node const& no
 }
 
 template<typename ShapeType>
-std::vector<layout> dynamic_quantize_inst::__calc_output_layouts(const layout &act_layout, const std::vector<uint64_t>& group_sizes, const std::vector<uint64_t>& scales_output_order) {
+std::vector<layout> dynamic_quantize_inst::__calc_output_layouts(const layout &act_layout, const std::vector<uint64_t>& group_sizes, const std::vector<uint64_t>& scales_output_order, bool use_asymmetric_quantization) {
     ov::op::internal::DynamicQuantize op;
     auto output_format = act_layout.format;
 
@@ -44,16 +44,21 @@ std::vector<layout> dynamic_quantize_inst::__calc_output_layouts(const layout &a
     auto output_shapes = ov::op::internal::DynamicQuantize::shape_infer(&op, input_shapes, group_sizes, scales_output_order);
     GPU_DEBUG_TRACE_DETAIL << "shape infer dynamic" << output_shapes[0] << " " << output_shapes[1] << "\n";
 
+    if (use_asymmetric_quantization) {
+        output_shapes[1][3] *= 2;
+    }
+
     return { layout(output_shapes[0], data_types::i8, output_format), layout(output_shapes[1], data_types::f16, output_format) };
 }
 
-template std::vector<layout> dynamic_quantize_inst::__calc_output_layouts<ov::PartialShape>(const layout &act_layout, const std::vector<uint64_t>& group_sizes, const std::vector<uint64_t>& scales_output_order);
+template std::vector<layout> dynamic_quantize_inst::__calc_output_layouts<ov::PartialShape>(const layout &act_layout, const std::vector<uint64_t>& group_sizes, const std::vector<uint64_t>& scales_output_order, bool use_asymmetric_quantization);
 
 template<typename ShapeType>
 std::vector<layout> dynamic_quantize_inst::calc_output_layouts(dynamic_quantize_node const& /*node*/, const kernel_impl_params& impl_param) {
     auto desc = impl_param.typed_desc<dynamic_quantize>();
     const auto& input_layout = impl_param.get_input_layout();
-    return __calc_output_layouts<ov::PartialShape>(input_layout, desc->group_sizes, desc->scales_output_order);
+
+    return __calc_output_layouts<ov::PartialShape>(input_layout, desc->group_sizes, desc->scales_output_order, desc->use_asymmetric_quantization);
 }
 
 template std::vector<layout> dynamic_quantize_inst::calc_output_layouts<ov::PartialShape>(dynamic_quantize_node const& node,

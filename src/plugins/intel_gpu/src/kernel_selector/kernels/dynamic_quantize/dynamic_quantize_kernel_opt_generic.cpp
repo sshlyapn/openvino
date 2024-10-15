@@ -177,6 +177,8 @@ JitConstants DynamicQuantizeKernelOptGeneric::GetJitConstants(const dynamic_quan
     const auto iterations_number = total_grouped_elements / per_iter_elements_number;
 
     jit.AddConstant(MakeJitConstant("ITERATIONS_NUMBER", iterations_number));
+    jit.AddConstant(MakeJitConstant("ASYMMETRIC_QUANTIZATION", params.use_asymmetric_quantization));
+    jit.AddConstant(MakeJitConstant("GROUP_SCALES_WITH_ZP", params.group_scales_with_zp));
 
     bool rearrange_scales_order = false;
     const auto& scales_output_order = params.scales_output_order;

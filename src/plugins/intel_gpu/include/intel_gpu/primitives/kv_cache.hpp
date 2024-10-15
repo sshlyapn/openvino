@@ -35,6 +35,7 @@ struct kv_cache : public primitive_base<kv_cache> {
     int64_t gather_axis = 0;
     bool indirect = false;
     bool compressed = false;
+    bool use_asymmetric_quantization = false;
     std::vector<uint64_t> group_sizes = {};
     std::vector<uint64_t> scales_output_order = {};
     ov::element::Type compression_type = ov::element::undefined;

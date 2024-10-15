@@ -16,13 +16,18 @@ class TRANSFORMATIONS_API DynamicQuantize : public ov::op::Op {
 public:
     OPENVINO_OP("DynamicQuantize", "gpu_opset");
 
+    enum class QuantizationMode {
+        Asymmetric,
+        Symmetric
+    };
+
     DynamicQuantize() = default;
     /// \brief Constructs an DynamicQuantize operation.
     ///
     /// \param data Input tensor with data
     /// \param group_sizes Group sizes for dynamic quantization
     /// \param dt_scale Data type for scale output
-    DynamicQuantize(const Output<Node>& data, std::vector<uint64_t> group_sizes, element::Type dt_scale, std::vector<uint64_t> scales_output_order = {});
+    DynamicQuantize(const Output<Node>& data, std::vector<uint64_t> group_sizes, element::Type dt_scale, QuantizationMode mode, std::vector<uint64_t> scales_output_order = {});
 
     void validate_and_infer_types() override;
 
@@ -33,12 +38,16 @@ public:
     const std::vector<uint64_t>& get_scales_output_order() const {
         return m_scales_output_order;
     };
+    QuantizationMode get_quantization_mode() const {
+        return m_mode;
+    };
     static std::vector<ov::PartialShape> shape_infer(const DynamicQuantize* op,
                                                      const std::vector<ov::PartialShape>& input_shapes,
                                                      const std::vector<uint64_t>& group_sizes,
                                                      const std::vector<uint64_t>& scales_output_order = {});
 
 private:
+    QuantizationMode m_mode;
     std::vector<uint64_t> m_group_sizes;
     std::vector<uint64_t> m_scales_output_order;
     element::Type m_dt_scale;

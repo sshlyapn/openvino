@@ -44,6 +44,7 @@ struct scaled_dot_product_attention : public primitive_base<scaled_dot_product_a
 
     bool is_causal = false;
     bool is_kv_compressed = false;
+    bool is_asym_compressed = false;
     bool has_attn_mask_input = false;
     bool has_scale_input = false;
     int64_t indirect_axis = -1;
@@ -95,6 +96,7 @@ struct scaled_dot_product_attention : public primitive_base<scaled_dot_product_a
         ob << input_k_transpose_order;
         ob << input_v_transpose_order;
         ob << output_transpose_order;
+        // TODO: add new params
     }
 
     void load(BinaryInputBuffer& ib) override {

@@ -17,6 +17,8 @@ struct dynamic_quantize_params : public base_params {
     int64_t axis_offset = -1;
     std::vector<uint64_t> group_sizes;
     std::vector<uint64_t> scales_output_order;
+    bool use_asymmetric_quantization = false;
+    bool group_scales_with_zp = false;
 };
 
 class DynamicQuantizeKernelRef : public KernelBaseOpenCL {

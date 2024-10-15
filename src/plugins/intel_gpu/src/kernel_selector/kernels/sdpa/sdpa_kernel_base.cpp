@@ -86,6 +86,7 @@ JitConstants SDPAKernelBase::GetJitConstants(const sdpa_params& params) const {
     }
 
     jit.AddConstant(MakeJitConstant("IS_KV_COMPRESSED", params.conf.is_kv_compressed));
+    jit.AddConstant(MakeJitConstant("ASYMMETRIC_COMPRESSED", params.conf.is_asym_compressed));
     if (params.conf.is_kv_compressed) {
         jit.AddConstant(MakeJitConstant("KEY_COMPRESSION_SCALE", params.key_cache_comp_scale));
         jit.AddConstant(MakeJitConstant("VALUE_COMPRESSION_SCALE", params.value_cache_comp_scale));

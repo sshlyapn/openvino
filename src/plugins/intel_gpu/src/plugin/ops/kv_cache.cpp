@@ -38,6 +38,7 @@ void CreateKVCacheOp(ProgramBuilder& p, const std::shared_ptr<ov::op::internal::
 
     if (op->get_compressed()) {
         prim.compression_type = op->get_compression_type();
+        prim.use_asymmetric_quantization = op->get_asymmetric_quantization();
         prim.group_sizes = op->get_group_sizes();
         prim.scales_output_order = op->get_scales_output_order();
     }

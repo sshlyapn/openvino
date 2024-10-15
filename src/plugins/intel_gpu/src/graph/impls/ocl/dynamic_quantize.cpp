@@ -40,6 +40,7 @@ struct dynamic_quantize_impl : typed_primitive_impl_ocl<dynamic_quantize> {
         const auto& desc = impl_param.typed_desc<dynamic_quantize>();
         params.group_sizes = desc->group_sizes;
         params.scales_output_order = desc->scales_output_order;
+        params.use_asymmetric_quantization = desc->use_asymmetric_quantization;
 
         return params;
     }

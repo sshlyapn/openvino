@@ -62,6 +62,18 @@ KVCacheCompressionMatcher::KVCacheCompressionMatcher() {
         first = false;
     }
 
+    int USE_ZP = 0;
+    if (const auto env_var = std::getenv("USE_ZP")) {
+        std::istringstream ss(env_var);
+        ss >> USE_ZP;
+    }
+
+    std::cout << "Set USE_ZP = " << USE_ZP << "\n";
+
+    auto quantization_mode = ov::op::internal::DynamicQuantize::QuantizationMode::Symmetric;
+    if (USE_ZP)
+        quantization_mode = ov::op::internal::DynamicQuantize::QuantizationMode::Asymmetric;
+
     auto query = any_input();
 
     auto k_past = wrap_type<ov::intel_gpu::op::ReadValue>();
@@ -199,7 +211,7 @@ KVCacheCompressionMatcher::KVCacheCompressionMatcher() {
             // Scales order: 0, 3, 1, 2
 
             if (key_past_node->get_input_size() == 1) {
-                auto k_init_dyn_quan = std::make_shared<ov::op::internal::DynamicQuantize>(key_past_node->get_input_node_shared_ptr(0), shape_group_size, element::f16, scales_output_order);
+                auto k_init_dyn_quan = std::make_shared<ov::op::internal::DynamicQuantize>(key_past_node->get_input_node_shared_ptr(0), shape_group_size, element::f16, quantization_mode, scales_output_order);
                 auto new_key_past_node = std::make_shared<ov::intel_gpu::op::CompressedReadValue>(k_init_dyn_quan->output(0), k_init_dyn_quan->output(1), key_past_node->get_variable());
                 k_init_dyn_quan->set_friendly_name(key_node->get_friendly_name() + "_init_dyn_quan");
                 // std::cout << "Key outputs: " << key_past_node->get_output_size() << " " << new_key_past_node->get_output_size() << "\n";
@@ -213,7 +225,7 @@ KVCacheCompressionMatcher::KVCacheCompressionMatcher() {
             }
 
             if (value_past_node->get_input_size() == 1) {
-                auto v_init_dyn_quan = std::make_shared<ov::op::internal::DynamicQuantize>(value_past_node->get_input_node_shared_ptr(0), shape_group_size, element::f16, scales_output_order);
+                auto v_init_dyn_quan = std::make_shared<ov::op::internal::DynamicQuantize>(value_past_node->get_input_node_shared_ptr(0), shape_group_size, element::f16, quantization_mode, scales_output_order);
                 auto new_value_past_node = std::make_shared<ov::intel_gpu::op::CompressedReadValue>(v_init_dyn_quan->output(0), v_init_dyn_quan->output(1), value_past_node->get_variable());
 
                 // std::cout << "Value outputs: " << value_past_node->get_output_size() << " " << new_value_past_node->get_output_size() << "\n";
@@ -241,6 +253,8 @@ KVCacheCompressionMatcher::KVCacheCompressionMatcher() {
                                                                 shape_group_size,
                                                                 scales_output_order);
 
+            new_kv_cache_k->set_asymmetric_quantization(quantization_mode == ov::op::internal::DynamicQuantize::QuantizationMode::Asymmetric);
+
             new_kv_cache_k->set_friendly_name(key_node->get_friendly_name());
             ov::copy_runtime_info(key_node, new_kv_cache_k);
 
@@ -257,6 +271,8 @@ KVCacheCompressionMatcher::KVCacheCompressionMatcher() {
                                                                 compression_type,
                                                                 shape_group_size,
                                                                 scales_output_order);
+
+            new_kv_cache_v->set_asymmetric_quantization(quantization_mode == ov::op::internal::DynamicQuantize::QuantizationMode::Asymmetric);
 
             new_kv_cache_v->set_friendly_name(value_node->get_friendly_name());
             ov::copy_runtime_info(value_node, new_kv_cache_v);
@@ -301,6 +317,8 @@ KVCacheCompressionMatcher::KVCacheCompressionMatcher() {
                                                                output_transpose_order,
                                                                org_sdpa->get_output_type());
 
+
+            new_sdpa->set_asym(quantization_mode == ov::op::internal::DynamicQuantize::QuantizationMode::Asymmetric);
 
             new_kv_cache_k->set_friendly_name(key_node->get_friendly_name());
             ov::copy_runtime_info(key_node, new_kv_cache_k);

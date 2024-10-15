@@ -35,6 +35,9 @@ public:
 
     std::shared_ptr<Node> clone_with_new_inputs(const ov::OutputVector& new_args) const override;
 
+    void set_asym(bool val) { m_is_asym_compressed = val; }
+    bool get_asym() const { return m_is_asym_compressed; }
+
     ov::element::Type get_output_type() const { return m_output_type; }
 
     int64_t get_indirect_axis() const { return m_indirect_axis; }

@@ -35,7 +35,7 @@ public:
 
     // Internal function to be used from fakealignment
     template<typename ShapeType>
-    static std::vector<layout> __calc_output_layouts(const layout &act_layout, const std::vector<uint64_t>& group_size, const std::vector<uint64_t>& scales_output_order);
+    static std::vector<layout> __calc_output_layouts(const layout &act_layout, const std::vector<uint64_t>& group_size, const std::vector<uint64_t>& scales_output_order, bool use_asymmetric_quantization);
     static std::string to_string(dynamic_quantize_node const& node);
 
     typed_primitive_inst(network& network, dynamic_quantize_node const& node);

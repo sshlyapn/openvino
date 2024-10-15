@@ -26,10 +26,7 @@ inline uint FUNC(get_scales_offset_nt)(OPTIONAL_SHAPE_INFO_ARG uint b, uint f, u
     return OUTPUT1_GET_INDEX(b, f, y, x);
 }
 
-inline uint FUNC(get_scales_offset)(OPTIONAL_SHAPE_INFO_ARG uint b, uint f, uint y, uint x, uint axis_offset) {
-#ifdef APPEND_MODE
-    APPEND_AXIS_NAME += axis_offset;
-#endif
+inline uint FUNC(get_scales_offset)(OPTIONAL_SHAPE_INFO_ARG uint b, uint f, uint y, uint x) {
 #ifdef SCALES_OUTPUT_ORDER
     return FUNC_CALL(get_scales_offset_nt)(OPTIONAL_SHAPE_INFO_TENSOR SCALES_OUTPUT_ORDER);
 #else
@@ -49,6 +46,9 @@ KERNEL(dynamic_quantize_gpu_opt_generic)(
     const __global INPUT0_TYPE* input,
     __global OUTPUT_TYPE* output,
     __global OUTPUT1_TYPE* output_scale
+#if ASYMMETRIC_QUANTIZATION && !GROUP_SCALES_WITH_ZP
+    , __global OUTPUT1_TYPE* output_zp
+#endif
 #ifdef APPEND_MODE
     , const uint axis_offset
 #endif
@@ -64,18 +64,31 @@ KERNEL(dynamic_quantize_gpu_opt_generic)(
     // the innermost dimension is always handled in the loop inside the kernel
     const uint x = 0;
 
-    half max_value = 0.0001h;
+    half max_value = INPUT0_VAL_MIN;
+    half min_value = INPUT0_VAL_MAX;
+
     half val[INNERMOST_DIM_VALUE / SUBGROUP_SIZE];
 
     const uint input_offset = INPUT0_GET_INDEX(b, f, y, x);
     unroll_for (uint i = 0; i < INNERMOST_DIM_VALUE / SUBGROUP_SIZE; i++) {
         val[i] = INPUT_BLOCK_READ(input, input_offset + i * SUBGROUP_SIZE);
+#if ASYMMETRIC_QUANTIZATION
+        max_value = fmax(max_value, val[i]);
+        min_value = fmin(min_value, val[i]);
+#else
         max_value = fmax(max_value, fabs(val[i]));
+#endif
     }
 
+#if ASYMMETRIC_QUANTIZATION
+    min_value = work_group_reduce_min(min_value);
     max_value = work_group_reduce_max(max_value);
-
-    half scale = 127.0h / max_value;
+    OUTPUT1_TYPE scale = (OUTPUT1_TYPE)((CHAR_MAX - CHAR_MIN) / (max_value - min_value));
+    OUTPUT1_TYPE zp = (OUTPUT1_TYPE)(-min_value * scale) - CHAR_MAX;
+#else
+    max_value = work_group_reduce_max(max_value);
+    OUTPUT1_TYPE scale = 127.0h / max_value;
+#endif
 
 #ifdef APPEND_MODE
     APPEND_AXIS_NAME += axis_offset;
@@ -83,23 +96,39 @@ KERNEL(dynamic_quantize_gpu_opt_generic)(
 
     const uint output_offset = OUTPUT_GET_INDEX(b, f, y, x);
     unroll_for (uint i = 0; i < INNERMOST_DIM_VALUE / SUBGROUP_SIZE; i++) {
-        OUTPUT_BLOCK_WRITE(output, output_offset + i * SUBGROUP_SIZE, convert_char(val[i] * scale));
+#if ASYMMETRIC_QUANTIZATION
+        OUTPUT_TYPE res = convert_char(val[i] * scale + zp);
+#else
+        OUTPUT_TYPE res = convert_char(val[i] * scale);
+#endif
+        OUTPUT_BLOCK_WRITE(output, output_offset + i * SUBGROUP_SIZE, res);
     }
 
-#ifdef APPEND_MODE
-    // const uint scale_axis_offset = axis_offset;
-    const uint scale_axis_offset = 0;
-#else
-    const uint scale_axis_offset = 0;
-#endif
-    const uint scale_idx = FUNC_CALL(get_scales_offset)(OPTIONAL_SHAPE_INFO_TENSOR b, f, y, x, scale_axis_offset);
+    const uint scale_idx = FUNC_CALL(get_scales_offset)(OPTIONAL_SHAPE_INFO_TENSOR b, f, y, x);
 
     if (grouped_indexes == 0 && sglid == 0) {
 #ifdef APPEND_MODE
-        // if (axis_offset > 0) {
-        //     printf("Save scale_idx=%d, axis_offset=%d; output=%p, scale=%p; val=%f\n", scale_idx, axis_offset, output, output_scale, 1.0h / scale);
-        // }
+#if GROUP_SCALES_WITH_ZP
+        // half result0 = (convert_half(convert_char(val[0] * scale + zp)) - zp) * (1.0h / scale);
+        // half result1 = (convert_half(convert_char(val[1] * scale + zp)) - zp) * (1.0h / scale);
+        // half result2 = (convert_half(convert_char(val[2] * scale + zp)) - zp) * (1.0h / scale);
+        // half result3 = (convert_half(convert_char(val[3] * scale + zp)) - zp) * (1.0h / scale);
+        // printf("Save scale_idx=%d, axis_offset=%d; scale=%f; zp=%f, min=%f, max=%f; orig=(%f %f %f %f), compressed=(%d %d %d %d), decompressed=(%f %f)\n", scale_idx, axis_offset, scale, zp, min_value, max_value,
+        //     val[0], val[1], val[2], val[3],
+        //     convert_char(val[0] * scale + zp), convert_char(val[1] * scale + zp), convert_char(val[2] * scale + zp), convert_char(val[3] * scale + zp),
+        //     result0,
+        //     result1);
 #endif
+#endif
+#if ASYMMETRIC_QUANTIZATION
         output_scale[scale_idx] = 1.0h / scale;
+#if GROUP_SCALES_WITH_ZP
+        output_scale[scale_idx + 1] = zp;
+#else
+        output_zp[scale_idx] = zp;
+#endif
+#else
+        output_scale[scale_idx] = 1.0h / scale;
+#endif
     }
 }

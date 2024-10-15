@@ -70,13 +70,22 @@ public:
     const std::vector<uint64_t>& get_group_sizes() const { return m_group_sizes; };
     const std::vector<uint64_t>& get_scales_output_order() const { return m_scales_output_order; };
 
+    bool get_asymmetric_quantization() const {
+        return m_use_asymmetric_quantization;
+    }
+    void set_asymmetric_quantization(bool val) {
+        m_use_asymmetric_quantization = val;
+    }
+
 private:
     int64_t m_concat_axis = 0;
     int64_t m_gather_axis = 0;
     bool m_indirect = false;
 
     // KV-cache compression parameters
+    // TODO: move these parameters to separate structure
     bool m_compressed = false;
+    bool m_use_asymmetric_quantization = false;
     std::vector<uint64_t> m_group_sizes = {};
     std::vector<uint64_t> m_scales_output_order = {};
     ov::element::Type m_compression_type = ov::element::undefined;
