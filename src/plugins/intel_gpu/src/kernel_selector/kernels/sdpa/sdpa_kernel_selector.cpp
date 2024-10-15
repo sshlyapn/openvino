@@ -13,13 +13,13 @@
 namespace kernel_selector {
 
 sdpa_kernel_selector::sdpa_kernel_selector() {
-    int USE_REF = 0;
-    if (const auto env_var = std::getenv("USE_REF")) {
+    int USE_REF_SDPA = 0;
+    if (const auto env_var = std::getenv("USE_REF_SDPA")) {
         std::istringstream ss(env_var);
-        ss >> USE_REF;
+        ss >> USE_REF_SDPA;
     }
 
-    if (!USE_REF) {
+    if (!USE_REF_SDPA) {
         Attach<SDPAKernelOpt>();
         Attach<SDPAKernelRef>();
     #ifdef ENABLE_ONEDNN_FOR_GPU

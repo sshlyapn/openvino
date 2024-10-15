@@ -48,6 +48,9 @@ std::vector<layout> kv_cache_inst::calc_output_layouts(kv_cache_node const& node
     std::vector<ShapeType> output_shapes = desc->compressed ? shape_infer(&op, input_shapes, desc->group_sizes, desc->scales_output_order)
                                                             : shape_infer(&op, input_shapes);
 
+    if (desc->num_outputs == 3)
+        GPU_DEBUG_TRACE_DETAIL << desc->id << " scales output calculated shape: " << output_shapes[2] << "\n";
+
     static const std::map<size_t, size_t> ports_map = {{0, 0}, {1, 2}};
 
     std::vector<layout> out_layouts;

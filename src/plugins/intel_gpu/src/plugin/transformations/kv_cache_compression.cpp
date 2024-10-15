@@ -123,11 +123,12 @@ KVCacheCompressionMatcher::KVCacheCompressionMatcher() {
             };
 
             auto get_scales_output_order = [&](const std::vector<int64_t>& transposed_order) {
+                // Reorder scales in static order: [batch, num_heads, seq_len, head_size]
                 std::vector<uint64_t> scales_output_order(rank, 1);
                 scales_output_order[0] = transposed_order[0];
-                scales_output_order[1] = transposed_order[3];
+                scales_output_order[1] = transposed_order[1];
                 scales_output_order[2] = transposed_order[2];
-                scales_output_order[3] = transposed_order[1];
+                scales_output_order[3] = transposed_order[3];
 
                 return scales_output_order;
             };

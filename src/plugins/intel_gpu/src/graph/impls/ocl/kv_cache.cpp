@@ -76,7 +76,7 @@ struct kv_cache_impl : multi_stage_primitive<kv_cache> {
 
     cldnn::memory::ptr beam_table_prev = nullptr;
     cldnn::memory::ptr beam_table_new = nullptr;
-    cldnn::memory::ptr compression_scale = nullptr;
+    // cldnn::memory::ptr compression_scale = nullptr;
 
     void load(BinaryInputBuffer& ib) override {
         parent::load(ib);
@@ -111,7 +111,7 @@ struct kv_cache_impl : multi_stage_primitive<kv_cache> {
         } else if (stage == scale_concat_stage) {
             // FIXME: indirectness and compression are orthogonal feature.
             args.inputs = { instance.input_memory_ptr(3) }; // [past, new, beam_table, past_scale, new_scale]
-            args.outputs = { compression_scale };
+            args.outputs = { instance.output_memory_ptr(2) };
         } else if (stage == dq_concat_stage) {
             args.inputs = { instance.input_memory_ptr(1) }; // [past, new, beam_table, past_scale, new_scale]
             args.outputs = { instance.output_memory_ptr(0), instance.output_memory_ptr(2) };
@@ -162,6 +162,7 @@ struct kv_cache_impl : multi_stage_primitive<kv_cache> {
     }
 
     event::ptr execute_impl(const std::vector<event::ptr>& events, kv_cache_inst& instance) override {
+        GPU_DEBUG_TRACE_DETAIL << "Execute kv-cache: " << instance.get_impl_params()->_can_be_optimized << " " << instance.get_impl_params()->get_input_layout(3).to_short_string() << "\n";
         const bool can_be_optimized = instance.get_impl_params()->_can_be_optimized;
         auto& stream = instance.get_network().get_stream();
         auto& engine = instance.get_network().get_engine();
@@ -175,8 +176,9 @@ struct kv_cache_impl : multi_stage_primitive<kv_cache> {
             // However, allow execution of the first token for the case if KV-cache can't be optimized (if optimization is disabled, or
             // variables memory was reallocated and we have to copy past KV-cache to new memory)
             _kernels_data[concat_stage].kernels[1].skip_execution = true;
-            if (_kernels_data[concat_stage].kernels[0].skip_execution)
+            if (!_kernels_data[concat_stage].kernels[0].skip_execution) {
                 GPU_DEBUG_TRACE_DETAIL << "Run copy of data!\n";
+            }
         }
 
         execute_stage(events, instance, res_events, concat_stage);
@@ -217,50 +219,51 @@ struct kv_cache_impl : multi_stage_primitive<kv_cache> {
         }
 
         if (desc->compressed) {
-            const auto scale_alloc_type = engine.get_preferred_memory_allocation_type(false);
+            // const auto scale_alloc_type = engine.get_preferred_memory_allocation_type(false);
             auto comp_scale_state =
                 dynamic_cast<ov::intel_gpu::VariableStateIndirectKVCache&>(variable).get_compression_scale_state();
-            auto comp_scale_layout = instance.get_impl_params()->output_layouts[2];
-            auto comp_scale_shape = comp_scale_layout.get_shape();
+            // auto comp_scale_layout = instance.get_impl_params()->output_layouts[2];
+            // auto comp_scale_shape = comp_scale_layout.get_shape();
 
-            bool skip_first_kernel = true;
-            const auto preallocation_size = instance.get_prealloc_iter_num();
+            // bool skip_first_kernel = impl_param._can_be_optimized || impl_param.get_input_layout(3).count() == 0;
+            // const auto preallocation_size = instance.get_prealloc_iter_num();
             // const auto preallocation_size = 4;
-            if (compression_scale) {
-                GPU_DEBUG_TRACE_DETAIL << "Has compression, mem=" << compression_scale->get_layout().to_short_string() << ", req size" << ov::shape_size(comp_scale_shape) << ", has " << compression_scale->count() << "\n";
-            } else {
-                GPU_DEBUG_TRACE_DETAIL << "Has compression, mem=" << compression_scale << ", req size" << ov::shape_size(comp_scale_shape) << "\n";
-            }
+            // if (compression_scale) {
+            //     GPU_DEBUG_TRACE_DETAIL << "Has compression, mem=" << compression_scale->get_layout().to_short_string() << ", req size" << ov::shape_size(comp_scale_shape) << ", has " << compression_scale->count() << "\n";
+            // } else {
+            //     GPU_DEBUG_TRACE_DETAIL << "Has compression, mem=" << compression_scale << ", req size" << ov::shape_size(comp_scale_shape) << "\n";
+            // }
 
-            if (!compression_scale || compression_scale->count() < ov::shape_size(comp_scale_shape)) {
-                const auto concat_axis = 2;
-                auto alloc_shape = comp_scale_shape;
-                alloc_shape[concat_axis] += preallocation_size;
-                const layout comp_scale_alloc_layout = {alloc_shape, comp_scale_layout.data_type, comp_scale_layout.format};
-                GPU_DEBUG_TRACE_DETAIL << "Realloc compression scale table to " << comp_scale_alloc_layout.to_short_string() << std::endl;
-                compression_scale = engine.allocate_memory(comp_scale_alloc_layout, scale_alloc_type, false);
+            // if (!compression_scale || compression_scale->count() < ov::shape_size(comp_scale_shape)) {
+            //     const auto concat_axis = 3;
+            //     auto alloc_shape = comp_scale_shape;
+            //     alloc_shape[concat_axis] += preallocation_size;
+            //     const layout comp_scale_alloc_layout = {alloc_shape, comp_scale_layout.data_type, comp_scale_layout.format};
+            //     GPU_DEBUG_TRACE_DETAIL << "Realloc compression scale table to " << comp_scale_alloc_layout.to_short_string() << std::endl;
+            //     compression_scale = engine.allocate_memory(comp_scale_alloc_layout, scale_alloc_type, false);
 
-                skip_first_kernel = comp_scale_state->get_layout().count() == 0;
+            //     skip_first_kernel = comp_scale_state->get_layout().count() == 0;
 
-                if (comp_scale_state->get_layout().count() > 64) {
-                    GPU_DEBUG_TRACE_DETAIL << "Reallocation of scales buffer. Prev " << comp_scale_state->get_layout().to_short_string() << " new: " << comp_scale_alloc_layout.to_short_string() << "(prealloc=" << preallocation_size << ")\n";
-                }
-            }
+            //     if (comp_scale_state->get_layout().count() > 64) {
+            //         GPU_DEBUG_TRACE_DETAIL << "Reallocation of scales buffer. Prev " << comp_scale_state->get_layout().to_short_string() << " new: " << comp_scale_alloc_layout.to_short_string() << "(prealloc=" << preallocation_size << ")\n";
+            //     }
+            // }
 
-            instance.set_output_memory(compression_scale, false, 2);
-            GPU_DEBUG_TRACE_DETAIL << "Override Variable memory\n";
-            comp_scale_state->set_memory(compression_scale, instance.get_impl_params()->output_layouts[2]);
+            // instance.set_output_memory(compression_scale, false, 2);
+            // auto scales_layout = instance.get_impl_params()->output_layouts[2];
+            // size_t scale_concat_axis = 3;
+            // scales_layout.data_padding._upper_size[scale_concat_axis] =
+            // GPU_DEBUG_TRACE_DETAIL << "Override Variable memory with layoyut " << instance.get_impl_params()->output_layouts[2] << "\n";
 
-            if (!skip_first_kernel) {
-                GPU_DEBUG_TRACE_DETAIL << "Run copy of scales!\n";
-                auto comp_scale_kernel_params = get_compression_scale_update_kernel_params(impl_param, impl_param.is_dynamic());
-                (_kernels_data[scale_concat_stage].update_dispatch_data_func)(comp_scale_kernel_params, _kernels_data[scale_concat_stage]);
-                _kernels_data[scale_concat_stage].kernels[0].skip_execution = false;
+            // comp_scale_state->set_memory(compression_scale, instance.get_impl_params()->output_layouts[2]);
 
-                execute_stage(events, instance, res_events, scale_concat_stage);
-            }
+            // if (!_kernels_data[scale_concat_stage].kernels[0].skip_execution) {
+            //     GPU_DEBUG_TRACE_DETAIL << "Run copy of scales!\n";
+            //     (_kernels_data[scale_concat_stage].update_dispatch_data_func)(comp_scale_kernel_params, _kernels_data[scale_concat_stage]);
+            //     _kernels_data[scale_concat_stage].kernels[0].skip_execution = false;
 
-
+            execute_stage(events, instance, res_events, scale_concat_stage);
+            // }
 
             auto dq_params = get_dq_update_kernel_params(impl_param, impl_param.is_dynamic());
             (_kernels_data[dq_concat_stage].update_dispatch_data_func)(dq_params, _kernels_data[dq_concat_stage]);
@@ -528,6 +531,7 @@ struct kv_cache_impl : multi_stage_primitive<kv_cache> {
     }
 
     void update_dispatch_data(const kernel_impl_params& impl_param) override {
+        GPU_DEBUG_TRACE_DETAIL << "update_dispatch_data kv-cache: " << impl_param._can_be_optimized << " " << impl_param.get_input_layout(3).to_short_string() << "\n";
         // If model loaded from cache, params are not initialized, so we create a new object and reuse it in the future
         if (_kernels_data[concat_stage].params == nullptr) {
             _kernels_data[concat_stage].params = std::make_shared<kernel_params_t>(get_concat_kernel_params(impl_param, true));
@@ -541,6 +545,12 @@ struct kv_cache_impl : multi_stage_primitive<kv_cache> {
 
         (_kernels_data[concat_stage].update_dispatch_data_func)(params, _kernels_data[concat_stage]);
         _kernels_data[concat_stage].kernels[0].skip_execution = impl_param._can_be_optimized || impl_param.get_input_layout(0).count() == 0;
+
+        if (impl_param.typed_desc<kv_cache>()->compressed) {
+            auto comp_scale_kernel_params = get_compression_scale_update_kernel_params(impl_param, impl_param.is_dynamic());
+            (_kernels_data[scale_concat_stage].update_dispatch_data_func)(comp_scale_kernel_params, _kernels_data[scale_concat_stage]);
+            _kernels_data[scale_concat_stage].kernels[0].skip_execution = impl_param._can_be_optimized || impl_param.get_input_layout(3).count() == 0;
+        }
     }
 };
 

@@ -258,7 +258,7 @@ KERNEL(sdpa_opt)(
 #endif
 #ifdef COMPRESSED_PER_HEAD
                 // const uint key_scale_comp_offset = GET_DATA_INDEX_6D(KEY_COMPRESSION_SCALE, b_idx, seq_len, 0, 0, b1_idx, 0);
-                const uint key_scale_comp_offset = GET_DATA_INDEX_6D(KEY_COMPRESSION_SCALE, b_idx, 0, 0, 0, start_partition_idx + seq_len, b1_idx / BROADCAST_GROUP_SIZE);
+                const uint key_scale_comp_offset = GET_DATA_INDEX_6D(KEY_COMPRESSION_SCALE, b_idx, 0, 0, b1_idx / BROADCAST_GROUP_SIZE, start_partition_idx + seq_len, 0);
 
 #else
                 // const uint key_scale_comp_offset = GET_DATA_INDEX_6D(KEY_COMPRESSION_SCALE, b_idx, seq_len, 0, 0, 0, 0);
@@ -584,7 +584,7 @@ KERNEL(sdpa_opt)(
 #ifdef COMPRESSED_PER_HEAD
             // TODO: consider to change scales layout from [batch, seq_len, num_heads, 1] to [batch, num_heads, seq_len, 1]
             // const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, 0, 0, b1_idx, 0);
-            const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, 0, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, b1_idx / BROADCAST_GROUP_SIZE);
+            const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, b1_idx / BROADCAST_GROUP_SIZE, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, 0);
 #else
             // const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, 0, 0, 0, 0);
             const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, 0, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, 0);
@@ -655,7 +655,7 @@ KERNEL(sdpa_opt)(
 #ifdef COMPRESSED_PER_HEAD
             // TODO: consider to change scales layout from [batch, seq_len, num_heads, 1] to [batch, num_heads, seq_len, 1]
             // const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, start_partition_idx + seq_len, 0, 0, b1_idx, 0);
-            const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, 0, start_partition_idx + seq_len, b1_idx / BROADCAST_GROUP_SIZE);
+            const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, b1_idx / BROADCAST_GROUP_SIZE, start_partition_idx + seq_len, 0);
 #else
             // const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, start_partition_idx + seq_len, 0, 0, 0, 0);
             const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, 0, start_partition_idx + seq_len, 0);
@@ -928,12 +928,18 @@ KERNEL(sdpa_opt)(
 #endif
         uint query_local_offset = head_size_idx * TARGET_SEQ_LEN_BLOCK_SIZE;
 
+#if HAS_SCALE_INPUT
+        const OUTPUT_TYPE scale_val = *scale;
+#else
+        const OUTPUT_TYPE scale_val = TO_OUTPUT_TYPE(STATIC_SCALE_VALUE);
+#endif
+
         if (cur_target_seq_len_size != TARGET_SEQ_LEN_BLOCK_SIZE) {
             if (sgid * SUBGROUP_SIZE < HEAD_SIZE) {
                 for (uint seq_idx = 0; seq_idx < cur_target_seq_len_size; seq_idx++) {
                     INPUT0_TYPE val = BLOCK_READN(INPUT0_TYPE, 1, query_input, query_offset);
 
-                    slm_query[query_local_offset] = val;
+                    slm_query[query_local_offset] = val * scale_val;
                     query_offset += query_pitch;
                     query_local_offset++;
                 }
@@ -944,7 +950,7 @@ KERNEL(sdpa_opt)(
                     unroll_for (uint seq_idx = 0; seq_idx < (TARGET_SEQ_LEN_BLOCK_SIZE / SG_SCALE_FACTOR); seq_idx++) {
                         INPUT0_TYPE val = BLOCK_READN(INPUT0_TYPE, 1, query_input, query_offset);
 
-                        slm_query[query_local_offset] = val;
+                        slm_query[query_local_offset] = val * scale_val;
                         query_offset += query_pitch;
                         query_local_offset++;
                     }
@@ -954,7 +960,7 @@ KERNEL(sdpa_opt)(
                     unroll_for (uint seq_idx = 0; seq_idx < (TARGET_SEQ_LEN_BLOCK_SIZE / SG_SCALE_FACTOR); seq_idx++) {
                         INPUT0_TYPE val = BLOCK_READN(INPUT0_TYPE, 1, query_input, query_offset);
 
-                        slm_query[query_local_offset] = val;
+                        slm_query[query_local_offset] = val * scale_val;
                         query_offset += query_pitch;
                         query_local_offset++;
                     }
@@ -965,7 +971,7 @@ KERNEL(sdpa_opt)(
                 unroll_for (uint seq_idx = 0; seq_idx < (TARGET_SEQ_LEN_BLOCK_SIZE / SG_SCALE_FACTOR); seq_idx++) {
                     INPUT0_TYPE val = BLOCK_READN(INPUT0_TYPE, 1, query_input, query_offset);
 
-                    slm_query[query_local_offset] = val;
+                    slm_query[query_local_offset] = val * scale_val;
                     query_offset += query_pitch;
                     query_local_offset++;
                 }
@@ -973,7 +979,7 @@ KERNEL(sdpa_opt)(
                 unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
                     INPUT0_TYPE val = BLOCK_READN(INPUT0_TYPE, 1, query_input, query_offset);
 
-                    slm_query[query_local_offset] = val;
+                    slm_query[query_local_offset] = val * scale_val;
                     query_offset += query_pitch;
                     query_local_offset++;
                 }
@@ -1053,7 +1059,7 @@ KERNEL(sdpa_opt)(
 #endif
 #ifdef COMPRESSED_PER_HEAD
                 // const uint key_scale_comp_offset = GET_DATA_INDEX_6D(KEY_COMPRESSION_SCALE, b_idx, seq_len + sglid, 0, 0, b1_idx, 0);
-                const uint key_scale_comp_offset = GET_DATA_INDEX_6D(KEY_COMPRESSION_SCALE, b_idx, 0, 0, 0, seq_len + sglid, b1_idx / BROADCAST_GROUP_SIZE);
+                const uint key_scale_comp_offset = GET_DATA_INDEX_6D(KEY_COMPRESSION_SCALE, b_idx, 0, 0, b1_idx / BROADCAST_GROUP_SIZE, seq_len + sglid, 0);
 #else
                 // const uint key_scale_comp_offset = GET_DATA_INDEX_6D(KEY_COMPRESSION_SCALE, b_idx, seq_len + sglid, 0, 0, 0, 0);
                 const uint key_scale_comp_offset = GET_DATA_INDEX_6D(KEY_COMPRESSION_SCALE, b_idx, 0, 0, 0, seq_len + sglid, 0);
@@ -1102,7 +1108,7 @@ KERNEL(sdpa_opt)(
 #endif
 #ifdef COMPRESSED_PER_HEAD
                 // const uint key_scale_comp_offset = GET_DATA_INDEX_6D(KEY_COMPRESSION_SCALE, b_idx, seq_len + sglid, 0, 0, b1_idx, 0);
-                const uint key_scale_comp_offset = GET_DATA_INDEX_6D(KEY_COMPRESSION_SCALE, b_idx, 0, 0, 0, seq_len + sglid, b1_idx / BROADCAST_GROUP_SIZE);
+                const uint key_scale_comp_offset = GET_DATA_INDEX_6D(KEY_COMPRESSION_SCALE, b_idx, 0, 0, b1_idx / BROADCAST_GROUP_SIZE, seq_len + sglid, 0);
 #else
                 // const uint key_scale_comp_offset = GET_DATA_INDEX_6D(KEY_COMPRESSION_SCALE, b_idx, seq_len + sglid, 0, 0, 0, 0);
                 const uint key_scale_comp_offset = GET_DATA_INDEX_6D(KEY_COMPRESSION_SCALE, b_idx, 0, 0, 0, seq_len + sglid, 0);
@@ -1185,12 +1191,7 @@ KERNEL(sdpa_opt)(
 
             {
                 unroll_for (uint i = 0; i < TARGET_SEQ_LEN_BLOCK_SIZE; i++) {
-#if HAS_SCALE_INPUT
-                    const OUTPUT_TYPE scale_val = *scale;
-#else
-                    const OUTPUT_TYPE scale_val = TO_OUTPUT_TYPE(STATIC_SCALE_VALUE);
-#endif
-                    qk_acc[i] *= scale_val;
+
 
 #ifdef HAS_ALIBI
                     const int alibi_val = (1 - SOURCE_SEQ_LEN) + seq_len + i;
@@ -1320,7 +1321,7 @@ KERNEL(sdpa_opt)(
 #endif
 #ifdef COMPRESSED_PER_HEAD
                     // const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, start_partition_idx + (seq_len) + sglid, 0, 0, b1_idx, 0);
-                    const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, 0, start_partition_idx + (seq_len) + sglid, b1_idx / BROADCAST_GROUP_SIZE);
+                    const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, b1_idx / BROADCAST_GROUP_SIZE, start_partition_idx + (seq_len) + sglid, 0);
 #else
                     // const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, start_partition_idx + (seq_len) + sglid, 0, 0, 0, 0);
                     const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, 0, start_partition_idx + (seq_len) + sglid, 0);
@@ -1386,7 +1387,7 @@ KERNEL(sdpa_opt)(
 #endif
 #ifdef COMPRESSED_PER_HEAD
                     // const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, 0, 0, b1_idx, 0);
-                    const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, 0, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, b1_idx / BROADCAST_GROUP_SIZE);
+                    const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, b1_idx / BROADCAST_GROUP_SIZE, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, 0);
 #else
                     // const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, 0, 0, 0, 0);
                     const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, 0, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, 0);
@@ -1461,7 +1462,7 @@ KERNEL(sdpa_opt)(
 #endif
 #ifdef COMPRESSED_PER_HEAD
                     // const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, start_partition_idx + seq_len_leftovers_start + sglid, 0, 0, b1_idx, 0);
-                    const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, 0, start_partition_idx + seq_len_leftovers_start + sglid, b1_idx / BROADCAST_GROUP_SIZE);
+                    const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, b1_idx / BROADCAST_GROUP_SIZE, start_partition_idx + seq_len_leftovers_start + sglid, 0);
 #else
                     // const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, start_partition_idx + seq_len_leftovers_start + sglid, 0, 0, 0, 0);
                     const uint value_scale_comp_offset = GET_DATA_INDEX_6D(VALUE_COMPRESSION_SCALE, b_idx, 0, 0, 0, start_partition_idx + seq_len_leftovers_start + sglid, 0);

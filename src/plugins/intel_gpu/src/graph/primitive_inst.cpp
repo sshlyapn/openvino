@@ -490,6 +490,12 @@ void primitive_inst::update_shape() {
         auto& variable = get_network().get_variable(desc->variable_id);
         // Custom output layout update as update_output_layout handles paddings incorrectly for optimized out read_value + kv_cache pattern
         _impl_params->output_layouts[0] = variable.get_layout();
+
+        if (desc->compressed) {
+            GPU_DEBUG_TRACE_DETAIL << "Update ReadValue output\n";
+            auto& multi_tensors_variable = downcast<ov::intel_gpu::VariableStateIndirectKVCache>(variable);
+            _impl_params->output_layouts[1] = multi_tensors_variable.get_compression_scale_state()->get_layout();
+        }
     }
 
     if (get_node().is_type<kv_cache>()) {
@@ -572,6 +578,13 @@ event::ptr primitive_inst::realloc_if_needed() {
                                     << ", variable layout " << variable.get_layout().to_short_string() << ")" << std::endl;
 
                 _outputs[0] = variable.get_memory();
+
+                auto prim = _node->as<kv_cache>().get_primitive();
+                if (prim->compressed) {
+                    const auto& multi_tensor_var = downcast<ov::intel_gpu::VariableStateIndirectKVCache>(variable);
+                    _outputs[2] = multi_tensor_var.get_compression_scale_state()->get_memory();
+                }
+
                 // To record shape predictor
                 for (size_t j = 0; j < _impl_params->output_layouts.size(); ++j)
                     sp.predict_preallocation_shape(id(), _impl_params->output_layouts[j], true, j);
@@ -719,13 +732,19 @@ event::ptr primitive_inst::realloc_if_needed() {
     for (size_t i = 0; i < updated_layouts.size(); ++i) {
         bool reclaim = 0;
         size_t required_buffer_size = 0;
-        if (_node->is_type<kv_cache>() && i == 0) {
+        if (_node->is_type<kv_cache>() && (i == 0 || i == 2)) {
             // Relax reclaiming condition for kv cache
             const auto& desc = _node->as<kv_cache>().get_primitive();
             auto prealloc_shape = updated_layouts[i].get_shape();
             const auto shape_rank = prealloc_shape.size();
-            auto seq_axis =
-                static_cast<int32_t>(desc->concat_axis >= 0 ? desc->concat_axis : shape_rank + desc->concat_axis);
+            auto seq_axis = 0;
+            if (i == 0) {
+                // seq_axis = kv_cache_inst::get_sequence_axis(desc->concat_axis, shape_rank);
+                seq_axis = static_cast<int32_t>(desc->concat_axis >= 0 ? desc->concat_axis : shape_rank + desc->concat_axis);
+            } else if (i == 2) {
+                seq_axis = 2;
+            }
+
             prealloc_shape[seq_axis] += tmp_prealloc_count;
             required_buffer_size = std::accumulate(prealloc_shape.begin(), prealloc_shape.end(), size_t(1), std::multiplies<size_t>());
         } else {
@@ -758,11 +777,17 @@ event::ptr primitive_inst::realloc_if_needed() {
         //     continue;
 
         std::pair<bool, ov::Shape> prealloc_info;
-        if (_node->is_type<kv_cache>() && i == 0) {
+        if (_node->is_type<kv_cache>() && (i == 0 || i == 2)) {
             const auto& desc = _node->as<kv_cache>().get_primitive();
             auto shape_rank = updated_layouts[i].get_shape().size();
-            auto seq_axis =
-                static_cast<int32_t>(desc->concat_axis >= 0 ? desc->concat_axis : shape_rank + desc->concat_axis);
+            auto seq_axis = 0;
+            if (i == 0) {
+                // seq_axis = static_cast<int32_t>(desc->concat_axis >= 0 ? desc->concat_axis : shape_rank + desc->concat_axis);
+                seq_axis = kv_cache_inst::get_sequence_axis(desc->concat_axis, shape_rank);
+            } else if (i == 2) {
+                seq_axis = 2;
+            }
+
             prealloc_info = sp.predict_preallocation_shape(id(), updated_layouts[i], false, i, tmp_prealloc_count, seq_axis);
         } else {
             prealloc_info = sp.predict_preallocation_shape(id(), updated_layouts[i], can_reuse_buffer, i, tmp_prealloc_count);
@@ -778,20 +803,20 @@ event::ptr primitive_inst::realloc_if_needed() {
             GPU_DEBUG_TRACE_DETAIL << id() << ": reuse previously allocated output buffer[" << i << "] - "
                                    << actual_layouts[i].get_linear_size() << "/" << _max_output_layout_count[i]
                                    << std::endl;
-            if (_node->is_type<kv_cache>() && (i == 0)) {
+            if (_node->is_type<kv_cache>() && (i == 0 || i == 2)) {
                 // kv_cache has already assigned memory.
                 // No need to reinterpret output memory but need to update padding
                 const auto& desc = _node->as<kv_cache>().get_primitive();
                 auto& present_layout = _impl_params->output_layouts[i];
                 const auto present_layout_rank = present_layout.get_partial_shape().size();
-                const auto sequence_axis = kv_cache_inst::get_sequence_axis(desc->concat_axis, present_layout_rank);
+                const auto sequence_axis = i == 0 ? kv_cache_inst::get_sequence_axis(desc->concat_axis, present_layout_rank) : 2;
                 GPU_DEBUG_TRACE_DETAIL << "get_max_pad: " << present_layout.to_short_string() << " " << _max_output_layout_count[0] << " " << sequence_axis << "\n";
                 auto max_pad = kv_cache_inst::get_max_pad(present_layout,
                                                           _max_output_layout_count[i],
                                                           sequence_axis,
-                                                          "present_layout");
+                                                          i == 0 ? "present_layout" : "present_scales_layout");
                 kv_cache_inst::update_pad(present_layout, max_pad, sequence_axis);
-                GPU_DEBUG_TRACE_DETAIL << _impl_params->output_layouts[i].to_string() << std::endl;
+                GPU_DEBUG_TRACE_DETAIL << i << ". " << _impl_params->output_layouts[i].to_string() << std::endl;
                 set_shape_change();
             } else {
                 _outputs[i] = _network.get_engine().reinterpret_buffer(*_outputs[i], actual_layouts[i]);
@@ -853,7 +878,26 @@ event::ptr primitive_inst::realloc_if_needed() {
                                                       sequence_axis,
                                                       "present_layout");
             if (max_pad > 0) {
+                if (desc->compressed) {
+                    GPU_DEBUG_TRACE_DETAIL << "Compressed case!\n";
+                    auto present_scales_layout = _impl_params->output_layouts[2];
+
+                    const auto sequence_axis = 2;
+                    GPU_DEBUG_TRACE_DETAIL << id() << " is kv_cache => set the variable with newly allocated output memory"
+                                        << std::endl;
+
+                    kv_cache_inst::update_pad(present_scales_layout, max_pad, sequence_axis);
+                    GPU_DEBUG_TRACE_DETAIL << "Updated scales pad (" << max_pad << " " << sequence_axis << "): " << present_scales_layout.to_string() << "\n";
+                    if (!axis_is_outer_most) {
+                        _impl_params->output_layouts[2] = present_scales_layout;
+                    }
+
+                    const auto& multi_tensor_var = downcast<ov::intel_gpu::VariableStateIndirectKVCache>(variable);
+                    multi_tensor_var.get_compression_scale_state()->set_memory(_outputs[2], present_scales_layout);
+                }
+
                 kv_cache_inst::update_pad(present_layout, max_pad, sequence_axis);
+                GPU_DEBUG_TRACE_DETAIL << "Updated data pad (" << max_pad << " " << sequence_axis << "): " << present_layout.to_string() << "\n";
                 if (!axis_is_outer_most) {
                     GPU_DEBUG_TRACE_DETAIL << id() << ": Update impl with new output padding" << std::endl;
                     set_shape_change();
@@ -873,12 +917,28 @@ event::ptr primitive_inst::realloc_if_needed() {
                                        << "'s layout with allocated kv cache output: " << present_layout.to_short_string()
                                        << " (is_set  = " << variable.is_set() << ") " << std::endl;
                 variable.set_memory(_outputs[0], present_layout);
+
+                if (desc->compressed) {
+                    GPU_DEBUG_TRACE_DETAIL << "Compressed case[2]!\n";
+                    auto present_scales_layout = _impl_params->output_layouts[2];
+
+                    const auto& multi_tensor_var = downcast<ov::intel_gpu::VariableStateIndirectKVCache>(variable);
+                    multi_tensor_var.get_compression_scale_state()->set_memory(_outputs[2], present_scales_layout);
+                }
             }
         } else {
             GPU_DEBUG_TRACE_DETAIL << id() << ": Update variable " << variable.get_name()
                                    << "'s layout with allocated kv cache output: " << present_layout.to_short_string()
                                    << " (is_set  = " << variable.is_set() << ") " << std::endl;
             variable.set_layout(present_layout);
+
+            if (desc->compressed) {
+                GPU_DEBUG_TRACE_DETAIL << "Compressed case[2]!\n";
+                auto present_scales_layout = _impl_params->output_layouts[2];
+
+                const auto& multi_tensor_var = downcast<ov::intel_gpu::VariableStateIndirectKVCache>(variable);
+                multi_tensor_var.get_compression_scale_state()->set_layout(present_scales_layout);
+            }
         }
     }
 
@@ -1241,6 +1301,13 @@ void primitive_inst::do_runtime_in_place_kv_cache() {
         return;
     }
     const auto& desc = _node->as<kv_cache>().get_primitive();
+
+    if (desc->compressed) {
+        GPU_DEBUG_TRACE_DETAIL << "Original layouts\n";
+        GPU_DEBUG_TRACE_DETAIL << _impl_params->input_layouts[0] << "\n";
+        GPU_DEBUG_TRACE_DETAIL << _impl_params->input_layouts[3] << "\n";
+    }
+
     auto& past_layout = _impl_params->input_layouts[0];
     auto& new_layout = _impl_params->input_layouts[1];
     auto& present_layout = _impl_params->output_layouts[0];
@@ -1268,11 +1335,33 @@ void primitive_inst::do_runtime_in_place_kv_cache() {
         GPU_DEBUG_TRACE_DETAIL << "[do runtime_in_place_kv_cache] " << id() << " Updated present_layout's pad : " << present_layout.to_string() << std::endl;
         auto& variable = get_network().get_variable(desc->variable_info.variable_id);
         variable.set_layout(present_layout);
+
+        if (desc->compressed) {
+            GPU_DEBUG_TRACE_DETAIL << "Compressed case[1]!\n";
+            auto& present_scales_layout = _impl_params->output_layouts[2];
+            const auto sequence_axis = 2;
+            kv_cache_inst::update_pad(present_scales_layout, max_pad - new_seq_len, sequence_axis);
+            GPU_DEBUG_TRACE_DETAIL << "[do runtime_in_place_kv_cache] " << id() << " Updated present_scale_layout's pad : " << present_scales_layout.to_string() << std::endl;
+
+            const auto& multi_tensor_var = downcast<ov::intel_gpu::VariableStateIndirectKVCache>(variable);
+            multi_tensor_var.get_compression_scale_state()->set_layout(present_scales_layout);
+        }
+
         GPU_DEBUG_TRACE_DETAIL << "[do_runtime_in_place_kv_cache] " << id() << "Updated variable with present_layout"
                                << variable.get_layout().to_string() << " is_set  = " << variable.is_set() << std::endl;
         if (past_layout.data_padding._upper_size[sequence_axis] > 0 && variable.is_set()) {
             kv_cache_inst::update_pad(past_layout, max_pad, sequence_axis);
             _impl_params->_can_be_optimized = true;
+
+            GPU_DEBUG_TRACE_DETAIL << "Updated data layout (" << max_pad << " " << sequence_axis << "): " << _impl_params->input_layouts[0] << "\n";
+
+            if (desc->compressed) {
+                GPU_DEBUG_TRACE_DETAIL << "Compressed case[2]!\n";
+                auto& past_scale_layout = _impl_params->input_layouts[3];
+                const auto sequence_axis = 2;
+                kv_cache_inst::update_pad(past_scale_layout, max_pad, sequence_axis);
+                GPU_DEBUG_TRACE_DETAIL << "Updated scales layout (" << max_pad << " " << sequence_axis << "): " << _impl_params->input_layouts[3] << "\n";
+            }
             GPU_DEBUG_TRACE_DETAIL << "[do_runtime_in_place_kv_cache] " << id() << " Updated past layout's pad : " << past_layout.to_string() << std::endl;
         }
     }

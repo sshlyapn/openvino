@@ -876,21 +876,47 @@ void prepare_buffer_fusing::run(program& p) {
                 padding::DynamicDimsMask info_dynamic_pad;
                 info_dynamic_pad[concat_axis] = 1;
                 kv_out_layout.data_padding._dynamic_dims_mask = info_dynamic_pad;
+                GPU_DEBUG_TRACE_DETAIL << node.id() << " 0th  output  layout before before " << node.get_output_layout(false,  0) << "\n";
                 node.set_output_layout(kv_out_layout);
                 node.can_share_buffer(false);
+                GPU_DEBUG_TRACE_DETAIL << node.id() << " 0th  output  layout after " << node.get_output_layout(false,  0) << "\n";
 
-                auto update_dep = [&info_dynamic_pad](program_node* dep) {
-                    auto prev_layout = dep->get_output_layout();
+                auto update_dep = [](program_node* dep, padding::DynamicDimsMask& info_dynamic_pad, size_t idx) {
+                    auto prev_layout = dep->get_output_layout(true, idx);
                     prev_layout.data_padding._dynamic_dims_mask = info_dynamic_pad;
-                    dep->set_output_layout(prev_layout);
+                    dep->set_output_layout(prev_layout, true, idx);
                     dep->can_share_buffer(false);
                 };
 
                 if (rv_prim) {
-                    update_dep(rv_prim);
+                    update_dep(rv_prim, info_dynamic_pad, 0);
                 }
                 if (gather_prim) {
-                    update_dep(gather_prim);
+                    update_dep(gather_prim, info_dynamic_pad, 0);
+                }
+
+                GPU_DEBUG_TRACE_DETAIL << "valid first? " << node.is_valid_output_layout(0) << "\n";
+                GPU_DEBUG_TRACE_DETAIL << "first output :" << node.get_output_layout(false,  0) << "\n";
+
+                if (node.get_primitive()->compressed) {
+                    const auto scales_output_idx = 2;
+                    auto scales_out_layout = node.get_output_layout(false, scales_output_idx);
+
+                    const size_t scales_zp_concat_axis = 2;
+                    padding::DynamicDimsMask info_dynamic_pad_scales;
+                    info_dynamic_pad_scales[scales_zp_concat_axis] = 1;
+                    GPU_DEBUG_TRACE_DETAIL << "Set this pad: " << info_dynamic_pad_scales << "\n";
+                    scales_out_layout.data_padding._dynamic_dims_mask = info_dynamic_pad_scales;
+                    GPU_DEBUG_TRACE_DETAIL << "Pad after: " << info_dynamic_pad_scales << " " << scales_out_layout.data_padding._dynamic_dims_mask << " " << scales_out_layout.data_padding.is_dynamic() << "\n";
+                    GPU_DEBUG_TRACE_DETAIL << scales_out_layout.to_string() << "\n";
+                    GPU_DEBUG_TRACE_DETAIL << node.id() << " 2nd  output  layout before before " << node.get_output_layout(false,  scales_output_idx) << "\n";
+                    node.set_output_layout(scales_out_layout, true, scales_output_idx);
+                    GPU_DEBUG_TRACE_DETAIL << node.id() << " 2nd  output  after " << node.get_output_layout(false,  scales_output_idx) << " " << node.get_output_layout(false,  scales_output_idx).data_padding._dynamic_dims_mask << "\n";
+
+                    update_dep(rv_prim, info_dynamic_pad_scales, 1);
+
+                    GPU_DEBUG_TRACE_DETAIL << "valid 3d? " << node.is_valid_output_layout(scales_output_idx) << "\n";
+                    GPU_DEBUG_TRACE_DETAIL << node.id() << " 2nd  output layout " << node.get_output_layout(false,  scales_output_idx) << " " << info_dynamic_pad << "\n";
                 }
             }
         });
