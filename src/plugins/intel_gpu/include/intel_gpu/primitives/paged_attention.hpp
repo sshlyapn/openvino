@@ -21,7 +21,9 @@ struct paged_attention : public primitive_base<paged_attention> {
     paged_attention(const primitive_id& id,
                     const std::vector<input_info>& inputs)
         : primitive_base(id, inputs) {
-        OPENVINO_ASSERT(inputs.size() == 13, "[GPU] Unexpected inputs number for PagedAttention primitive: ", inputs.size());
+        OPENVINO_ASSERT((inputs.size() == 13) || (inputs.size() == 15),
+                        "[GPU] Unexpected inputs number for PagedAttention primitive: ",
+                        inputs.size());
     }
 
     bool operator==(const primitive& rhs) const override {
@@ -34,6 +36,7 @@ struct paged_attention : public primitive_base<paged_attention> {
         ob << heads_num;
         ob << kv_heads_num;
         ob << has_alibi;
+        ob << has_rotation_coefficients;
     }
 
     void load(BinaryInputBuffer& ib) override {
@@ -42,6 +45,7 @@ struct paged_attention : public primitive_base<paged_attention> {
         ib >> heads_num;
         ib >> kv_heads_num;
         ib >> has_alibi;
+        ib >> has_rotation_coefficients;
     }
 
     optional_value<float> scale_val{};
@@ -49,5 +53,6 @@ struct paged_attention : public primitive_base<paged_attention> {
     size_t heads_num = 0;
     size_t kv_heads_num = 0;
     bool has_alibi = false;
+    bool has_rotation_coefficients = false;
 };
 }  // namespace cldnn

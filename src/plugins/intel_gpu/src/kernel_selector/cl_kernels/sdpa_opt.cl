@@ -172,7 +172,7 @@ KERNEL(sdpa_opt)(
 #endif
 
 #if SUBGROUPS_PER_WG > SUBGROUP_SIZE
-    #error "sdpa_opt.cl: Number of subgroups per work group should be less than subgroup_size
+    #error "sdpa_opt.cl: Number of subgroups per work group should be less than subgroup_size"
 #endif
 
     const uint sgid = get_sub_group_id();
