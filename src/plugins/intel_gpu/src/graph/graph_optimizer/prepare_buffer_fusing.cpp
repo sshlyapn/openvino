@@ -420,10 +420,13 @@ bool crop_in_place_optimization::can_crop_be_optimized_simple_data_format(const 
 }
 
 static bool can_read_value_be_optimize(const read_value_node& node) {
-    if (node.get_users().size() == 1)
+    GPU_DEBUG_TRACE_DETAIL << "Check " << node.id() << " users:" << node.get_users().size() << "\n";
+    std::unordered_set<const cldnn::program_node*> unique_users(node.get_users().begin(), node.get_users().end());
+
+    if (unique_users.size() == 1)
         return true;
 
-    const auto non_shape_of_users_count = std::count_if(node.get_users().begin(), node.get_users().end(), [](const program_node* user) {
+    const auto non_shape_of_users_count = std::count_if(unique_users.begin(), unique_users.end(), [](const program_node* user) {
         return !user->is_type<shape_of>();
     });
     if (non_shape_of_users_count <= 1)
@@ -847,8 +850,24 @@ void prepare_buffer_fusing::run(program& p) {
             if (!rv_prim)
                 return;
 
-            if (kv_out_layout.data_type != rv_prim->get_output_layout().data_type)
+            int DISABLE_KV_OPT = 0;
+            static bool warned = false;
+            if (const auto env_var = std::getenv("DISABLE_KV_OPT")) {
+                std::istringstream ss(env_var);
+                ss >> DISABLE_KV_OPT;
+
+                if (!warned) {
+                    std::cout << "Opt " << DISABLE_KV_OPT << " for kvcache\n";
+                    warned = true;
+                }
+            }
+
+            if (kv_out_layout.data_type != rv_prim->get_output_layout().data_type || DISABLE_KV_OPT) {
+                GPU_DEBUG_TRACE_DETAIL << node.id() << " can't optimize because of different formats: " << kv_out_layout.to_short_string() << " vs " << rv_prim->get_output_layout().to_short_string() << "\n";
                 return;
+            } else {
+                GPU_DEBUG_TRACE_DETAIL << node.id() << " can optimize because of different formats: " << kv_out_layout.to_short_string() << " vs " << rv_prim->get_output_layout().to_short_string() << "\n";
+            }
 
             auto concat_axis = node.get_primitive()->concat_axis;
 
@@ -857,21 +876,43 @@ void prepare_buffer_fusing::run(program& p) {
                 padding::DynamicDimsMask info_dynamic_pad;
                 info_dynamic_pad[concat_axis] = 1;
                 kv_out_layout.data_padding._dynamic_dims_mask = info_dynamic_pad;
+                GPU_DEBUG_TRACE_DETAIL << node.id() << " 0th  output  layout before before " << node.get_output_layout(false,  0) << "\n";
                 node.set_output_layout(kv_out_layout);
                 node.can_share_buffer(false);
+                GPU_DEBUG_TRACE_DETAIL << node.id() << " 0th  output  layout after " << node.get_output_layout(false,  0) << "\n";
 
-                auto update_dep = [&info_dynamic_pad](program_node* dep) {
-                    auto prev_layout = dep->get_output_layout();
+                auto update_dep = [](program_node* dep, padding::DynamicDimsMask& info_dynamic_pad, size_t idx) {
+                    auto prev_layout = dep->get_output_layout(true, idx);
                     prev_layout.data_padding._dynamic_dims_mask = info_dynamic_pad;
-                    dep->set_output_layout(prev_layout);
+                    dep->set_output_layout(prev_layout, true, idx);
                     dep->can_share_buffer(false);
                 };
 
                 if (rv_prim) {
-                    update_dep(rv_prim);
+                    update_dep(rv_prim, info_dynamic_pad, 0);
                 }
                 if (gather_prim) {
-                    update_dep(gather_prim);
+                    update_dep(gather_prim, info_dynamic_pad, 0);
+                }
+
+                const auto& desc = node.get_primitive();
+                if (desc->compressed) {
+                    auto update_scale_zp = [&](size_t kv_cache_output_idx, size_t read_value_output_idx) {
+                        auto scales_out_layout = node.get_output_layout(false, kv_cache_output_idx);
+
+                        const size_t scales_zp_concat_axis = 2;
+                        padding::DynamicDimsMask info_dynamic_pad_scales;
+                        info_dynamic_pad_scales[scales_zp_concat_axis] = 1;
+                        scales_out_layout.data_padding._dynamic_dims_mask = info_dynamic_pad_scales;
+                        node.set_output_layout(scales_out_layout, true, kv_cache_output_idx);
+
+                        update_dep(rv_prim, info_dynamic_pad_scales, read_value_output_idx);
+                    };
+
+                    update_scale_zp(2, 1);
+                    if (desc->quantization_config.is_asymmetric_quantization() && !desc->combine_scales_and_zp) {
+                        update_scale_zp(3, 2);
+                    }
                 }
             }
         });
@@ -905,7 +946,7 @@ void prepare_buffer_fusing::run(program& p) {
             // TODO: Allow optimizations for the case above too. Looks like it can be achieved by more careful
             // topological sort (i.e. if we ensure that all read_value users are completed before assign is run)
             node.can_be_optimized(can_read_value_be_optimize(node));
-            GPU_DEBUG_TRACE_DETAIL << "[prepare_buffer_fusing] : " << node.id() << " can be optimized" << std::endl;
+            GPU_DEBUG_TRACE_DETAIL << "[prepare_buffer_fusing] : " << node.id() << " can be optimized = " << node.can_be_optimized() << std::endl;
         });
     }
 }

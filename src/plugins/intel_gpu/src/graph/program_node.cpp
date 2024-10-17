@@ -90,7 +90,8 @@ void program_node::replace_dependency(size_t idx, std::pair<program_node*, int32
 std::vector<layout> const program_node::get_input_layouts() const {
     std::vector<layout> layouts;
     for (size_t i = 0; i < dependencies.size(); i++) {
-        layouts.push_back(get_input_layout(i));
+        auto input_layout = get_input_layout(i);
+        layouts.push_back(input_layout);
     }
     return layouts;
 }
@@ -434,10 +435,15 @@ layout program_node::get_non_padded_output_layout(bool invalidate_users_if_chang
 }
 
 bool program_node::set_output_layout(layout& new_layout, bool invalidate_users_if_changed, size_t idx) {
+    // GPU_DEBUG_TRACE_DETAIL << "TEST: " << padding::max(new_layout.data_padding, output_layouts[idx].data_padding)._dynamic_dims_mask << "\n";
+
     merge_output_padding(new_layout.data_padding, idx);
+    // GPU_DEBUG_TRACE_DETAIL << "Merged padding[1] " << new_layout.to_string() << "\n";
+    // GPU_DEBUG_TRACE_DETAIL << "Merged padding[2] " << output_layouts[idx].data_padding._dynamic_dims_mask << "\n";
     OPENVINO_ASSERT(idx < output_layouts.size(), id(), " has invalid index : index is ", std::to_string(idx),
                                         " but output_layouts length is ", std::to_string(output_layouts.size()));
     new_layout.data_padding = output_layouts[idx].data_padding;
+    // GPU_DEBUG_TRACE_DETAIL << "Merged padding[3] " << new_layout.to_string() << "\n";
     bool changed = (new_layout != output_layouts[idx]);
     if (changed && invalidate_users_if_changed)  // output_layout has changed! invalidate users
         invalidate_users();

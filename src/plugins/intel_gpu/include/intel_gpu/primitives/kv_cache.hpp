@@ -3,16 +3,22 @@
 //
 
 #pragma once
+
+#include "primitive.hpp"
+
 #include "openvino/core/partial_shape.hpp"
 #include "openvino/core/type/element_type.hpp"
 #include "openvino/op/util/variable.hpp"
-#include "primitive.hpp"
+#include "ov_ops/dynamic_quantize.hpp"
+
 #include <vector>
 
 namespace cldnn {
 
 struct kv_cache : public primitive_base<kv_cache> {
     CLDNN_DECLARE_PRIMITIVE(kv_cache)
+
+    using QuantizationConfig = ov::op::internal::QuantizationConfig;
 
     kv_cache() : primitive_base("", {}) {}
 
@@ -33,11 +39,18 @@ struct kv_cache : public primitive_base<kv_cache> {
     int64_t gather_axis = 0;
     bool indirect = false;
 
+    bool compressed = false;
+    bool combine_scales_and_zp = false;
+    QuantizationConfig quantization_config;
+    std::vector<uint64_t> scales_zp_output_order = {};
+
     size_t hash() const override {
         size_t seed = primitive::hash();
         seed = hash_combine(seed, concat_axis);
         seed = hash_combine(seed, gather_axis);
         seed = hash_combine(seed, indirect);
+        seed = hash_combine(seed, compressed);
+        // TODO: add here
         return seed;
     }
 
@@ -50,7 +63,10 @@ struct kv_cache : public primitive_base<kv_cache> {
         return variable_info == rhs_casted.variable_info &&
                concat_axis == rhs_casted.concat_axis &&
                gather_axis == rhs_casted.gather_axis &&
-               indirect == rhs_casted.indirect;
+               indirect == rhs_casted.indirect &&
+               compressed == rhs_casted.compressed &&
+               quantization_config == rhs_casted.quantization_config;
+        // TODO: add here
     }
 
     void save(BinaryOutputBuffer& ob) const override {
@@ -62,6 +78,8 @@ struct kv_cache : public primitive_base<kv_cache> {
         ob << concat_axis;
         ob << gather_axis;
         ob << indirect;
+        ob << compressed;
+        // TODO: add here
     }
 
     void load(BinaryInputBuffer& ib) override {
@@ -76,6 +94,8 @@ struct kv_cache : public primitive_base<kv_cache> {
         ib >> concat_axis;
         ib >> gather_axis;
         ib >> indirect;
+        ib >> compressed;
+        // TODO: add here
     }
 };
 }  // namespace cldnn

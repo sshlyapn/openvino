@@ -37,6 +37,16 @@ struct dynamic_quantize_impl : typed_primitive_impl_ocl<dynamic_quantize> {
         auto params = get_default_params<kernel_selector::dynamic_quantize_params>(impl_param, is_shape_agnostic);
         params.outputs.push_back(convert_data_tensor(impl_param.get_output_layout(1)));
 
+        if (impl_param.output_layouts.size() > 2) {
+            params.outputs.push_back(convert_data_tensor(impl_param.get_output_layout(2)));
+        }
+
+        const auto& desc = impl_param.typed_desc<dynamic_quantize>();
+        params.group_sizes = desc->quantization_config.group_sizes;
+        params.scales_output_order = desc->scales_zp_output_order;
+        params.use_asymmetric_quantization = desc->quantization_config.is_asymmetric_quantization();
+        params.combine_scales_and_zp = desc->combine_scales_and_zp;
+
         return params;
     }
 
