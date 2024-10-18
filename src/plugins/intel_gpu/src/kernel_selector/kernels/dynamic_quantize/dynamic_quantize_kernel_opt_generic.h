@@ -5,26 +5,16 @@
 #pragma once
 
 #include "kernel_base_opencl.h"
+#include "dynamic_quantize_kernel_ref.h"
 
 namespace kernel_selector {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // dynamic_quantize_params
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-struct dynamic_quantize_params : public base_params {
-    dynamic_quantize_params() : base_params(KernelType::DYNAMIC_QUANTIZE) {}
-
-    int64_t append_axis = -1;
-    int64_t axis_offset = -1;
-    std::vector<uint64_t> group_sizes;
-    std::vector<uint64_t> scales_output_order;
-    bool use_asymmetric_quantization = false;
-    bool combine_scales_and_zp = false;
-};
-
-class DynamicQuantizeKernelRef : public KernelBaseOpenCL {
+class DynamicQuantizeKernelOptGeneric : public KernelBaseOpenCL {
 public:
-    DynamicQuantizeKernelRef() : KernelBaseOpenCL("dynamic_quantize_gpu_ref") {}
-    virtual ~DynamicQuantizeKernelRef() {}
+    DynamicQuantizeKernelOptGeneric() : KernelBaseOpenCL("dynamic_quantize_gpu_opt_generic") {}
+    virtual ~DynamicQuantizeKernelOptGeneric() {}
 
     virtual JitConstants GetJitConstants(const dynamic_quantize_params& params) const;
     virtual CommonDispatchData SetDefault(const dynamic_quantize_params& params) const;
