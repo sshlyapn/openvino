@@ -15,9 +15,18 @@ namespace kernel_selector {
 sdpa_kernel_selector::sdpa_kernel_selector() {
     Attach<SDPAKernelOpt>();
     Attach<SDPAKernelRef>();
+    int USE_OPT_SDPA = 0;
+    if (const auto env_var = std::getenv("USE_SDPA_OPT")) {
+        std::istringstream ss(env_var);
+        ss >> USE_OPT_SDPA;
+    }
+
+    if (!USE_OPT_SDPA) {
 #ifdef ENABLE_ONEDNN_FOR_GPU
-    Attach<SDPAKernelMicro>();
+        Attach<SDPAKernelMicro>();
+        std::cout << "micro_sdpa added\n";
 #endif
+    }
 }
 
 KernelsData sdpa_kernel_selector::GetBestKernels(const Params& params) const {
