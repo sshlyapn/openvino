@@ -911,8 +911,11 @@ bool primitive_inst::use_async_compilation() {
         compile_gemm_impls = _node->get_selected_impl() && _node->get_selected_impl()->get_kernel_name().find("gemm_ref") != std::string::npos;
         compile_gemm_impls |= _impls_factory->has(impl_types::onednn) && _node->get_selected_impl() && !_node->get_selected_impl()->is_onednn();
     }
+    bool compile_reshape_impls = _node->is_type<reshape>() &&
+                                 _impl_params->get_input_layout(0).data_padding.is_dynamic() &&
+                                 !_impl_params->get_output_layout(0).data_padding.is_dynamic();
 
-    return (_node->is_type<convolution>() || compile_fc_impls || compile_gemm_impls ||
+    return (_node->is_type<convolution>() || compile_fc_impls || compile_gemm_impls || compile_reshape_impls ||
             (_node->is_type<softmax>() && _node->get_selected_impl() &&
              _node->get_selected_impl()->get_kernel_name().find("softmax_gpu_ref") != std::string::npos));
 }
@@ -2570,6 +2573,10 @@ std::shared_ptr<primitive_impl> ImplementationsFactory::get_primitive_impl_for_p
         auto kernels = kernels_cache.compile(updated_params, static_impl->get_kernels_source());
         static_impl->set_kernels(std::move(kernels));
         m_static_impls_cache.add(updated_params, static_impl->clone());
+
+        GPU_DEBUG_IF(static_impl->m_manager->get_impl_type() != impl_types::onednn) {
+            GPU_DEBUG_TRACE_DETAIL << "WARNING: runtime kernel compilation for " << node->id() << "\n";
+        }
     }
 
     return static_impl;
