@@ -21,5 +21,11 @@ public:
     IncreasePositionIdsPrecision();
 };
 
+class OptimizeReshapes : public ov::pass::MatcherPass {
+public:
+    OPENVINO_RTTI("OptimizeReshapes", "0");
+    OptimizeReshapes();
+};
+
 }   // namespace intel_gpu
 }   // namespace ov

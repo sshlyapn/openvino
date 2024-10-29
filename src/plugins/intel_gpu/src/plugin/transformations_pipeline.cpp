@@ -95,6 +95,7 @@
 #include "transformations/common_optimizations/weights_dequantize_to_fake_quantize.hpp"
 #include "transformations/common_optimizations/wrap_interpolate_into_transposes.hpp"
 #include "transformations/common_optimizations/fuse_rotary_positional_embeddings.hpp"
+#include "transformations/common_optimizations/reshape_sequence_fusion.hpp"
 #include "transformations/control_flow/unroll_tensor_iterator.hpp"
 #include "transformations/convert_pooling_to_reduce.hpp"
 #include "transformations/convert_precision.hpp"
@@ -900,6 +901,8 @@ void TransformationsPipeline::apply(std::shared_ptr<ov::Model> func) {
         pass_config->disable<ov::pass::RoPEFusionGPTJ>();
         pass_config->disable<ov::pass::RoPEFusionIOSlicing>();
         pass_config->disable<ov::pass::RoPEShareCosSin>();
+
+        manager.register_pass<ov::intel_gpu::OptimizeReshapes>();
 
         manager.register_pass<ov::intel_gpu::IncreasePositionIdsPrecision>();
         // This Validate is needed for proper data type propagation after applying IncreasePositionIdsPrecision pass

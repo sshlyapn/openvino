@@ -25,6 +25,96 @@
 namespace ov {
 namespace intel_gpu {
 
+OptimizeReshapes::OptimizeReshapes() {
+    using namespace ov::pass::pattern;
+    using ov::pass::pattern::op::Or;
+
+    auto first_reshape_data = any_input();
+    auto first_reshape_pattern = ov::pass::pattern::wrap_type<ov::op::v0::Constant>();
+    auto first_reshape = wrap_type<ov::op::v1::Reshape>({ first_reshape_data, first_reshape_pattern }, ov::pass::pattern::consumers_count(1));
+
+    auto second_reshape_pattern = ov::pass::pattern::wrap_type<ov::op::v0::Constant>();
+    auto second_reshape = wrap_type<ov::op::v1::Reshape>({ first_reshape, second_reshape_pattern });
+
+    ov::matcher_pass_callback callback = [OV_CAPTURE_CPY_AND_THIS](ov::pass::pattern::Matcher& m) {
+        const auto& pattern_map = m.get_pattern_value_map();
+
+        auto input_node = pattern_map.at(first_reshape_data).get_node_shared_ptr();
+        auto first_reshape_node = pattern_map.at(first_reshape).get_node_shared_ptr();
+        auto second_reshape_node = pattern_map.at(second_reshape).get_node_shared_ptr();
+
+        std::cout << "Match! " << input_node->get_friendly_name() << "\n";
+
+        auto count_dyn_dims = [](ov::Dimension& dim) { return dim.is_dynamic(); };
+        auto count_static_dims_size = [](ov::PartialShape& ps) {
+            int64_t total_dims = 1;
+
+            for (auto& dim : ps) {
+                if (dim.is_static())
+                    total_dims *= dim.get_length();
+            }
+
+            return total_dims;
+        };
+
+        auto input_ps = first_reshape_node->input(0).get_partial_shape();
+        auto input_dynamic_dims =
+            std::count_if(input_ps.begin(), input_ps.end(), count_dyn_dims);
+
+        auto first_reshape_ps = first_reshape_node->get_output_partial_shape(0);
+        auto first_reshape_dynamic_dims =
+            std::count_if(first_reshape_ps.begin(), first_reshape_ps.end(), count_dyn_dims);
+
+        auto second_reshape_ps = second_reshape_node->get_output_partial_shape(0);
+        auto second_reshape_dynamic_dims =
+            std::count_if(second_reshape_ps.begin(), second_reshape_ps.end(), count_dyn_dims);
+
+        if (input_dynamic_dims != 1)
+            return false;
+
+        if (input_dynamic_dims != first_reshape_dynamic_dims || first_reshape_dynamic_dims != second_reshape_dynamic_dims)
+            return false;
+
+        if (count_static_dims_size(first_reshape_ps) != count_static_dims_size(second_reshape_ps))
+            return false;
+
+        std::vector<int32_t> new_pattern;
+        for (auto& dim : second_reshape_ps) {
+            if (dim.is_dynamic()) {
+                new_pattern.push_back(0);
+            } else {
+                new_pattern.push_back(dim.get_length());
+            }
+        }
+
+        auto new_pattern_const = std::make_shared<ov::op::v0::Constant>(ov::element::i32, ov::Shape{new_pattern.size()}, new_pattern);
+        auto new_reshape = std::make_shared<ov::op::v1::Reshape>(first_reshape_node->input(0).get_source_output(), new_pattern_const, true);
+
+        auto print_arr = [&](const std::vector<int32_t>& vec, size_t max_len, std::string name) {
+            std::stringstream ss;
+            for (size_t i = 0; i < std::min(max_len, vec.size()); i++) {
+                ss << vec[i] << ", ";
+            }
+
+            return ss.str();
+        };
+
+        // second_reshape_node->input(0).replace_source_output(input_node);
+        // second_reshape_node->input(1).replace_source_output(new_pattern_const);
+        ov::replace_node(second_reshape_node, new_reshape);
+        copy_runtime_info(first_reshape_node, new_reshape);
+
+        std::cout << new_reshape->get_friendly_name() << " output shape: " << second_reshape_ps
+                  << ", pattern: " << print_arr(new_pattern, new_pattern.size(), "new_pattern") << "\n";
+
+
+        return true;
+    };
+
+    auto m = std::make_shared<ov::pass::pattern::Matcher>(second_reshape, "OptimizeReshapes");
+    this->register_matcher(m, callback);
+}
+
 IncreasePositionIdsPrecision::IncreasePositionIdsPrecision() {
     using namespace ov::pass::pattern;
     using ov::pass::pattern::op::Or;

@@ -346,6 +346,7 @@ static bool can_reshape_be_optimized(const reshape_node& node) {
     if (!node.is_runtime_propagatable_padding()
         && node.get_input_layout(0).data_padding.is_dynamic()
         && !node.get_output_layout(0).data_padding.is_dynamic()) {
+        GPU_DEBUG_TRACE_DETAIL << "Check " << node.id() << " false\n";
         return false;
     }
 
@@ -357,9 +358,12 @@ static bool can_reshape_be_optimized(const reshape_node& node) {
         node.get_users().front()->get_preferred_impl_type() == impl_types::onednn)
         return true;
 
-    if (node.is_in_place())
+    if (node.is_in_place()) {
+        GPU_DEBUG_TRACE_DETAIL << "Check " << node.id() << " true\n";
         return true;
+    }
 
+    GPU_DEBUG_TRACE_DETAIL << "Check " << node.id() << " false\n";
     return false;
 }
 
@@ -493,13 +497,18 @@ bool crop_in_place_optimization::match(const program_node& node,
             }
         }
         if (user->is_type<reshape>()) {
+            GPU_DEBUG_TRACE_DETAIL << "Check " << user->id() << "\n";
             // runtime buffer fusing is only handled when there is only one reshape user
-            if (node.is_dynamic() && node.get_users().size() != 1)
+            if (node.is_dynamic() && node.get_users().size() != 1) {
+                GPU_DEBUG_TRACE_DETAIL << "Check " << user->id() << " false\n";
                 return false;
+            }
             auto& reshape_node = user->as<reshape>();
             if (can_reshape_be_optimized(reshape_node) &&
-                (!node.is_dynamic() || !reshape_node.is_runtime_propagatable_padding()))
-                return false;
+                (!node.is_dynamic() || !reshape_node.is_runtime_propagatable_padding())) {
+                    GPU_DEBUG_TRACE_DETAIL << "Check " << user->id() << " false\n";
+                    return false;
+                }
         }
         if (user->is_type<experimental_detectron_roi_feature_extractor>() && user->get_dependency_index(node) == 0)
             return false;
@@ -531,14 +540,19 @@ bool crop_in_place_optimization::match(const program_node& node,
         // if output padding has defined padding across features already it wouldn't
         // work because it expect to have zeros in the padded area.
         if ((!node.is_dynamic() || is_runtime) &&
-            !is_optimizable_padding_for_crop(node, crop_layout, input_layout, crop_params.input_offsets[0]))
-            return false;
+            !is_optimizable_padding_for_crop(node, crop_layout, input_layout, crop_params.input_offsets[0])) {
+                GPU_DEBUG_TRACE_DETAIL << "Check " << node.id() << " false\n";
+                return false;
+            }
         if (!(((!node.is_dynamic() || is_runtime) && can_crop_be_optimized_along_feature(crop_layout, input_layout))
-            || can_crop_be_optimized_simple_data_format(crop_layout, input_layout)))
-            return false;
+            || can_crop_be_optimized_simple_data_format(crop_layout, input_layout))) {
+                GPU_DEBUG_TRACE_DETAIL << "Check " << node.id() << " false\n";
+                return false;
+            }
     } else {
         return false;
     }
+    GPU_DEBUG_TRACE_DETAIL << "Check " << node.id() << " true\n";
     return true;
 }
 
@@ -659,8 +673,21 @@ void crop_in_place_optimization::update_in_place_crop_padding_simple_data_format
         if (user_info.first && user_info.first->is_type<reshape>()) {
             auto reshape_desc = user_info.first->as<reshape>().get_primitive();
             auto reshape_mode = reshape_desc->mode;
+            auto reshape_axis = crop_axis;
+            auto reshape_dyn_pad_mask = padding::DynamicDimsMask();
+
             if (reshape_mode == reshape::reshape_mode::base) {
-                user_info.second.data_padding._dynamic_dims_mask = dyn_pad_sizes;
+                auto reshape_ps = user_info.second.get_partial_shape();
+                auto crop_dim_val = crop_layout.get_partial_shape()[crop_axis].get_length();
+
+                int64_t mul = 1;
+                for (size_t i = reshape_ps.size(); i > 1; i--) {
+                    if (reshape_ps[i - 1].is_dynamic() || mul == crop_dim_val)
+                        break;
+
+                    mul *= reshape_ps[i - 1].get_length();
+                    reshape_axis = i - 1;
+                }
             } else if (reshape_mode == reshape::reshape_mode::unsqueeze || reshape_mode == reshape::reshape_mode::squeeze) {
                 auto reshape_ps = user_info.second.get_partial_shape();
                 auto output_pattern = reshape_desc->output_pattern;
@@ -671,11 +698,10 @@ void crop_in_place_optimization::update_in_place_crop_padding_simple_data_format
                         reshape_axis += reshape_mode == reshape::reshape_mode::unsqueeze ? 1 : -1;
                     }
                 }
-
-                padding::DynamicDimsMask dyn_pad_mask;
-                dyn_pad_mask[reshape_axis] = 1;
-                user_info.second.data_padding._dynamic_dims_mask = dyn_pad_mask;
             }
+
+            reshape_dyn_pad_mask[reshape_axis] = 1;
+            user_info.second.data_padding._dynamic_dims_mask = reshape_dyn_pad_mask;
         }
         return;
     }
@@ -695,21 +721,61 @@ void crop_in_place_optimization::update_in_place_crop_padding_simple_data_format
         upper_sizes.push_back(input_layout.spatial(i) - offsets.spatial[i] - crop_size.spatial[i]);
     }
 
+    auto print_arr = [&](const std::vector<int32_t>& vec) {
+        std::stringstream ss;
+        for (size_t i = 0; i < vec.size(); i++) {
+            ss << vec[i] << ", ";
+        }
+        return ss.str();
+    };
+
     if (is_runtime) {
         padding::DynamicDimsMask dyn_pad_sizes;
         dyn_pad_sizes[crop_axis] = 1;
         crop_layout.data_padding = padding(lower_sizes, upper_sizes, dyn_pad_sizes);
+        GPU_DEBUG_TRACE_DETAIL << "Set crop paddings: " << print_arr(lower_sizes) << " " << print_arr(upper_sizes) << "\n";
         if (user_info.first) {
             auto reshape_desc = user_info.first->as<reshape>().get_primitive();
             auto reshape_mode = reshape_desc->mode;
             if (reshape_mode == reshape::reshape_mode::base) {
-                auto reshape_rank = user_info.second.get_partial_shape().size();
-                auto reshape_last_dim = user_info.second.get_partial_shape().to_shape()[reshape_rank - 1];
-                if (lower_sizes[crop_axis])
-                    lower_sizes[crop_axis] /= reshape_last_dim;
-                if (upper_sizes[crop_axis])
-                    upper_sizes[crop_axis] /= reshape_last_dim;
-                user_info.second.data_padding = padding(lower_sizes, upper_sizes, dyn_pad_sizes);
+                // auto reshape_rank = user_info.second.get_partial_shape().size();
+                // auto reshape_last_dim = user_info.second.get_partial_shape().to_shape()[reshape_rank - 1];
+
+                auto reshape_ps = user_info.second.get_partial_shape();
+                auto crop_dim_val = crop_layout.get_partial_shape()[crop_axis].get_length();
+                auto reshape_axis = crop_axis;
+
+                int64_t divider = 1;
+                for (size_t i = reshape_ps.size(); i > 1; i--) {
+                    const auto& dim_value = reshape_ps[i - 1].get_length();
+                    if (reshape_ps[i - 1].is_dynamic() || divider * dim_value == crop_dim_val)
+                        break;
+
+                    divider *= reshape_ps[i - 1].get_length();
+                    reshape_axis = i - 1;
+                }
+                reshape_axis -= 1;
+
+                const auto output_rank = std::max(reshape_ps.size(), static_cast<size_t>(4));
+                std::vector<int32_t> reshape_lower_sizes(output_rank, 0);
+                std::vector<int32_t> reshape_upper_sizes(output_rank, 0);
+                padding::DynamicDimsMask reshape_dyn_pad_mask;
+
+                reshape_lower_sizes[reshape_axis] = lower_sizes[crop_axis];
+                reshape_upper_sizes[reshape_axis] = upper_sizes[crop_axis];
+                reshape_dyn_pad_mask[reshape_axis] = 1;
+
+                if (reshape_lower_sizes[reshape_axis])
+                    reshape_lower_sizes[reshape_axis] /= divider;
+                if (reshape_upper_sizes[reshape_axis])
+                    reshape_upper_sizes[reshape_axis] /= divider;
+
+                user_info.second.data_padding = padding(reshape_lower_sizes, reshape_upper_sizes, reshape_dyn_pad_mask);
+                // if (lower_sizes[crop_axis])
+                //     lower_sizes[crop_axis] /= reshape_last_dim;
+                // if (upper_sizes[crop_axis])
+                //     upper_sizes[crop_axis] /= reshape_last_dim;
+                // user_info.second.data_padding = padding(lower_sizes, upper_sizes, dyn_pad_sizes);
             } else {
                 auto reshape_ps = user_info.second.get_partial_shape();
                 auto output_pattern = reshape_desc->output_pattern;
@@ -810,6 +876,7 @@ void prepare_buffer_fusing::run(program& p) {
                                                                                             node.get_primitive()->axis,
                                                                                             false);
                 if (user_info.first) {
+                    GPU_DEBUG_TRACE_DETAIL << "Update output layout with dynamic padding: " << user_info.second << "\n";
                     node.get_users().front()->set_output_layout(user_info.second);
                 }
             }

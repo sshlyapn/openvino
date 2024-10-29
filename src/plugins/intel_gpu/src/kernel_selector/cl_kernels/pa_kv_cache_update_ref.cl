@@ -34,7 +34,8 @@ KERNEL(pa_kv_cache_update)(
         const uint seq_block_idx = block_indices_begins[seq_idx] + seq_len / PAGED_ATTENTION_BLOCK_SIZE;
         const uint block_idx = block_indices[seq_block_idx];
 
-        uint key_value_in_offset = seq_idx * KV_HEADS_NUM * HEAD_SIZE + head_idx * HEAD_SIZE;
+        uint key_in_offset = seq_idx * (KV_HEADS_NUM * HEAD_SIZE + INPUT0_PAD_AFTER_FEATURE_NUM + INPUT0_PAD_BEFORE_FEATURE_NUM) + head_idx * HEAD_SIZE;
+        uint value_in_offset = seq_idx * (KV_HEADS_NUM * HEAD_SIZE + INPUT1_PAD_AFTER_FEATURE_NUM + INPUT1_PAD_BEFORE_FEATURE_NUM) + head_idx * HEAD_SIZE;
 
         uint key_out_offset = block_idx * KV_HEADS_NUM * HEAD_SIZE * PAGED_ATTENTION_BLOCK_SIZE + head_idx * HEAD_SIZE * PAGED_ATTENTION_BLOCK_SIZE + current_token_pos_in_block;
 
@@ -45,7 +46,7 @@ KERNEL(pa_kv_cache_update)(
             #define BLOCK_READ(ptr, offset) BLOCK_READN(INPUT0_TYPE, READ_BLOCK_SIZE, ptr, offset);
             #define DATA_VEC MAKE_VECTOR_TYPE(INPUT0_TYPE, READ_BLOCK_SIZE)
 
-            DATA_VEC input_data = BLOCK_READ(key_data, key_value_in_offset + head_idx_index);
+            DATA_VEC input_data = BLOCK_READ(key_data, key_in_offset + head_idx_index);
 
             unroll_for (uint i = 0; i < READ_BLOCK_SIZE; i++) {
                 uint key_offset = key_out_offset + (head_idx_index + sglid + SUBGROUP_SIZE * i) * PAGED_ATTENTION_BLOCK_SIZE;
@@ -56,7 +57,7 @@ KERNEL(pa_kv_cache_update)(
                 #endif
             }
 
-            input_data = BLOCK_READ(value_data, key_value_in_offset + head_idx_index);
+            input_data = BLOCK_READ(value_data, value_in_offset + head_idx_index);
 
             unroll_for (uint i = 0; i < READ_BLOCK_SIZE; i++) {
                 uint value_offset = value_out_offset + head_idx_index + sglid + SUBGROUP_SIZE * i;
@@ -83,6 +84,12 @@ KERNEL(pa_kv_cache_update)(
 
         const uint token_start_pos = (past_len + block_start_pos - subsequence_begin_idx) % PAGED_ATTENTION_BLOCK_SIZE;
 
+        uint key_in_offset = block_start_pos * (KV_HEADS_NUM * HEAD_SIZE + INPUT0_PAD_AFTER_FEATURE_NUM + INPUT0_PAD_BEFORE_FEATURE_NUM) +
+                             head_idx * HEAD_SIZE;
+
+        uint value_in_offset = block_start_pos * (KV_HEADS_NUM * HEAD_SIZE + INPUT1_PAD_AFTER_FEATURE_NUM + INPUT1_PAD_BEFORE_FEATURE_NUM) +
+                               head_idx * HEAD_SIZE;
+
         uint key_value_in_offset = block_start_pos * KV_HEADS_NUM * HEAD_SIZE +
                                    head_idx * HEAD_SIZE;
 
@@ -98,7 +105,7 @@ KERNEL(pa_kv_cache_update)(
         key_out_offset += token_start_pos;
         value_out_offset += token_start_pos * HEAD_SIZE;
 
-        if (tokens_num == PAGED_ATTENTION_BLOCK_SIZE) {
+        if (tokens_num == PAGED_ATTENTION_BLOCK_SIZE && false) {
             unroll_for (uint token_num = 0; token_num < PAGED_ATTENTION_BLOCK_SIZE; token_num++) {
                 uint head_idx_index = 0;
                 #define READ_BLOCK_SIZE 8
@@ -194,14 +201,14 @@ KERNEL(pa_kv_cache_update)(
                     #define BLOCK_READ(ptr, offset) BLOCK_READN(INPUT0_TYPE, READ_BLOCK_SIZE, ptr, offset);
                     #define DATA_VEC MAKE_VECTOR_TYPE(INPUT0_TYPE, READ_BLOCK_SIZE)
 
-                    DATA_VEC input_data = BLOCK_READ(key_data, key_value_in_offset + head_idx_index);
+                    DATA_VEC input_data = BLOCK_READ(key_data, key_in_offset + head_idx_index);
 
                     unroll_for (uint i = 0; i < READ_BLOCK_SIZE; i++) {
                         uint key_offset = key_out_offset + (head_idx_index + sglid + SUBGROUP_SIZE * i) * PAGED_ATTENTION_BLOCK_SIZE;
                         key_cache_data[key_offset] = input_data;
                     }
 
-                    input_data = BLOCK_READ(value_data, key_value_in_offset + head_idx_index);
+                    input_data = BLOCK_READ(value_data, value_in_offset + head_idx_index);
 
                     unroll_for (uint i = 0; i < READ_BLOCK_SIZE; i++) {
                         uint value_offset = value_out_offset + head_idx_index + sglid + SUBGROUP_SIZE * i;
@@ -209,7 +216,8 @@ KERNEL(pa_kv_cache_update)(
                     }
                 }
 
-                key_value_in_offset += KV_HEADS_NUM * HEAD_SIZE;
+                key_in_offset += (KV_HEADS_NUM * HEAD_SIZE + INPUT0_PAD_AFTER_FEATURE_NUM + INPUT0_PAD_BEFORE_FEATURE_NUM);
+                value_in_offset += (KV_HEADS_NUM * HEAD_SIZE + INPUT1_PAD_AFTER_FEATURE_NUM + INPUT1_PAD_BEFORE_FEATURE_NUM);
                 key_out_offset += 1;
                 value_out_offset += HEAD_SIZE;
             }

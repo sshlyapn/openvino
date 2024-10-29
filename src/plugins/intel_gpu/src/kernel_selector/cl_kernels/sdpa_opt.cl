@@ -1018,7 +1018,7 @@ KERNEL(sdpa_opt)(
             // QK*V calculation
             MAKE_VECTOR_TYPE(OUTPUT_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) acc_output_res = OUTPUT_VAL_ZERO;
 #if IS_PAGED_ATTENTION
-            const uint value_pitch = HEAD_SIZE * NUM_KV_HEADS;
+            const uint value_pitch = (HEAD_SIZE * NUM_KV_HEADS + INPUT2_PAD_BEFORE_FEATURE_NUM + INPUT2_PAD_AFTER_FEATURE_NUM);
 #else
 #ifdef INPUT2_DIMS_ORDER
             uint value_offset_base = FUNC_CALL(get_input2_index)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, 0, 0);
@@ -1028,6 +1028,10 @@ KERNEL(sdpa_opt)(
             const uint value_pitch = HEAD_SIZE;
 #endif
 #endif
+
+            if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_global_id(2) == 0) {
+                printf("PAD_BEFORE=%d, AFTER=%d\n", INPUT2_PAD_BEFORE_FEATURE_NUM, INPUT2_PAD_AFTER_FEATURE_NUM);
+            }
 
             if (partition_seq_len == SEQ_LEN_PARTITION_SIZE) {
                 uint seq_len_start = (sgid / (SUBGROUPS_PER_WG / SG_SCALE_FACTOR)) * (SEQ_LEN_PARTITION_SIZE / SG_SCALE_FACTOR);
@@ -1039,7 +1043,7 @@ KERNEL(sdpa_opt)(
                     const uint heads_dim = num_heads_dim;
 #endif
                     const uint value_seq_offset = subsequence_begins[gws_seq_indexes_correspondence[target_seq_dim]];
-                    uint value_offset = value_seq_offset * HEAD_SIZE * NUM_KV_HEADS + heads_dim * HEAD_SIZE + (start_partition_idx + (seq_len)) * HEAD_SIZE * NUM_KV_HEADS + head_size_idx;
+                    uint value_offset = INPUT2_PAD_BEFORE_FEATURE_NUM + value_seq_offset * (HEAD_SIZE * NUM_KV_HEADS + INPUT2_PAD_BEFORE_FEATURE_NUM + INPUT2_PAD_AFTER_FEATURE_NUM) + heads_dim * HEAD_SIZE + (start_partition_idx + (seq_len)) * HEAD_SIZE * NUM_KV_HEADS + head_size_idx;
 #else
 #ifdef BEAM_TABLE_TYPE
                     const uint b_idx = beam_table[FUNC_CALL(get_bt_index_value)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, start_partition_idx + (seq_len) + sglid, sgid * SUBGROUP_SIZE)];
@@ -1087,7 +1091,7 @@ KERNEL(sdpa_opt)(
                     const uint heads_dim = num_heads_dim;
 #endif
                     const uint value_seq_offset = subsequence_begins[gws_seq_indexes_correspondence[target_seq_dim]];
-                    uint value_offset = value_seq_offset * HEAD_SIZE * NUM_KV_HEADS + heads_dim * HEAD_SIZE + (start_partition_idx + (seq_len * SUBGROUP_SIZE)) * HEAD_SIZE * NUM_KV_HEADS + head_size_idx;
+                    uint value_offset = INPUT2_PAD_BEFORE_FEATURE_NUM + value_seq_offset * (HEAD_SIZE * NUM_KV_HEADS + INPUT2_PAD_BEFORE_FEATURE_NUM + INPUT2_PAD_AFTER_FEATURE_NUM) + heads_dim * HEAD_SIZE + (start_partition_idx + (seq_len * SUBGROUP_SIZE)) * HEAD_SIZE * NUM_KV_HEADS + head_size_idx;
 #else
 #ifdef BEAM_TABLE_TYPE
                     const uint b_idx = beam_table[FUNC_CALL(get_bt_index_value)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, start_partition_idx + (seq_len * SUBGROUP_SIZE) + sglid, sgid * SUBGROUP_SIZE)];
@@ -1138,7 +1142,7 @@ KERNEL(sdpa_opt)(
                     const uint heads_dim = num_heads_dim;
 #endif
                     const uint value_seq_offset = subsequence_begins[gws_seq_indexes_correspondence[target_seq_dim]];
-                    uint value_offset = value_seq_offset * HEAD_SIZE * NUM_KV_HEADS + heads_dim * HEAD_SIZE + (start_partition_idx + seq_len_leftovers_start) * HEAD_SIZE * NUM_KV_HEADS + head_size_idx;
+                    uint value_offset = INPUT2_PAD_BEFORE_FEATURE_NUM + value_seq_offset * (HEAD_SIZE * NUM_KV_HEADS + INPUT2_PAD_BEFORE_FEATURE_NUM + INPUT2_PAD_AFTER_FEATURE_NUM) + heads_dim * HEAD_SIZE + (start_partition_idx + seq_len_leftovers_start) * HEAD_SIZE * NUM_KV_HEADS + head_size_idx;
 #else
 #ifdef BEAM_TABLE_TYPE
                     const uint b_idx = beam_table[FUNC_CALL(get_bt_index_value)(OPTIONAL_SHAPE_INFO_TENSOR b0_idx, b1_idx, 0, 0, start_partition_idx + seq_len_leftovers_start + sglid, sgid * SUBGROUP_SIZE)];

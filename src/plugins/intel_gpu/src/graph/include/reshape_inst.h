@@ -9,6 +9,7 @@
 #include "crop_inst.h"
 #include "rope_inst.h"
 #include "mvn_inst.h"
+#include "paged_attention_inst.h"
 #include "primitive_inst.h"
 
 #include <string>
@@ -51,39 +52,62 @@ public:
         }
 
         // TODO: This function is to limit condition to a specific case (crop + reshape) among cases for the base mode
-        if (!input().is_type<crop>())
+        if (!input().is_type<crop>()) {
+            GPU_DEBUG_TRACE_DETAIL << " can't propagate " << id() << " " << "\n";
             return false;
+        }
 
         // oneDNN supports padded input of outer axis only for buffer fusing on static shape
-        if (!has_outer_padding_offset() && get_users().size() == 1 && get_users().front()->get_preferred_impl_type() == impl_types::onednn)
+        if (!has_outer_padding_offset() && get_users().size() == 1 && get_users().front()->get_preferred_impl_type() == impl_types::onednn) {
+            GPU_DEBUG_TRACE_DETAIL << " can't propagate " << id() << " " << "\n";
             return false;
+        }
 
         // TODO: If user is RoPE or MVN and dynamic padding exists, ouput padding propagation is not supported in the base mode
-        if (get_users().size() == 1 && (get_users().front()->is_type<rope>() || get_users().front()->is_type<mvn>()))
+        if (get_users().size() == 1 && get_users().front()->is_type<mvn>()) {
+            GPU_DEBUG_TRACE_DETAIL << " can't propagate " << id() << " " << "\n";
             return false;
+        }
 
         auto axis = input().as<crop>().get_primitive()->axis;
         const auto& input_pshape = input().get_output_layout(false).get_partial_shape();
         auto input_rank = input_pshape.size();
         auto input_last_dim = static_cast<int64_t>(input_rank - 1);
-        if (axis != input_last_dim || input_pshape[input_last_dim].is_dynamic())
+        if (axis != input_last_dim || input_pshape[input_last_dim].is_dynamic()) {
+            GPU_DEBUG_TRACE_DETAIL << " can't propagate " << id() << " " << "\n";
             return false;
+        }
 
         auto input_last_dim_val = input_pshape[input_last_dim].get_length();
         const auto& output_pshape = prim->output_partial_shape;
         // TODO: If the reshape's output shape is non constant, issue occurs
         // during shape inference due to execution order at runtime
-        if ((output_pshape.size() != input_rank + 1) || prim->output_pattern.empty())
+        if (prim->output_pattern.empty()) {
+            GPU_DEBUG_TRACE_DETAIL << " can't propagate " << id() << " " << "\n";
             return false;
-
-        int64_t mul = 1;
-        for (size_t i = input_rank - 1; i < output_pshape.size() ; i++) {
-            if (output_pshape[i].is_dynamic())
-                return false;
-            mul *= output_pshape[i].get_length();
         }
-        if (input_last_dim_val != mul)
+
+        if (output_pshape.size() != input_rank + 1 && !get_users().front()->is_type<paged_attention>()) {
             return false;
+        }
+
+        // TODO: fix comment
+        // Iteratively check the total product of all static innermost dimensions
+        // until crop dimension value match or first dynamic dimension met
+        int64_t mul = 1;
+        for (size_t i = output_pshape.size(); i > 1 ; i--) {
+            if (output_pshape[i - 1].is_dynamic() || mul == input_last_dim_val)
+                break;
+
+            mul *= output_pshape[i - 1].get_length();
+        }
+
+        if (input_last_dim_val != mul) {
+            GPU_DEBUG_TRACE_DETAIL << " can't propagate " << id() << " " << input_last_dim_val << " vs " << mul << "\n";
+            return false;
+        }
+
+        GPU_DEBUG_TRACE_DETAIL << " can propagate " << id() << "\n";
 
         return true;
     }
