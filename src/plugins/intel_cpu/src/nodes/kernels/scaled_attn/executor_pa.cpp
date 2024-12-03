@@ -1265,8 +1265,6 @@ struct MHAHelper {
     //  key_cache: [block_number, H, _block_size, S]
     //  value_cache: [block_number, H, _block_size, Sv]
     //  output_emb: [B, L, H * S]
-    //  rotated_block_indices: [num_rotated_blocks]
-    //  rotation_coefficients: [num_rotated_blocks, _block_size, S]
     // 3 loops along batch, head, kv cache length dimensions
     void exec_loop_bhl(const PlainTensor& query,
                        PlainTensor& key_cache,
@@ -1278,9 +1276,7 @@ struct MHAHelper {
                        const PlainTensor& subsequence_begins,
                        const PlainTensor& block_indices,
                        const PlainTensor& block_indices_begins,
-                       const PlainTensor& alibi_slopes,
-                       const PlainTensor& rotation_coefficients,
-                       const PlainTensor& rotated_block_indices) {
+                       const PlainTensor& alibi_slopes) {
         auto B = past_lens.size(0);
         auto q_len = query.size(2);
         auto kv_len_in_blocks = div_up(max_context_len, _block_size);
@@ -1552,9 +1548,7 @@ struct MHA {
                          const PlainTensor& subsequence_begins,
                          const PlainTensor& block_indices,
                          const PlainTensor& block_indices_begins,
-                         const PlainTensor& alibi_slopes,
-                         const PlainTensor& rotation_coefficients,
-                         const PlainTensor& rotated_block_indices) {
+                         const PlainTensor& alibi_slopes) {
         auto Hk = v_cache.m_dims[1];
 
         constexpr bool q_is_xf16 = one_of(precision_of<DATA_TYPE>::value, ov::element::bf16, ov::element::f16);
@@ -1718,9 +1712,7 @@ struct MHA {
                     const PlainTensor& subsequence_begins,
                     const PlainTensor& block_indices,
                     const PlainTensor& block_indices_begins,
-                    const PlainTensor& alibi_slopes,
-                    const PlainTensor& rotation_coefficients,
-                    const PlainTensor& rotated_block_indices) {
+                    const PlainTensor& alibi_slopes) {
         _workitems.reset(query, past_lens, subsequence_begins, _helper._block_size);
         if (output_score)
             _helper.init_score_buffers(past_lens, subsequence_begins);
@@ -1738,9 +1730,7 @@ struct MHA {
                             subsequence_begins,
                             block_indices,
                             block_indices_begins,
-                            alibi_slopes,
-                            rotation_coefficients,
-                            rotated_block_indices);
+                            alibi_slopes);
         } else {
             _helper.exec_loop_bhl(query,
                                   present_key,
@@ -1752,9 +1742,7 @@ struct MHA {
                                   subsequence_begins,
                                   block_indices,
                                   block_indices_begins,
-                                  alibi_slopes,
-                                  rotation_coefficients,
-                                  rotated_block_indices);
+                                  alibi_slopes);
         }
     }
 };
@@ -1805,9 +1793,9 @@ struct AttentionExecutor : public PagedAttentionExecutor {
         if (inputs_size > ID_ROTATION_COEFFICIENTS) {
             OPENVINO_ASSERT(inputs_size >= ID_ROTATED_BLOCK_INDICES);
             if (!inputs[ID_ROTATION_COEFFICIENTS]->getShape().hasZeroDims())
-                rotation_coefficients.reset(inputs[ID_ROTATION_COEFFICIENTS]);
+                rotation_coefficients.reset(inputs[ID_ROTATION_COEFFICIENTS]); // [num_blocks * block_size (32) *  S], row-major layout
             if (!inputs[ID_ROTATED_BLOCK_INDICES]->getShape().hasZeroDims())
-                rotated_block_indices.reset(inputs[ID_ROTATED_BLOCK_INDICES]);
+                rotated_block_indices.reset(inputs[ID_ROTATED_BLOCK_INDICES]); // [num_blocks]
         }
 
         output_emb.reset(outputs[0]);
@@ -1855,7 +1843,7 @@ struct AttentionExecutor : public PagedAttentionExecutor {
         if (rotated_block_indices) {
             // Only K entries are needed to be rotated, since position is encoded at the Q^T @ (effective_RoPE_matrix) @
             // K matrix multiplication
-            rotation_coefficients.assert_dims({S * rotated_block_indices.size(0) * block_size});
+            rotation_coefficients.assert_dims({rotated_block_indices.size(0) * block_size * S});
         }
         output_emb.assert_dims({B_token, H * SV});
         output_emb = output_emb.reshape({B_token, 1, H * SV});
@@ -1947,9 +1935,7 @@ struct AttentionExecutor : public PagedAttentionExecutor {
                 subsequence_begins,
                 block_indices,
                 block_indices_begins,
-                alibi_slopes,
-                rotation_coefficients,
-                rotated_block_indices);
+                alibi_slopes);
     }
 };
 #endif
