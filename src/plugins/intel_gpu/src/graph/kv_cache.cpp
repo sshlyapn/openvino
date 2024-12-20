@@ -104,7 +104,21 @@ int32_t kv_cache_inst::get_prealloc_iter_num() {
     //   iteration.
     // - Therfore, to avoid this situation where the allocation and copying occurs simutaneously for all the kv_cache_insts,
     //   we assigned different prealloc-size for each kv cache so that we could prevent a memory peak
-    return 128 + kv_cache_id % 64;
+    int KV_STRIDE = 0;
+    if (const auto env_var = std::getenv("KV_STRIDE")) {
+        std::istringstream ss(env_var);
+        ss >> KV_STRIDE;
+        static bool print_once = true;
+        if (print_once) {
+            std::cout << ">>> KV_STRIDE = " << KV_STRIDE << "\n";
+            print_once = false;
+        }
+    }
+    if (KV_STRIDE != 0) {
+        return KV_STRIDE;
+    }
+
+    return 128 + kv_cache_id % 64;;
 }
 
 void kv_cache_inst::update_shape_info_tensor(const kernel_impl_params& params) {

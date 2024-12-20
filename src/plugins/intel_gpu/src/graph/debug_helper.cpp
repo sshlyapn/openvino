@@ -52,12 +52,14 @@ void dump(memory::ptr mem, stream& stream, std::ofstream& file_stream, bool dump
         file_stream << "shape: " << size.to_string() << " ";
         file_stream << "(count: " << size.count()
                     << ", addr: " << mem->buffer_ptr()
+                    << ", original dt: " << mem->get_layout().data_type
                     << ", original format: " << cldnn::fmt_to_str(mem->get_layout().format) << ")"
                     << (dump_raw ? " raw data" : "") << std::endl;
     } else {
         file_stream << "shape: " << tmp_size.to_string() << " ";
         file_stream << "(count: " << tmp_size.count()
                     << ", addr: " << mem->buffer_ptr()
+                    << ", original dt: " << mem->get_layout().data_type
                     << ", original format: " << cldnn::fmt_to_str(mem->get_layout().format)
                     << ", original shape: " << size.to_string() << ")"
                     << (dump_raw ? " raw data" : "") << std::endl;

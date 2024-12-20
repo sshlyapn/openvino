@@ -431,6 +431,8 @@ struct kv_cache_impl : multi_stage_primitive<kv_cache> {
         auto comp_scale_past_layout = impl_param.input_layouts[input_idx];
         auto comp_scale_present_layout = impl_param.output_layouts[output_idx];
 
+        GPU_DEBUG_TRACE_DETAIL << "Update params, input: " << comp_scale_past_layout.to_short_string() << ", output:  " << comp_scale_past_layout << "\n";
+
         params.inputs.resize(inputs_count);
         params.inputs[0] = convert_data_tensor(comp_scale_past_layout);
         params.outputs[0] = convert_data_tensor(comp_scale_present_layout);

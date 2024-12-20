@@ -313,7 +313,11 @@ public:
         }
 
         if (desc->is_kv_compressed) {
+            GPU_DEBUG_TRACE_DETAIL << "Update scale layout: "  << impl_param.get_input_layout(data_inputs_num) << "\n";
             params.key_cache_comp_scale = convert_data_tensor(impl_param.get_input_layout(data_inputs_num));
+            GPU_DEBUG_TRACE_DETAIL << "Updated scale tensor pad: " << params.key_cache_comp_scale.Y().pad.before << " "
+                                   << params.key_cache_comp_scale.Y().pad.after << "\n";
+
             params.value_cache_comp_scale = convert_data_tensor(impl_param.get_input_layout(data_inputs_num + 1));
 
             if (has_zp_input_buffers) {
