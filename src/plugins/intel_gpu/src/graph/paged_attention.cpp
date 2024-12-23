@@ -19,6 +19,7 @@ PagedAttentionStage get_paged_attention_stage(const kernel_impl_params& impl_par
 
     if (query_shape.is_static() && past_lens_shape.is_static()) {
         if (query_shape[0].get_length() == past_lens_shape[0].get_length()) {
+            GPU_DEBUG_TRACE_DETAIL << "PA MODE: GENERATE\n";
             return PagedAttentionStage::GENERATE;
         }
 
@@ -30,13 +31,16 @@ PagedAttentionStage get_paged_attention_stage(const kernel_impl_params& impl_par
         const auto past_lens_size = past_lens_mem_lock.size();
         for (size_t i = 0; i < past_lens_size; i++) {
             if (past_lens_mem_lock[i] != 0) {
+                GPU_DEBUG_TRACE_DETAIL << "PA MODE: MIXED\n";
                 return PagedAttentionStage::MIXED;
             }
         }
 
+        GPU_DEBUG_TRACE_DETAIL << "PA MODE: PREFILL\n";
         return PagedAttentionStage::PREFILL;
     }
 
+    GPU_DEBUG_TRACE_DETAIL << "PA MODE: UNKNOWN\n";
     return PagedAttentionStage::UNKNOWN;
 }
 
@@ -48,14 +52,44 @@ layout paged_attention_inst::calc_output_layout(const paged_attention_node& /*no
 
 template<typename ShapeType>
 std::vector<layout> paged_attention_inst::calc_output_layouts(paged_attention_node const& /*node*/, kernel_impl_params const& impl_param) {
-    auto out_layout = impl_param.get_input_layout(0);
+    const auto& desc = impl_param.typed_desc<paged_attention>();
+    auto data_layout = impl_param.get_input_layout(0);
 
     const auto& key_cache_ps = impl_param.get_input_layout(3).get_partial_shape();
     bool valid_block_size = key_cache_ps[3].is_dynamic() || key_cache_ps[3].get_length() == paged_attention::block_size;
     OPENVINO_ASSERT(valid_block_size, "[GPU] Incorrect block size for Paged Attention operation. "
                                       "Expected ", paged_attention::block_size, ", but got ", key_cache_ps[3].get_length());
 
-    return {out_layout};
+    std::vector<layout> output_layouts{ data_layout };
+
+    if (desc->has_scores_output()) {
+        const auto past_lens_idx = 5;
+
+        if (impl_param.get_input_layout(past_lens_idx).is_static()) {
+            const auto& memory_deps = impl_param.memory_deps;
+            const auto past_lens_mem = memory_deps.at(past_lens_idx);
+            mem_lock<int32_t, mem_lock_type::read> past_lens_mem_lock(past_lens_mem, *impl_param.strm);
+
+            long int total_size = 0;
+            const auto past_lens_size = past_lens_mem_lock.size();
+            for (size_t i = 0; i < past_lens_size; i++) {
+                total_size += past_lens_mem_lock[i];
+            }
+
+            total_size += impl_param.get_input_layout(0).get_shape()[0];
+
+            auto scores_output = data_layout;
+            scores_output.set_partial_shape(ov::PartialShape{total_size});
+
+            output_layouts.push_back(scores_output);
+        } else {
+            output_layouts.push_back(layout{ov::PartialShape::dynamic(1), data_types::f16, format::bfyx});
+        }
+    }
+
+    GPU_DEBUG_TRACE_DETAIL << "PA calc shape: " << output_layouts << "\n";
+
+    return output_layouts;
 }
 
 template std::vector<layout>
@@ -111,7 +145,8 @@ void paged_attention_inst::on_execute() {
     std::unique_ptr<mem_lock<int32_t, mem_lock_type::write>> sequential_gws_subseq_mapping_lock = nullptr;
 
     if (stage == PagedAttentionStage::MIXED) {
-        const auto sequential_gws_subseq_mapping_idx = 6;
+        const auto& desc = _impl_params->typed_desc<paged_attention>();
+        const size_t sequential_gws_subseq_mapping_idx = desc->has_scores_output() ? 7 : 6;
 
         OPENVINO_ASSERT(_intermediates_memory.size() > sequential_gws_subseq_mapping_idx,
                         "Unexpected number of intermediates buffers for Paged Attention for mixed stage");

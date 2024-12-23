@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
+#include "sdpa_kernel_opt.h"
 #include "pa_sdpa_kernel_opt.h"
 
 #include "kernel_selector_params.h"
@@ -15,6 +16,7 @@ enum KernelsTypes {
     MULTI_TOKENS,
     FINALIZATION,
     FINALIZATION_MULTI_TOKENS,
+    SCORES_CALCULATION,
     TOTAL_KERNELS_NUM
 };
 
@@ -35,6 +37,8 @@ static std::string GetKernelName(std::string base_name, KernelsTypes type) {
         kernel_name += "_finalization";
     } else if (type == KernelsTypes::FINALIZATION_MULTI_TOKENS) {
         kernel_name += "_finalization_multi_tokens_seq";
+    } else if (type == KernelsTypes::SCORES_CALCULATION) {
+        kernel_name += "_scores_calculation";
     }
 
     return kernel_name;
@@ -46,10 +50,15 @@ KernelsData PagedAttentionSDPAKernelOpt::GetKernelsData(const Params& p) const {
     }
 
     const auto& params = static_cast<const pa_sdpa_params&>(p);
-    const std::vector<KernelsTypes> kernels_type = { KernelsTypes::SINGLE_TOKEN,
-                                                     KernelsTypes::MULTI_TOKENS,
-                                                     KernelsTypes::FINALIZATION,
-                                                     KernelsTypes::FINALIZATION_MULTI_TOKENS };
+    std::vector<KernelsTypes> kernels_type = { KernelsTypes::SINGLE_TOKEN,
+                                               KernelsTypes::MULTI_TOKENS,
+                                               KernelsTypes::FINALIZATION,
+                                               KernelsTypes::FINALIZATION_MULTI_TOKENS };
+
+    const auto has_scores_output = params.outputs.size() > 1;
+    if (has_scores_output) {
+        kernels_type.push_back(KernelsTypes::SCORES_CALCULATION);
+    }
 
     KernelData kd = KernelData::Default<pa_sdpa_params>(params, kernels_type.size());
     kd.needs_sub_kernels_sync = true;
@@ -72,8 +81,8 @@ KernelsData PagedAttentionSDPAKernelOpt::GetKernelsData(const Params& p) const {
         } else if (kernel_type == KernelsTypes::FINALIZATION) {
             // FINALIZATION kernel uses only the past_lens data input
             inputs_num = 1;
-        } else if (kernel_type == KernelsTypes::FINALIZATION_MULTI_TOKENS) {
-            // FINALIZATION_MULTI_TOKENS kernel uses past_lens data input and subsequence_begins
+        } else if (kernel_type == KernelsTypes::FINALIZATION_MULTI_TOKENS || kernel_type == KernelsTypes::SCORES_CALCULATION) {
+            // FINALIZATION_MULTI_TOKENS and SCORES_CALCULATION kernels use past_lens data input and subsequence_begins
             inputs_num = 2;
         }
 
@@ -89,23 +98,56 @@ KernelsData PagedAttentionSDPAKernelOpt::GetKernelsData(const Params& p) const {
                          false,
                          static_cast<int>(inputs_num),
                          GetFusedPrimitiveInputsCount(params),
-                         static_cast<int>(params.outputs.size()),
+                         1,
                          params.is_shape_agnostic);
 
-        kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 0});
-        kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 1});
-        kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 2});
+        if (kernel_type == KernelsTypes::SCORES_CALCULATION) {
+            // Remove first output and replace it with the second one
+            // auto it = std::find_if(args.begin(), args.end(),  {
+            //     return arg.t == argument_desc::Types::OUTPUT;
+            // });
+
+            // if (it != args.end()) {
+            //     it->index = new_index;
+            // }
+
+            kernel.params.arguments.erase(kernel.params.arguments.end() - 1);
+            kernel.params.arguments.push_back({ArgumentDescriptor::Types::OUTPUT, 1});
+        }
+
+        uint32_t internal_buffers_num = 0;
+        if (has_scores_output) {
+            // Intermediate softmax results for PA scores output
+            internal_buffers_num++;
+        }
+
+        // Softmax's exp_sums, max_logits and intermediate output
+        internal_buffers_num += 3;
 
         if (kernel_type == KernelsTypes::MULTI_TOKENS || kernel_type == KernelsTypes::FINALIZATION_MULTI_TOKENS) {
             // MULTIPLE_TOKENS kernels needs additional information related to mapping
             // launched kernel instances to subsequence indexes
-            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 3});
+            internal_buffers_num++;
+        }
+
+        for (uint32_t i = 0; i < internal_buffers_num; i++) {
+            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, i});
         }
 
         if (kernel_type == KernelsTypes::FINALIZATION || kernel_type == KernelsTypes::FINALIZATION_MULTI_TOKENS) {
             kernel.params.arguments.push_back({ArgumentDescriptor::Types::SCALAR, 0});
 
             // Remove unused shape_info argument at finalization stage
+            kernel.params.arguments.erase(kernel.params.arguments.begin());
+        }
+
+        if (kernel_type == KernelsTypes::SCORES_CALCULATION) {
+            // Add two scalars for partition_length and partitions_num values,
+            // as depending on PA stage these parameters may vary
+            // kernel.params.arguments.push_back({ArgumentDescriptor::Types::SCALAR, 1});
+            kernel.params.arguments.push_back({ArgumentDescriptor::Types::SCALAR, 0});
+
+            // Remove unused shape_info argument for scores calculation stage
             kernel.params.arguments.erase(kernel.params.arguments.begin());
         }
     }
@@ -173,7 +215,12 @@ JitConstants PagedAttentionSDPAKernelOpt::GetJitConstants(const pa_sdpa_params& 
         jit.AddConstant(MakeJitConstant("BROADCAST_GROUP_SIZE", config.group_size));
     }
 
-    auto sdpa_stage = kernel_idx == KernelsTypes::FINALIZATION || kernel_idx == KernelsTypes::FINALIZATION_MULTI_TOKENS ? 1 : 0;
+    auto sdpa_stage = 0;
+    if (kernel_idx == KernelsTypes::FINALIZATION || kernel_idx == KernelsTypes::FINALIZATION_MULTI_TOKENS) {
+        sdpa_stage = 1;
+    } else if (kernel_idx == KernelsTypes::SCORES_CALCULATION) {
+        sdpa_stage = 2;
+    }
     jit.AddConstant(MakeJitConstant("SDPA_STAGE_" + std::to_string(sdpa_stage), 1));
 
     if (config.has_const_scale_val) {
@@ -190,8 +237,9 @@ JitConstants PagedAttentionSDPAKernelOpt::GetJitConstants(const pa_sdpa_params& 
         jit.Merge(MakeTypeJitConstants(params.inputs[alibi_input_idx].GetDType(), "ALIBI_INPUT"));
     }
 
-    if (params.conf.has_rotation_coefficients_input)
-        jit.AddConstant(MakeJitConstant("HAS_ROTATION_COEFFICIENTS", 1));
+    if (params.outputs.size() > 1) {
+        jit.AddConstant(MakeJitConstant("PAGED_ATTENTION_SCORES_OUTPUT", 1));
+    }
 
     if (kernel_idx == KernelsTypes::MULTI_TOKENS || kernel_idx == KernelsTypes::FINALIZATION_MULTI_TOKENS)
         jit.AddConstant(MakeJitConstant("MULTI_TOKENS_PROCESSING", 1));
@@ -206,18 +254,35 @@ CommonDispatchData PagedAttentionSDPAKernelOpt::SetDefault(const pa_sdpa_params&
 
     const auto& input = params.inputs[0];
     if (!input.is_dynamic()) {
-        const size_t sequences_number = input.Batch().v;
-        const size_t num_of_partitions = CeilDiv(params.max_context_len, seq_len_partition_size);
+        const size_t total_tokens = input.Batch().v;
+        const size_t num_of_partitions = CeilDiv(params.conf.paged_attention_max_len, seq_len_partition_size);
         const size_t heads_num = static_cast<size_t>(params.conf.heads_num);
         const size_t head_size = static_cast<size_t>(params.conf.head_size);
 
-        if (kernel_idx == 0) {
-            dispatch_data.gws = { sequences_number,
+        if (kernel_idx == KernelsTypes::SINGLE_TOKEN || kernel_idx == KernelsTypes::MULTI_TOKENS) {
+            dispatch_data.gws = { total_tokens,
                                   heads_num,
                                   head_size * num_of_partitions };
             dispatch_data.lws = { 1, 1, head_size };
+        } else if (kernel_idx == KernelsTypes::SCORES_CALCULATION) {
+            const auto& past_lens = params.inputs[3];
+            const auto subsequences_number = past_lens.Batch().v; // number of past lens values
+
+            size_t partition_size = 0;
+            size_t num_of_partitions = 0;
+            if (params.stage == PagedAttentionStage::PREFILL) {
+                partition_size = SDPAKernelOpt::get_seq_len_partition_size(params, params.conf.head_size, 1);
+            } else {
+                partition_size = seq_len_partition_size;
+            }
+            num_of_partitions = CeilDiv(params.conf.paged_attention_max_len, partition_size);
+
+            dispatch_data.gws = { subsequences_number,
+                                  1,
+                                  partition_size * num_of_partitions };
+            dispatch_data.lws = { 1, 1, partition_size };
         } else {
-            dispatch_data.gws = { sequences_number,
+            dispatch_data.gws = { total_tokens,
                                   heads_num,
                                   head_size };
             dispatch_data.lws = { 1, 1, subgroup_size };
@@ -231,30 +296,34 @@ void PagedAttentionSDPAKernelOpt::GetUpdateDispatchDataFunc(KernelData& kd) cons
     kd.update_dispatch_data_func = [](const Params& params, KernelData& kd) {
         const auto& prim_params = static_cast<const pa_sdpa_params&>(params);
 
-        const size_t expected_kernels_num = 4;
+        const auto has_scores_output = prim_params.outputs.size() > 1;
+        const size_t expected_kernels_num = has_scores_output ? KernelsTypes::TOTAL_KERNELS_NUM : KernelsTypes::TOTAL_KERNELS_NUM - 1;
         OPENVINO_ASSERT(kd.kernels.size() == expected_kernels_num, "[GPU] Invalid kernels size for update dispatch data func of SDPA kernel");
+
+        const auto scores_calc_only = prim_params.stage == PagedAttentionStage::PREFILL && has_scores_output;
+        const auto multi_tokens_mode = prim_params.stage == PagedAttentionStage::MIXED;
 
         auto dispatch_data1 = SetDefault(prim_params, KernelsTypes::SINGLE_TOKEN);
         kd.kernels[KernelsTypes::SINGLE_TOKEN].params.workGroups.global = dispatch_data1.gws;
         kd.kernels[KernelsTypes::SINGLE_TOKEN].params.workGroups.local = dispatch_data1.lws;
-        kd.kernels[KernelsTypes::SINGLE_TOKEN].skip_execution = prim_params.multi_tokens_mode;
+        kd.kernels[KernelsTypes::SINGLE_TOKEN].skip_execution = multi_tokens_mode || scores_calc_only;
 
         kd.kernels[KernelsTypes::MULTI_TOKENS].params.workGroups.global = dispatch_data1.gws;
         kd.kernels[KernelsTypes::MULTI_TOKENS].params.workGroups.local = dispatch_data1.lws;
-        kd.kernels[KernelsTypes::MULTI_TOKENS].skip_execution = !prim_params.multi_tokens_mode;
+        kd.kernels[KernelsTypes::MULTI_TOKENS].skip_execution = !multi_tokens_mode || scores_calc_only;
 
         const auto& input = prim_params.inputs[0];
-        const size_t sequences_number = input.Batch().v;
-        const size_t num_of_partitions = CeilDiv(prim_params.max_context_len, seq_len_partition_size);
+        const size_t total_tokens = input.Batch().v;
+        const size_t num_of_partitions = CeilDiv(prim_params.conf.paged_attention_max_len, seq_len_partition_size);
 
         auto dispatch_data2 = SetDefault(prim_params, KernelsTypes::FINALIZATION);
         kd.kernels[KernelsTypes::FINALIZATION].params.workGroups.global = dispatch_data2.gws;
         kd.kernels[KernelsTypes::FINALIZATION].params.workGroups.local = dispatch_data2.lws;
-        kd.kernels[KernelsTypes::FINALIZATION].skip_execution = num_of_partitions == 1 || prim_params.multi_tokens_mode;
+        kd.kernels[KernelsTypes::FINALIZATION].skip_execution = num_of_partitions == 1 || multi_tokens_mode || scores_calc_only;
 
         kd.kernels[KernelsTypes::FINALIZATION_MULTI_TOKENS].params.workGroups.global = dispatch_data2.gws;
         kd.kernels[KernelsTypes::FINALIZATION_MULTI_TOKENS].params.workGroups.local = dispatch_data2.lws;
-        kd.kernels[KernelsTypes::FINALIZATION_MULTI_TOKENS].skip_execution = num_of_partitions == 1 || !prim_params.multi_tokens_mode;
+        kd.kernels[KernelsTypes::FINALIZATION_MULTI_TOKENS].skip_execution = num_of_partitions == 1 || !multi_tokens_mode || scores_calc_only;
 
         ScalarDescriptor num_of_partitions_scalar;
         num_of_partitions_scalar.t = ScalarDescriptor::Types::UINT32;
@@ -264,23 +333,65 @@ void PagedAttentionSDPAKernelOpt::GetUpdateDispatchDataFunc(KernelData& kd) cons
         kd.kernels[KernelsTypes::FINALIZATION_MULTI_TOKENS].params.scalars.resize(1);
         kd.kernels[KernelsTypes::FINALIZATION_MULTI_TOKENS].params.scalars[0] = num_of_partitions_scalar;
 
+        if (has_scores_output) {
+            auto dispatch_data = SetDefault(prim_params, KernelsTypes::SCORES_CALCULATION);
+            kd.kernels[KernelsTypes::SCORES_CALCULATION].params.workGroups.global = dispatch_data.gws;
+            kd.kernels[KernelsTypes::SCORES_CALCULATION].params.workGroups.local = dispatch_data.lws;
+            kd.kernels[KernelsTypes::SCORES_CALCULATION].skip_execution = false;
+
+            ScalarDescriptor is_mixed_mode;
+            is_mixed_mode.t = ScalarDescriptor::Types::UINT32;
+            is_mixed_mode.v.u32 = static_cast<uint32_t>(multi_tokens_mode);
+            kd.kernels[KernelsTypes::SCORES_CALCULATION].params.scalars.resize(1);
+            kd.kernels[KernelsTypes::SCORES_CALCULATION].params.scalars[0] = is_mixed_mode;
+        }
+
         auto buf_dt_size = BytesPerElement(softmax_acc_dt);
-        auto buf_elements_count = sequences_number * prim_params.conf.heads_num * num_of_partitions;
+        auto buf_elements_count = total_tokens * prim_params.conf.heads_num * num_of_partitions;
         auto buf_size = buf_elements_count * buf_dt_size;
 
         auto tmp_out_dt_size = BytesPerElement(softmax_acc_dt);
-        auto tmp_out_elements_count = sequences_number * prim_params.conf.heads_num * prim_params.conf.head_size * num_of_partitions;
+        auto tmp_out_elements_count = total_tokens * prim_params.conf.heads_num * prim_params.conf.head_size * num_of_partitions;
         auto tmp_out_size = tmp_out_elements_count * tmp_out_dt_size;
 
         kd.internalBufferSizes.clear();
-        kd.internalBufferSizes.push_back(buf_size);
-        kd.internalBufferSizes.push_back(buf_size);
-        kd.internalBufferSizes.push_back(tmp_out_size);
+
+        if (has_scores_output) {
+            const auto& past_lens = prim_params.inputs[3];
+            auto softmax_buf_dt_size = BytesPerElement(softmax_acc_dt);
+            auto subsequences_number = past_lens.Batch().v;
+
+            size_t partition_size = 0;
+            if (prim_params.stage == PagedAttentionStage::PREFILL) {
+                partition_size = SDPAKernelOpt::get_seq_len_partition_size(params, prim_params.conf.head_size, 1);
+            } else {
+                partition_size = seq_len_partition_size;
+            }
+            size_t num_of_partitions = CeilDiv(prim_params.conf.paged_attention_max_len, seq_len_partition_size);
+
+            auto softmax_buf_elements_count = subsequences_number * prim_params.conf.heads_num * num_of_partitions * partition_size;
+            auto softmax_buf_size = softmax_buf_elements_count * softmax_buf_dt_size;
+
+            kd.internalBufferSizes.push_back(softmax_buf_size); // softmax intermediate output
+
+            if (prim_params.stage == PagedAttentionStage::PREFILL) {
+                // Recalculate buf_size as in case of PREFILL stage it's not needed to allocate buffer per each input token
+                buf_elements_count = subsequences_number * prim_params.conf.heads_num * num_of_partitions;
+                buf_size = buf_elements_count * buf_dt_size;
+
+                // Intermediate tmp output buffer is not used for PREFILL stage
+                tmp_out_size = tmp_out_dt_size;
+            }
+        }
+
+        kd.internalBufferSizes.push_back(buf_size); // softmax exp_sums
+        kd.internalBufferSizes.push_back(buf_size); // softmax max_logits
+        kd.internalBufferSizes.push_back(tmp_out_size); // intermediate output
         kd.internalBufferDataType = softmax_acc_dt;
 
-        if (prim_params.multi_tokens_mode) {
+        if (prim_params.stage == PagedAttentionStage::MIXED) {
             auto buf_dt_size = BytesPerElement(Datatype::INT32);
-            auto buf_elements_count = sequences_number;
+            auto buf_elements_count = total_tokens;
             auto buf_size = Align(buf_elements_count * buf_dt_size, BytesPerElement(softmax_acc_dt));
             kd.internalBufferSizes.push_back(buf_size);
         }

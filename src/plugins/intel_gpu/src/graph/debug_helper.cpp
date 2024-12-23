@@ -20,6 +20,33 @@ namespace cldnn {
 
 namespace {
 
+std::string convert_element_new(int64_t i) {
+    std::stringstream ss;
+    ss << std::setw(4) << i;
+    return ss.str();
+}
+
+std::string convert_element_new(int32_t i) {
+    std::stringstream ss;
+    ss << std::setw(4) << i;
+    return ss.str();
+}
+
+
+std::string convert_element_new(float f) {
+    std::stringstream ss;
+    ss << std::setw(9) << std::fixed << std::setprecision(4) << f;
+    return ss.str();
+}
+
+
+std::string convert_element_new(ov::float16 h) {
+    std::stringstream ss;
+    ss << std::setw(9) << std::fixed << std::setprecision(4) << static_cast<float>(h);
+    return ss.str();
+}
+
+
 float convert_element(int64_t i) { return static_cast<float>(i); }
 float convert_element(int32_t i) { return static_cast<float>(i); }
 
@@ -38,6 +65,95 @@ size_t get_x_pitch(const layout& layout) {
         // When spatial size of x=0, x_pitch is meaningless
         return 0;
     }
+}
+
+template <class T>
+void format_memory(const memory::ptr mem, stream& stream, std::string name = "") {
+    std::stringstream ss;
+    ss << "Memory content of " << mem->buffer_ptr() << " (name=" << name << ")" << ":" << "\n";
+    ss << "Layout: " << mem->get_layout().to_short_string() << "\n";
+
+    mem_lock<T, mem_lock_type::read> lock(mem, stream);
+    auto mem_ptr = lock.data();
+    auto x_pitch = get_x_pitch(mem->get_layout());
+
+    auto&& size = mem->get_layout().get_tensor();
+    ss << "(     i:    ): ";
+    auto alignment = ov::element::Type(mem->get_layout().data_type).is_real() ? 9 : 4;
+    for (cldnn::tensor::value_type x = 0; x < size.spatial[0]; ++x) {
+        ss << std::setw(alignment) << x;
+    }
+    ss << "\n";
+
+    std::stringstream buffer_content;
+    for (cldnn::tensor::value_type g = 0; g < size.group[0]; ++g) {
+        for (cldnn::tensor::value_type b = 0; b < size.batch[0]; ++b) {
+            for (cldnn::tensor::value_type f = 0; f < size.feature[0]; ++f) {
+                for (cldnn::tensor::value_type w = 0; w < size.spatial[3]; ++w) {
+                    for (cldnn::tensor::value_type z = 0; z < size.spatial[2]; ++z) {
+                        for (cldnn::tensor::value_type y = 0; y < size.spatial[1]; ++y) {
+                            buffer_content << "(" << std::setw(2) << b << ", " << std::setw(2) << f << ", " << std::setw(3) << y << "): ";
+                            cldnn::tensor t(cldnn::group(g), cldnn::batch(b), cldnn::feature(f), cldnn::spatial(0, y, z, w));
+                            size_t input_it = mem->get_layout().get_linear_offset(t);
+
+                            for (cldnn::tensor::value_type x = 0; x < size.spatial[0]; ++x, input_it += x_pitch) {
+                                buffer_content << convert_element_new(mem_ptr[input_it]);
+                            }
+                            buffer_content << "\n";
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    const size_t prime_number = 2654435761; // magic number to reduce hash collision rate.
+    auto seed = hash_combine(prime_number, buffer_content.str());
+
+    ss << buffer_content.str() << "\n";
+    ss << "Hash: " << seed << "\n";
+    ss << "End of memory\n";
+
+    GPU_DEBUG_TRACE_DETAIL << ss.str() << "\n";
+}
+
+void print_memory(memory::ptr mem, layout data_layout, stream& stream, std::string layerName, bool add_paddings) {
+    if (!mem) {
+        GPU_DEBUG_TRACE_DETAIL << "Empty buffer" << std::endl;
+        return;
+    }
+
+    if (add_paddings) {
+        auto padded_dims = data_layout.get_padded_dims();
+        ov::PartialShape vec;
+        for (size_t i = 0; i < padded_dims.size(); i++)
+            vec.push_back(padded_dims[i]);
+        data_layout.set_partial_shape(vec);
+        data_layout.data_padding = padding();
+    }
+
+    // Reinterpret buffer to represent actual data layout
+    auto actual_mem = mem->get_engine()->reinterpret_buffer(*mem, data_layout);
+
+    GPU_DEBUG_TRACE_DETAIL << "Original layout:\n" << data_layout << "\n";
+
+    auto mem_dt = actual_mem->get_layout().data_type;
+    if (mem_dt == cldnn::data_types::f32)
+        format_memory<float>(actual_mem, stream, layerName);
+    else if (mem_dt == cldnn::data_types::f16)
+        format_memory<ov::float16>(actual_mem, stream, layerName);
+    else if (mem_dt == cldnn::data_types::i64)
+        format_memory<int64_t>(actual_mem, stream, layerName);
+    else if (mem_dt == cldnn::data_types::i32)
+        format_memory<int32_t>(actual_mem, stream, layerName);
+    else if (mem_dt == cldnn::data_types::i8)
+        format_memory<int8_t>(actual_mem, stream, layerName);
+    else if (mem_dt == cldnn::data_types::u8)
+        format_memory<uint8_t>(actual_mem, stream, layerName);
+    else if (mem_dt == cldnn::data_types::u8)
+        format_memory<uint8_t>(actual_mem, stream, layerName);
+    else
+        std::cout << "Dump for this data type is not supported: " << dt_to_str(mem_dt) << std::endl;
 }
 
 template <class T>
@@ -216,6 +332,26 @@ static std::string get_file_path_for_binary_dump(cldnn::layout layout, std::stri
     return filename;
 }
 
+static std::vector<std::string> layers = {
+                                        //    "pagedattentionextension:PagedAttentionExtension_104353",
+                                        //    "pagedattentionextension:PagedAttentionExtension_104387",
+                                        //    "pagedattentionextension:PagedAttentionExtension_139137",
+                                        //    "pagedattentionextension:PagedAttentionExtension_139173",
+                                        //    "rms:__module.model.layers.0.post_attention_layernorm/aten::mul/Multiply_1",
+                                        //    "fullyconnected:__module.model.layers.0.self_attn.o_proj/ov_ext::linear/MatMul",
+                                        //    "fullyconnected:__module.model.layers.0.mlp.up_proj/ov_ext::linear/MatMul",
+                                        //    "fullyconnected:__module.model.layers.0.mlp.gate_proj/ov_ext::linear/MatMul",
+                                        //    "rms:__module.model.layers.1.input_layernorm/aten::mul/Multiply_1"
+                                            };
+
+                                            // fullyconnected:__module.model.layers.1.self_attn.v_proj/ov_ext::linear/MatMul
+                                            // fullyconnected:__module.model.layers.1.self_attn.q_proj/ov_ext::linear/MatMul
+                                            // fullyconnected:__module.model.layers.1.self_attn.k_proj/ov_ext::linear/MatMul
+                                            // rope:__module.model.layers.1.self_attn/aten::add/Add
+                                            // rope:__module.model.layers.1.self_attn/aten::add/Add_1
+
+
+
 NodeDebugHelper::NodeDebugHelper(const primitive_inst& inst)
     : m_inst(inst)
     , m_stream(inst.get_network().get_stream())
@@ -289,6 +425,34 @@ NodeDebugHelper::NodeDebugHelper(const primitive_inst& inst)
         }
     }
 
+
+    bool need_print = false;
+    for (const auto& layer : layers) {
+        if (inst.id().find(layer) != std::string::npos) {
+            need_print = true;
+            break;
+        }
+    }
+
+    if (debug_config->is_target_iteration(m_iter) && need_print) {
+        GPU_DEBUG_TRACE_DETAIL << "Printing input\n";
+        for (size_t i = 0; i < m_inst.dependencies().size(); i++) {
+            std::string name = get_file_prefix() + "_src" + std::to_string(i);
+            auto input_mem = m_inst.dep_memory_ptr(i);
+            if (input_mem == nullptr) {
+                GPU_DEBUG_COUT  << " input_mem_" << i << " is nullptr. Nothing to dump." << std::endl;
+                continue;
+            }
+            auto dep = m_inst.dependencies().at(i);
+            auto input_layout = dep.first->get_output_layout(dep.second);
+            print_memory(input_mem,
+                         input_layout,
+                         m_stream,
+                         name,
+                         true);
+        }
+    }
+
     // Dump input buffers of 'inst'
     if (debug_config->dump_layers_path.length() > 0) {
         const std::string layer_name = inst.id();
@@ -306,6 +470,12 @@ NodeDebugHelper::NodeDebugHelper(const primitive_inst& inst)
 
                 auto dep = m_inst.dependencies().at(i);
                 auto input_layout = dep.first->get_output_layout(dep.second);
+
+                if (dep.first->is_constant() && input_layout.count() >= 1024) {
+                    std::cout << "Skip " << dep.first->id() << " as a large const\n";
+                    continue;
+                }
+
                 GPU_DEBUG_IF(debug_config->dump_layers_binary) {
                     // Binary dump : raw
                     auto filename = get_file_path_for_binary_dump(input_layout, name);
@@ -334,6 +504,34 @@ NodeDebugHelper::NodeDebugHelper(const primitive_inst& inst)
 
 NodeDebugHelper::~NodeDebugHelper() {
     // Dump output buffers of 'inst'
+
+    bool need_print = false;
+    for (const auto& layer : layers) {
+        if (m_inst.id().find(layer) != std::string::npos) {
+            need_print = true;
+            break;
+        }
+    }
+
+    if (debug_config->is_target_iteration(m_iter) && need_print) {
+        GPU_DEBUG_TRACE_DETAIL << "Printing output\n";
+        m_stream.finish();
+        for (size_t i = 0; i < m_inst.outputs_memory_count(); i++) {
+            std::string name = get_file_prefix() + "_dst" + std::to_string(i);
+            auto output_mem = m_inst.output_memory_ptr(i);
+            if (output_mem == nullptr) {
+                GPU_DEBUG_COUT  << " output_mem is nullptr. Nothing to dump." << std::endl;
+                continue;
+            }
+            auto output_layout = m_inst.get_output_layout(i);
+            print_memory(output_mem,
+                         output_layout,
+                         m_stream,
+                         name,
+                         true);
+        }
+    }
+
     if (debug_config->dump_layers_path.length() > 0) {
         m_stream.finish();
         const std::string layer_name = m_inst.id();
@@ -371,6 +569,29 @@ NodeDebugHelper::~NodeDebugHelper() {
             }
         }
     }
+
+    // if (debug_config->is_target_iteration(m_iter)) {
+    //     static memory::ptr sin_memory = nullptr;
+    //     static layout sin_layout;
+    //     static int counter = 0;
+
+    //     if (m_network.net_id == 2 && m_inst.id() == "sin:__module.model.rotary_emb/aten::sin/Sin") {
+    //         sin_memory = m_inst.output_memory_ptr(0);
+    //         sin_layout = m_inst.get_output_layout(0);
+    //     }
+
+    //     if (sin_memory) {
+    //         std::string name = "test_" + std::to_string(counter) + "_" + get_file_prefix() + "_sin_dst";
+    //         log_memory_to_file(sin_memory, sin_layout, m_stream, name, debug_config->dump_layers_raw);
+
+    //         counter++;
+    //     }
+
+    //     if (m_network.net_id == 2 && m_inst.id() == "rope:__module.model.layers.1.self_attn/aten::add/Add_1") {
+    //         sin_memory = nullptr;
+    //         counter = 0;
+    //     }
+    // }
 }
 
 NetworkDebugHelper::NetworkDebugHelper(const network& net)

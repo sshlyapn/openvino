@@ -6,15 +6,18 @@
 
 #include "intel_gpu/primitives/paged_attention.hpp"
 #include "primitive_inst.h"
+#include "sdpa/pa_sdpa_kernel_opt.h"
 
 namespace cldnn {
 
-enum PagedAttentionStage {
-    GENERATE = 0,
-    PREFILL = 1,
-    MIXED = 2,
-    UNKNOWN = 3
-};
+// enum PagedAttentionStage {
+//     GENERATE = 0,
+//     PREFILL = 1,
+//     MIXED = 2,
+//     UNKNOWN = 3
+// };
+
+using PagedAttentionStage = kernel_selector::PagedAttentionStage;
 
 PagedAttentionStage get_paged_attention_stage(const kernel_impl_params& impl_param);
 

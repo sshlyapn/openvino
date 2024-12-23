@@ -9,6 +9,13 @@
 namespace kernel_selector {
 class SDPAKernelOpt : public SDPAKernelBase {
 public:
+    enum KernelsTypes {
+        SINGLE_TOKEN = 0,
+        MULTI_TOKENS,
+        FINALIZATION,
+        TOTAL_KERNELS_NUM
+    };
+
     using Parent = SDPAKernelBase;
     SDPAKernelOpt() : SDPAKernelBase("sdpa_opt") {}
     virtual ~SDPAKernelOpt() {}
@@ -16,6 +23,9 @@ public:
     KernelsData GetKernelsData(const Params& params) const override;
     KernelsPriority GetKernelsPriority(const Params& params) const override;
     ParamsKey GetSupportedKey() const override;
+
+    static size_t get_sg_number_scale_factor(const Params& params, size_t head_size, size_t kernel_type);
+    static size_t get_seq_len_partition_size(const Params& params, size_t head_size, size_t kernel_type);
 
 protected:
     bool Validate(const Params& p) const override;

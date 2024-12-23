@@ -17,6 +17,7 @@ enum class KernelType {
     BEAM_TABLE_UPDATE,
     PA_KV_CACHE_UPDATE,
     PA_SDPA,
+    PA_SCORES_CALCULATION,
     CONVOLUTION,
     DECONVOLUTION,
     DFT,
