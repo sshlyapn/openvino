@@ -86,16 +86,17 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         * +-----------------+---------------------+----------------+
         * | KV_CACHE_UPDATE | [0, 1, 2]           |                |
         * +-----------------+---------------------+----------------+
-        * | SDPA            |                     | [0, 1, 2, (3)] |
+        * | SDPA            |                     | [0, 1, 2] |
+        * | SDPA scores output mode  |            | [0, 1, 2, 3, 4] |
         * +-----------------+---------------------+----------------+
-        * | PA_SDPA         | [(3), 4, 5, 6, (7)] |                |
+        * | PA_SDPA         | [(3), (4), 5, 6, 7, (8)] |  [(3), (4), 5, 6, 7, (8)]               |
         * +-----------------+---------------------+----------------+
         *
         * Description:
         * 0, 1, 2 - Buffers used for proper blocks distribution for kv_cache_update and
         *           sdpa_opt (1st token calculation) block configuration over target_seq_len dimension. Filled
         *           in paged_attention_inst::on_execute() call.
-        * 3       - Optional buffer used for PA scores output calculation, stores intermediate
+        * 3, 4       - Optional buffer used for PA scores output calculation, stores intermediate
         *           softmax values by partitions.
         * 4, 5, 6 - Used for 2nd+ PA calculation (for softmax exp_sums, max_logits, and intermediate output).
         * 7       - Optional buffer used for mixed PA execution mode, maps gws idx to subsequence id. Filled
@@ -202,9 +203,15 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
     }
 
     std::set<size_t> get_lockable_internal_buffers() const override {
-        size_t mixed_mode_buffer = has_scores_output ? 7 : 6;
-        return { 0, 1, 2, /* SDPA and KV_CACHE_UPDATE indexes configuration */
-                 mixed_mode_buffer /* PA_SDPA multiple tokens mode */ };
+        size_t mixed_mode_buffer = has_scores_output ? 8 : 6;
+
+        std::set<size_t> lockable_ids = { 0, 1, 2, /* SDPA and KV_CACHE_UPDATE indexes configuration */
+                                          mixed_mode_buffer /* PA_SDPA multiple tokens mode */ };
+        if (has_scores_output) {
+            // subsequences offsets
+            lockable_ids.insert(4);
+        }
+        return lockable_ids;
     };
 
     void execute_stage(const std::vector<event::ptr>& events,
@@ -231,7 +238,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
             if (stage == Stage::SDPA) {
                 const auto desc = instance.get_node().as<paged_attention>().get_primitive();
                 if (desc->has_scores_output()) {
-                    internal_buffers_count += 4; // Add softmax intermediate output buffer for scores calculation
+                    internal_buffers_count += 5; // Add softmax intermediate output buffer for scores calculation
                 }
             }
         }

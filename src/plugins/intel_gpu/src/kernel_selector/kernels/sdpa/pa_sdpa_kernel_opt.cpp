@@ -118,7 +118,7 @@ KernelsData PagedAttentionSDPAKernelOpt::GetKernelsData(const Params& p) const {
         uint32_t internal_buffers_num = 0;
         if (has_scores_output) {
             // Intermediate softmax results for PA scores output
-            internal_buffers_num++;
+            internal_buffers_num += 2;
         }
 
         // Softmax's exp_sums, max_logits and intermediate output
@@ -373,6 +373,7 @@ void PagedAttentionSDPAKernelOpt::GetUpdateDispatchDataFunc(KernelData& kd) cons
             auto softmax_buf_size = softmax_buf_elements_count * softmax_buf_dt_size;
 
             kd.internalBufferSizes.push_back(softmax_buf_size); // softmax intermediate output
+            kd.internalBufferSizes.push_back(subsequences_number * BytesPerElement(Datatype::INT32)); // accumulated offset lenghts
 
             if (prim_params.stage == PagedAttentionStage::PREFILL) {
                 // Recalculate buf_size as in case of PREFILL stage it's not needed to allocate buffer per each input token

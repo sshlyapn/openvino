@@ -50,6 +50,7 @@ KERNEL(pa_sdpa_opt)(
     __global OUTPUT_TYPE* output,
 #if PAGED_ATTENTION_SCORES_OUTPUT
     __global SOFTMAX_ACCUMULATOR_TYPE* softmax_results,
+    const __global int* subsequence_offsets,
 #endif
     __global SOFTMAX_ACCUMULATOR_TYPE* exp_sums,
     __global SOFTMAX_ACCUMULATOR_TYPE* max_logits,
@@ -399,6 +400,7 @@ KERNEL(pa_sdpa_opt)(
 #error Unexpected SOFTMAX_ACCUMULATOR data type size
 #endif
 
+// TODO: check if intermediates buffers order is correct
 REQD_SUB_GROUP_SIZE(SUBGROUP_SIZE)
 KERNEL(pa_sdpa_finalization_stage)(
     const __global INPUT3_TYPE* past_lens,
@@ -544,6 +546,7 @@ KERNEL(pa_sdpa_scores_calculation)(
     const __global INPUT6_TYPE* subsequence_begins,
     __global OUTPUT1_TYPE* scores_output,
     const __global SOFTMAX_ACCUMULATOR_TYPE* softmax_output,
+    const __global int* subsequence_offsets,
     const __global SOFTMAX_ACCUMULATOR_TYPE* exp_sums,
     const __global SOFTMAX_ACCUMULATOR_TYPE* max_logits,
     const __global OUTPUT_TYPE* tmp_out,
@@ -594,16 +597,9 @@ KERNEL(pa_sdpa_scores_calculation)(
         total_score += softmax_value;
     }
 
-    // TODO: WA: need to pass additional input with offsets
-    uint total_seq_len = 0;
-    for (uint i = 0; i < subsequence_idx; i++) {
-        const int subsequence_begin = subsequence_begins[i];
-        const int subsequence_end = subsequence_begins[i + 1];
-        total_seq_len += (subsequence_end - subsequence_begin) + past_lens[i];
-    }
-
+    const uint output_offset = subsequence_offsets[subsequence_idx];
     if (partition_global_idx < seq_len) {
-        scores_output[total_seq_len + partition_global_idx] = total_score;
+        scores_output[output_offset + partition_global_idx] = total_score;
     }
 }
 

@@ -340,6 +340,7 @@ KernelsData SDPAKernelOpt::GetKernelsData(const Params& params) const {
             kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 4});
             kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 5});
             kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 6});
+            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 7});
             kernel.params.arguments.push_back({ArgumentDescriptor::Types::SCALAR, 0});
         }
 

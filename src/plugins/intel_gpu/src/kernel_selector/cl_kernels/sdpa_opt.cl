@@ -844,6 +844,7 @@ KERNEL(sdpa_opt)(
     const __global int* gws_seq_indexes_correspondence
 #if PAGED_ATTENTION_SCORES_OUTPUT
     , __global SOFTMAX_ACCUMULATOR_TYPE* softmax_results
+    , const __global int* subsequence_offsets
     , __global SOFTMAX_ACCUMULATOR_TYPE* exp_sums
     , __global SOFTMAX_ACCUMULATOR_TYPE* max_logits
     , __global OUTPUT_TYPE* tmp_out
