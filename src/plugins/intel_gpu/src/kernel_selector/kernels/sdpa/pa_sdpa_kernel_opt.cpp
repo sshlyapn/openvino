@@ -277,10 +277,10 @@ CommonDispatchData PagedAttentionSDPAKernelOpt::SetDefault(const pa_sdpa_params&
             }
             num_of_partitions = CeilDiv(params.conf.paged_attention_max_len, partition_size);
 
-            dispatch_data.gws = { subsequences_number,
+            dispatch_data.gws = { partition_size * num_of_partitions,
                                   1,
-                                  partition_size * num_of_partitions };
-            dispatch_data.lws = { 1, 1, partition_size };
+                                  subsequences_number };
+            dispatch_data.lws = { partition_size, 1, 1 };
         } else {
             dispatch_data.gws = { total_tokens,
                                   heads_num,
