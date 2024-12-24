@@ -176,8 +176,12 @@ void PagedAttentionExtension::validate_and_infer_types() {
             "Input `rotation_trig_lut` should either have rank 2 or be omitted, but it has rank ",
             get_input_partial_shape(15).rank().get_length(),
             ".");
+        if (get_input_element_type(15) != element::f32) {
+            std::cout << "PA WARNING: " << "Element type of `rotation_trig_lut` input should be f32, but it is " <<
+                        get_input_element_type(15) << ".\n";
+        }
         NODE_VALIDATION_CHECK(this,
-                              get_input_element_type(15).is_dynamic() || get_input_element_type(15) == element::f32,
+                              get_input_element_type(15).is_dynamic() || get_input_element_type(15).is_real(),
                               "Element type of `rotation_trig_lut` input should be f32, but it is ",
                               get_input_element_type(15),
                               ".");

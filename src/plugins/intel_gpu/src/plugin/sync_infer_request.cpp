@@ -793,6 +793,8 @@ std::vector<cldnn::event::ptr> SyncInferRequest::prepare_input(const std::string
 
     auto need_lockable_mem = network->does_node_need_lockable_output(internal_name);
 
+    GPU_DEBUG_TRACE_DETAIL << "need_lockable_mem=" << need_lockable_mem << "\n";
+
     OPENVINO_ASSERT(pshape.compatible(ov::PartialShape(user_tensor->get_shape())) || is_batched_input(port),
                     "[GPU] The input tensor size is not equal to model port shape, can't handle input tensor with name: ",
                     internal_name,

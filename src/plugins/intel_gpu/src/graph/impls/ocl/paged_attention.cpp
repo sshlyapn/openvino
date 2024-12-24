@@ -12,6 +12,7 @@
 
 #include "sdpa/sdpa_kernel_base.h"
 #include "sdpa/sdpa_kernel_selector.h"
+#include "sdpa/pa_kv_cache_rotate_kernel_ref.h"
 #include "sdpa/pa_kv_cache_update_kernel_ref.h"
 #include "sdpa/pa_sdpa_kernel_opt.h"
 
@@ -27,6 +28,9 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
 
     using pa_sdpa_kernel_selector_t = kernel_selector::pa_sdpa_kernel_selector;
     using pa_sdpa_kernel_params_t = kernel_selector::pa_sdpa_params;
+
+    using kv_cache_rotate_kernel_selector_t = kernel_selector::kv_cache_rotate_kernel_selector;
+    using kv_cache_rotate_kernel_params_t = kernel_selector::kv_cache_rotate_params;
 
     using kv_cache_update_kernel_selector_t = kernel_selector::kv_cache_update_kernel_selector;
     using kv_cache_update_kernel_params_t = kernel_selector::kv_cache_update_params;
@@ -50,6 +54,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         KV_CACHE_UPDATE,
         SDPA,
         PA_SDPA,
+        KV_CACHE_ROTATE,
     };
 
     bool requires_update(primitive_inst& inst, const kernel_impl_params& impl_params) const override {
@@ -127,10 +132,16 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         const auto desc = instance.get_node().as<paged_attention>().get_primitive();
 
         kernel_arguments_data args;
-        if (stage == Stage::KV_CACHE_UPDATE || stage == Stage::SDPA)
+        if (stage == Stage::KV_CACHE_UPDATE || stage == Stage::SDPA || stage == Stage::KV_CACHE_ROTATE)
             args.shape_info = instance.shape_info_memory_ptr();
 
-        if (stage == Stage::KV_CACHE_UPDATE) {
+        if (stage == Stage::KV_CACHE_ROTATE) {
+            args.inputs = {  instance.rotated_block_indices_ptr(),
+                             instance.rotation_deltas_ptr(),
+                             instance.rotation_trig_lut_ptr() };
+
+            args.outputs = { instance.key_cache_memory_ptr() };
+        } else if (stage == Stage::KV_CACHE_UPDATE) {
             args.inputs = {  instance.key_memory_ptr(),
                              instance.value_memory_ptr(),
                              instance.past_lens_memory_ptr(),
@@ -232,7 +243,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         if (stage == Stage::PA_SDPA) {
             internal_buffers_offset = _kernels_data[Stage::KV_CACHE_UPDATE].internalBufferSizes.size();
             internal_buffers_count = _kernels_data[Stage::PA_SDPA].internalBufferSizes.size();
-        } else {
+        } else if (stage == Stage::KV_CACHE_UPDATE || stage == Stage::SDPA) {
             internal_buffers_count = _kernels_data[Stage::KV_CACHE_UPDATE].internalBufferSizes.size();
 
             if (stage == Stage::SDPA) {
@@ -305,6 +316,17 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         const auto stage = get_paged_attention_stage(*instance.get_impl_params());
         const auto is_mixed_mode = stage == PagedAttentionStage::MIXED;
 
+        const auto& desc = instance.get_impl_params()->typed_desc<paged_attention>();
+        if (desc->has_rotation_coefficients) {
+            int SKIP_ROTATION = 0;
+            if (const auto env_var = std::getenv("SKIP_ROTATION")) {
+                std::istringstream ss(env_var);
+                ss >> SKIP_ROTATION;
+            }
+            if (!SKIP_ROTATION)
+                execute_stage(events, instance, res_events, Stage::KV_CACHE_ROTATE, is_mixed_mode);
+        }
+
         GPU_DEBUG_TRACE_DETAIL << "Stage::KV_CACHE_UPDATE\n";
         execute_stage(events, instance, res_events, Stage::KV_CACHE_UPDATE, is_mixed_mode);
 
@@ -314,7 +336,6 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
             execute_stage(dep_events, instance, res_events, Stage::SDPA, is_mixed_mode);
         }
 
-        const auto& desc = instance.get_impl_params()->typed_desc<paged_attention>();
         if (stage == PagedAttentionStage::GENERATE || stage == PagedAttentionStage::MIXED || desc->has_scores_output()) {
             GPU_DEBUG_TRACE_DETAIL << "stage: " << static_cast<int>(stage) << " " << is_mixed_mode << "\n";
             execute_stage(dep_events, instance, res_events, Stage::PA_SDPA, is_mixed_mode);
@@ -428,6 +449,8 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
             config.has_const_scale_val = false;
         }
 
+        config.has_rotation_coefficients_input = desc->has_rotation_coefficients;
+
         if (desc->heads_num != desc->kv_heads_num) {
             config.broadcast_axis = 1;
             config.group_size = desc->heads_num / desc->kv_heads_num;
@@ -445,6 +468,42 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         }
 
         return config;
+    }
+
+    static kv_cache_rotate_kernel_params_t get_kv_cache_rotate_kernel_params(const kernel_impl_params& impl_param,
+                                                                             const kernel_selector::MultiDataTensor& input_tensors,
+                                                                             bool is_dynamic = false) {
+        auto params = get_default_params<kv_cache_rotate_kernel_params_t>(impl_param, is_dynamic);
+
+        const auto& key_cache_tensor = input_tensors[3];
+        const auto& rotated_block_indices_tensor = input_tensors[13];
+        const auto& rotation_deltas_tensor = input_tensors[14];
+        const auto& rotation_trig_lut_tensor = input_tensors[15];
+
+        const auto inputs_number = 3;
+        const auto outputs_number = 1;
+        params.inputs.resize(inputs_number);
+        params.outputs.resize(outputs_number);
+        params.inputs[0] = rotated_block_indices_tensor;
+        params.inputs[1] = rotation_deltas_tensor;
+        params.inputs[2] = rotation_trig_lut_tensor;
+        params.outputs[0] = key_cache_tensor;
+
+        params.conf = get_sdpa_configuration(impl_param, is_dynamic);
+
+        const auto& in_offsets_map = impl_param.in_port_to_shape_info_offset;
+        std::map<size_t, size_t> in_tensor_to_offset_map = {
+            {0, in_offsets_map.at(13)},
+            {1, in_offsets_map.at(14)},
+            {2, in_offsets_map.at(15)},
+        };
+        std::map<size_t, size_t> out_tensor_to_offset_map = {
+            {0, in_offsets_map.at(3)},
+        };
+
+        params.set_dynamic_shape_offsets(in_tensor_to_offset_map, out_tensor_to_offset_map);
+
+        return params;
     }
 
     static kv_cache_update_kernel_params_t get_kv_cache_update_kernel_params(const kernel_impl_params& impl_param,
@@ -687,6 +746,15 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         for (const auto& input_layout : impl_param.input_layouts)
             input_tensors.emplace_back(convert_data_tensor(input_layout));
 
+        if (desc->has_rotation_coefficients) {
+            auto kv_cache_rotate_kernel_params = get_kv_cache_rotate_kernel_params(impl_param, input_tensors, impl_param.is_dynamic());
+            (_kernels_data[Stage::KV_CACHE_ROTATE].update_dispatch_data_func)(kv_cache_rotate_kernel_params, _kernels_data[Stage::KV_CACHE_ROTATE]);
+
+            if (_kernels_data[Stage::KV_CACHE_ROTATE].kernels[0].skip_execution == false) {
+                std::cout << "GPU: Rotate KV-cache\n";
+            }
+        }
+
         auto kv_cache_update_kernel_params = get_kv_cache_update_kernel_params(impl_param, stage, input_tensors, impl_param.is_dynamic());
         (_kernels_data[Stage::KV_CACHE_UPDATE].update_dispatch_data_func)(kv_cache_update_kernel_params, _kernels_data[Stage::KV_CACHE_UPDATE]);
 
@@ -709,6 +777,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         for (const auto& input_layout : impl_param.input_layouts)
             input_tensors.emplace_back(convert_data_tensor(input_layout));
 
+        const auto& desc = impl_param.typed_desc<paged_attention>();
         auto kv_cache_update_kernel_params = get_kv_cache_update_kernel_params(impl_param, stage, input_tensors, impl_param.is_dynamic());
         auto& kv_cache_update_kernel_selector = kv_cache_update_kernel_selector_t::Instance();
         kernels_data.push_back(kv_cache_update_kernel_selector.get_best_kernel(kv_cache_update_kernel_params));
@@ -721,10 +790,14 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         auto& pa_sdpa_kernel_selector = pa_sdpa_kernel_selector_t::Instance();
         kernels_data.push_back(pa_sdpa_kernel_selector.get_best_kernel(pa_sdpa_kernel_params));
 
-        auto pa_impl = cldnn::make_unique<paged_attention_impl>(kernels_data);
+        if (desc->has_rotation_coefficients) {
+            auto kv_cache_rotate_kernel_params = get_kv_cache_rotate_kernel_params(impl_param, input_tensors, impl_param.is_dynamic());
+            auto& kv_cache_rotate_kernel_selector = kv_cache_rotate_kernel_selector_t::Instance();
+            kernels_data.push_back(kv_cache_rotate_kernel_selector.get_best_kernel(kv_cache_rotate_kernel_params));
+        }
 
-        // TODO: Check if this is enough
-        const auto& desc = impl_param.typed_desc<paged_attention>();
+        // TODO: Check if this is enough for all the cases
+        auto pa_impl = cldnn::make_unique<paged_attention_impl>(kernels_data);
         pa_impl->has_scores_output = desc->has_scores_output();
 
         return pa_impl;
