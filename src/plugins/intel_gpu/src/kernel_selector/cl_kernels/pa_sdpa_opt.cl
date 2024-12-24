@@ -408,6 +408,10 @@ KERNEL(pa_sdpa_finalization_stage)(
     const __global INPUT6_TYPE* subsequence_begins,
 #endif
     __global OUTPUT_TYPE* output,
+#if PAGED_ATTENTION_SCORES_OUTPUT
+    __global SOFTMAX_ACCUMULATOR_TYPE* softmax_results,
+    const __global int* subsequence_offsets,
+#endif
     const __global SOFTMAX_ACCUMULATOR_TYPE* exp_sums,
     const __global SOFTMAX_ACCUMULATOR_TYPE* max_logits,
     const __global OUTPUT_TYPE* tmp_out,
