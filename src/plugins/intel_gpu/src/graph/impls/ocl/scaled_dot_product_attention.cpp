@@ -153,6 +153,17 @@ protected:
             for (size_t i = 0; i < instance.get_intermediates_memories().size(); i++)
                 args.intermediates.push_back(instance.get_intermediates_memories()[i]);
 
+            stream.finish();
+
+            const auto impl_params = instance.get_impl_params();
+            const auto& desc = impl_params->typed_desc<scaled_dot_product_attention>();
+            if (desc->is_kv_compressed) {
+                instance.input_memory_ptr(4)->print_memory(stream, impl_params->get_input_layout(4), desc->id + " key_scale", true);
+                instance.input_memory_ptr(5)->print_memory(stream, impl_params->get_input_layout(5), desc->id + " val_scale", true);
+                instance.input_memory_ptr(6)->print_memory(stream, impl_params->get_input_layout(6), desc->id + " key_zp", true);
+                instance.input_memory_ptr(7)->print_memory(stream, impl_params->get_input_layout(7), desc->id + " val_zp", true);
+            }
+
             stream.set_arguments(*_kernels[idx_final], _kernels_data[stage].kernels[kd_idx].params, args);
 
             const auto& gws = params.workGroups.global;
@@ -313,7 +324,11 @@ public:
         }
 
         if (desc->is_kv_compressed) {
+            GPU_DEBUG_TRACE_DETAIL << "Update scale layout: "  << impl_param.get_input_layout(data_inputs_num) << "\n";
             params.key_cache_comp_scale = convert_data_tensor(impl_param.get_input_layout(data_inputs_num));
+            GPU_DEBUG_TRACE_DETAIL << "Updated scale tensor pad: " << params.key_cache_comp_scale.Y().pad.before << " "
+                                   << params.key_cache_comp_scale.Y().pad.after << "\n";
+
             params.value_cache_comp_scale = convert_data_tensor(impl_param.get_input_layout(data_inputs_num + 1));
 
             if (has_zp_input_buffers) {

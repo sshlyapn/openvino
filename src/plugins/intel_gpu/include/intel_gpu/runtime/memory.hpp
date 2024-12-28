@@ -129,6 +129,8 @@ struct memory {
     std::shared_ptr<MemoryTracker> get_mem_tracker() const { return m_mem_tracker; }
     GPU_DEBUG_CODE(bool from_memory_pool = false);
 
+    void print_memory(stream& stream, layout data_layout, std::string name, bool add_paddings) const;
+
 protected:
     engine* _engine;
     const layout _layout;

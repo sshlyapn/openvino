@@ -151,10 +151,10 @@ KERNEL(micro_sdpa)(OPTIONAL_SHAPE_INFO_ARG
 #endif
         int d, int k, int q
 #ifdef KV_COMPRESSED
-        , const global KEY_ATTR_SCALES_DATA_T *K_scales
-        , const global KEY_ATTR_ZP_DATA_T *K_zp
-        , const global VAL_ATTR_SCALES_DATA_T *V_scales
-        , const global VAL_ATTR_ZP_DATA_T *V_zp
+        , global KEY_ATTR_SCALES_DATA_T *K_scales
+        , global KEY_ATTR_ZP_DATA_T *K_zp
+        , global VAL_ATTR_SCALES_DATA_T *V_scales
+        , global VAL_ATTR_ZP_DATA_T *V_zp
 #endif
         ) {
     uint sg_ij = sub_group_broadcast(get_local_id(1), 0);
@@ -164,6 +164,87 @@ KERNEL(micro_sdpa)(OPTIONAL_SHAPE_INFO_ARG
 
     uint wg_j0 = get_group_id(0) * ugemm_kq_wg_tile_n;
 
+
+
+
+
+//     if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_global_id(2) == 0) {
+//         for (int j = 0; j < 32; j++) {
+//                 #ifdef KV_COMPRESSED
+//                 for (int i = k; i < k + KEY_SCALE_PAD_AFTER_SIZE_Y; i++) {
+//                         K_scales[(j * (k + KEY_SCALE_PAD_AFTER_SIZE_Y)) + i] = 0;
+//                         K_zp[(j * (k + KEY_SCALE_PAD_AFTER_SIZE_Y)) + i] = 0;
+//                 }
+
+//                 for (int i = k; i < k + VAL_SCALE_PAD_AFTER_SIZE_Y; i++) {
+//                         V_scales[(j * (k + VAL_SCALE_PAD_AFTER_SIZE_Y)) + i] = 0;
+//                         V_zp[(j * (k + VAL_SCALE_PAD_AFTER_SIZE_Y)) + i] = 0;
+//                 }
+//                 #endif
+//         }
+
+//         printf("h=0 key scales[%p]={", K_scales);
+//         for (int i = 0; i < max(k, k + KEY_SCALE_PAD_AFTER_SIZE_Y); i++)
+//             printf("%f, ", K_scales[i]);
+//         printf("total_num=%d, pad=%d\n", k, KEY_SCALE_PAD_AFTER_SIZE_Y);
+
+//         printf("h=0 key zp[%p]={", K_zp);
+//         for (int i = 0; i < max(k, k + KEY_SCALE_PAD_AFTER_SIZE_Y); i++)
+//             printf("%d, ", K_zp[i]);
+//         printf("total_num=%d, pad=%d\n", k, KEY_SCALE_PAD_AFTER_SIZE_Y);
+
+//         printf("h=0 val scales[%p]={", V_scales);
+//         for (int i = 0; i < max(k, k + VAL_SCALE_PAD_AFTER_SIZE_Y); i++)
+//             printf("%f, ", V_scales[i]);
+//         printf("total_num=%d, pad=%d\n", k, VAL_SCALE_PAD_AFTER_SIZE_Y);
+
+//         printf("h=0 key zp[%p]={", V_zp);
+//         for (int i = 0; i < max(k, k + VAL_SCALE_PAD_AFTER_SIZE_Y); i++)
+//             printf("%d, ", V_zp[i]);
+//         printf("total_num=%d, pad=%d\n", k, VAL_SCALE_PAD_AFTER_SIZE_Y);
+
+
+//         printf("h=1 key scales[%p]={", K_scales);
+//         for (int i = 0; i < max(k, k + KEY_SCALE_PAD_AFTER_SIZE_Y); i++)
+//             printf("%f, ", K_scales[k + KEY_SCALE_PAD_AFTER_SIZE_Y + i]);
+//         printf("total_num=%d, pad=%d\n", k, KEY_SCALE_PAD_AFTER_SIZE_Y);
+
+//         printf("h=1 key zp[%p]={", K_zp);
+//         for (int i = 0; i < max(k, k + KEY_SCALE_PAD_AFTER_SIZE_Y); i++)
+//             printf("%d, ", K_zp[k + KEY_SCALE_PAD_AFTER_SIZE_Y + i]);
+//         printf("total_num=%d, pad=%d\n", k, KEY_SCALE_PAD_AFTER_SIZE_Y);
+
+//         printf("h=1 val scales[%p]={", V_scales);
+//         for (int i = 0; i < max(k, k + VAL_SCALE_PAD_AFTER_SIZE_Y); i++)
+//             printf("%f, ", V_scales[k + VAL_SCALE_PAD_AFTER_SIZE_Y + i]);
+//         printf("total_num=%d, pad=%d\n", k, VAL_SCALE_PAD_AFTER_SIZE_Y);
+
+//         printf("h=1 key zp[%p]={", V_zp);
+//         for (int i = 0; i < max(k, k + VAL_SCALE_PAD_AFTER_SIZE_Y); i++)
+//             printf("%d, ", V_zp[k + VAL_SCALE_PAD_AFTER_SIZE_Y + i]);
+//         printf("total_num=%d, pad=%d\n", k, VAL_SCALE_PAD_AFTER_SIZE_Y);
+
+
+//         printf("h=31 key scales[%p]={", K_scales);
+//         for (int i = 0; i < max(k, k + KEY_SCALE_PAD_AFTER_SIZE_Y); i++)
+//             printf("%f, ", K_scales[(31 * (k + KEY_SCALE_PAD_AFTER_SIZE_Y)) + i]);
+//         printf("total_num=%d, pad=%d\n", k, KEY_SCALE_PAD_AFTER_SIZE_Y);
+
+//         printf("h=31 key zp[%p]={", K_zp);
+//         for (int i = 0; i < max(k, k + KEY_SCALE_PAD_AFTER_SIZE_Y); i++)
+//             printf("%d, ", K_zp[(31 * (k + KEY_SCALE_PAD_AFTER_SIZE_Y)) + i]);
+//         printf("total_num=%d, pad=%d\n", k, KEY_SCALE_PAD_AFTER_SIZE_Y);
+
+//         printf("h=31 val scales[%p]={", V_scales);
+//         for (int i = 0; i < max(k, k + VAL_SCALE_PAD_AFTER_SIZE_Y); i++)
+//             printf("%f, ", V_scales[(31 * (k + VAL_SCALE_PAD_AFTER_SIZE_Y)) + i]);
+//         printf("total_num=%d, pad=%d\n", k, VAL_SCALE_PAD_AFTER_SIZE_Y);
+
+//         printf("h=31 key zp[%p]={", V_zp);
+//         for (int i = 0; i < max(k, k + VAL_SCALE_PAD_AFTER_SIZE_Y); i++)
+//             printf("%d, ", V_zp[(31 * (k + VAL_SCALE_PAD_AFTER_SIZE_Y)) + i]);
+//         printf("total_num=%d, pad=%d\n", k, VAL_SCALE_PAD_AFTER_SIZE_Y);
+//     }
     /* Leading dimension for matrices */
     uint ldk = TRANSPOSE_K ? KEY_S3 : KEY_S2;
     uint ldq = QRY_S2;
@@ -307,6 +388,7 @@ KERNEL(micro_sdpa)(OPTIONAL_SHAPE_INFO_ARG
 
 #if WITH_ATTN_MASK
         mask_tile_type mask_tile;
+        // tile_load_t(&mask_tile, msk, q, k, sg_j0_kq + wg_j0, k0 + sg_i0_kq);
         tile_load_t(&mask_tile, msk, q, k, q, sg_j0_kq + wg_j0, k0 + sg_i0_kq);
 #endif
 

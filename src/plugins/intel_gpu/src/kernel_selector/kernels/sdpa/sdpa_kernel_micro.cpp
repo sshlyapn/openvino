@@ -68,6 +68,15 @@ Tensor::Dim get_seq_length(const DataTensor& qkv, const std::vector<int64_t>& or
     return normalize_dims(qkv)[order[2]];
 }
 
+std::string get_kernel_name(const std::string& kernel_name, const sdpa_params& params, bool is_prefill) {
+    auto name = kernel_name + (is_prefill ? "_prefill" : "_generate");
+
+    if (params.conf.is_kv_compressed)
+        name += "_compressed";
+
+    return name;
+}
+
 struct sdpa_config_t {
     int unroll_m_kq, unroll_n_kq; // Subgroup tile sizes for K*Q GEMM
     int unroll_m_vs, unroll_n_vs; // Subgroup tile sizes for V*S GEMM
@@ -272,8 +281,10 @@ void SDPAKernelMicro::init_microkernels(const sdpa_params& params, micro::Packag
     opts_kq.scaleA = params.conf.is_kv_compressed && !kq_common_scales;
     opts_kq.offsetA = params.conf.is_kv_compressed && params.conf.use_asymmetric_quantization;
 
+    // auto key_dt_size = micro::data_type_size(convert_type(params.inputs[1].GetDType()));
     problem_kq.B.layout = micro::MatrixLayout::Pr;
     problem_kq.C.layout = micro::MatrixLayout::T;
+    // problem_kq.A.setAlignment(micro::alignment_for_ld(head_size * key_dt_size));
     problem_kq.A.setAlignment(micro::alignment_for_ld(head_size * problem.Ta));
     problem_kq.B.setAlignment(64); // Q is packed in VNNI format in SLM
     problem_kq.B.crosspack = 2;
@@ -337,8 +348,10 @@ void SDPAKernelMicro::init_microkernels(const sdpa_params& params, micro::Packag
     opts_vs.scaleA = params.conf.is_kv_compressed && !vs_common_scales;
     opts_vs.offsetA = params.conf.is_kv_compressed && params.conf.use_asymmetric_quantization;
 
+    // auto val_dt_size = micro::data_type_size(convert_type(params.inputs[2].GetDType()));
     problem_vs.B.layout = micro::MatrixLayout::Pr;
     problem_vs.C.layout = micro::MatrixLayout::N;
+    // problem_vs.A.setAlignment(micro::alignment_for_ld(head_size * val_dt_size));
     problem_vs.A.setAlignment(micro::alignment_for_ld(head_size * problem.Ta));
     problem_vs.B.setAlignment(64); // S is packed in SLM
     problem_vs.B.crosspack = 16;
@@ -536,6 +549,12 @@ JitConstants SDPAKernelMicro::GetJitConstants(const sdpa_params& params, const m
         // TODO: Causes accuracy drop for static SD model. Enable back once the issue is resolved
         // if (lda % 4 == 0 && v_full)
         //     jit.AddConstant(MakeJitConstant("BLOCK_A", 1));
+        // if (params.inputs.size() > 3 && !params.inputs[3].is_dynamic()) {
+        //     auto ldmsk = params.inputs[3].X().v * params.inputs[3].ElementSize();
+        //     if (ldmsk % 4 == 0)
+        //         jit.AddConstant(MakeJitConstant("BLOCK_MSK", 1));
+        // }
+        // if (ldmsk % 4 == 0) kernel_ctx.define_int("BLOCK_MSK", 1);
         jit.AddConstant(MakeJitConstant("REMAINDER_Q", !q_full));
     } else if (params.engineInfo.arch >= gpu_arch::xe_hpc) {
         auto vbytes = n_values.v * V.ElementSize();
@@ -629,7 +648,7 @@ CommonDispatchData SDPAKernelMicro::SetDefault(const sdpa_params& params, const 
 }
 
 clKernelData SDPAKernelMicro::get_kernel_data(const sdpa_params& params, bool is_prefill) const {
-    auto name = kernelName + (is_prefill ? "_prefill" : "_generate");
+    auto name = get_kernel_name(kernelName, params, is_prefill);
 
     std::vector<micro::Package> gemms(2); // KQ and VS
     init_microkernels(params, gemms[kq_id], gemms[vs_id], is_prefill);
@@ -752,6 +771,12 @@ void SDPAKernelMicro::GetUpdateDispatchDataFunc(KernelData& kd) const {
 
         const auto n_queries = get_seq_length(Q, prim_params.input0_order);
         const auto n_keys = get_seq_length(K, prim_params.input1_order);
+
+        GPU_DEBUG_TRACE_DETAIL << "Key scale pad_before=" << prim_params.key_cache_comp_scale.Y().pad.before
+                               << "pad_after=" << prim_params.key_cache_comp_scale.Y().pad.after << "\n";
+
+        GPU_DEBUG_TRACE_DETAIL << "Value scale pad_before=" << prim_params.value_cache_comp_scale.Y().pad.before
+                               << "pad_after=" << prim_params.value_cache_comp_scale.Y().pad.after << "\n";
 
         auto head_size = prim_params.conf.head_size;
 

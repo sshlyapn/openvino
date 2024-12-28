@@ -62,10 +62,14 @@ KernelsData SDPAKernelRef::GetKernelsData(const Params& params) const {
         return {};
     }
 
+    auto kernel_name = kernelName;
+    if (prim_params.conf.is_kv_compressed)
+        kernel_name += "_compressed";
+
     auto dispatchData = SetDefault(prim_params);
-    auto entry_point = GetEntryPoint(kernelName, prim_params.layerID, params);
+    auto entry_point = GetEntryPoint(kernel_name, prim_params.layerID, params);
     auto cldnn_jit = GetJitConstants(prim_params);
-    auto jit = CreateJit(kernelName, cldnn_jit, entry_point);
+    auto jit = CreateJit(kernel_name, cldnn_jit, entry_point);
 
     auto& kernel = kd.kernels[0];
 

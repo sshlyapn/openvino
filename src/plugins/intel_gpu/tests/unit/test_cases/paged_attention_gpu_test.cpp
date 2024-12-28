@@ -7,11 +7,13 @@
 
 #include <intel_gpu/primitives/data.hpp>
 #include <intel_gpu/primitives/eltwise.hpp>
+#include <intel_gpu/primitives/dynamic_quantize.hpp>
 #include <intel_gpu/primitives/input_layout.hpp>
 #include <intel_gpu/primitives/gemm.hpp>
 #include <intel_gpu/primitives/paged_attention.hpp>
 #include <intel_gpu/primitives/permute.hpp>
 #include <intel_gpu/primitives/reorder.hpp>
+#include <intel_gpu/primitives/scaled_dot_product_attention.hpp>
 #include <intel_gpu/primitives/softmax.hpp>
 
 using namespace cldnn;
@@ -307,7 +309,7 @@ private:
 
     static std::vector<ov::float16> generate_input_data(tests::random_generator& rg, size_t num_heads, size_t tokens_num, size_t head_size) {
         const size_t total_elements_num = tokens_num * num_heads * head_size;
-        auto data = rg.generate_random_1d<ov::float16>(total_elements_num, -1, 1);
+        auto data = rg.generate_random_1d<ov::float16>(total_elements_num, -2, 2, 256);
 
         return data;
     }
@@ -347,6 +349,33 @@ struct PagedAttentionReference {
         return { ref_data_output, ref_scores_output };
     }
 
+    std::pair<std::vector<ov::float16>, std::vector<ov::float16>> get_sdpa_reference() {
+        std::vector<ov::float16> ref_data_output;
+        std::vector<ov::float16> ref_scores_output;
+
+        for (size_t i = 0; i < pam.subsequence_descs.size(); i++) {
+            const auto& subsequence_desc = pam.subsequence_descs[i];
+            const auto kv_seq_len = subsequence_desc.num_tokens + subsequence_desc.past_len;
+            auto subsequence_ref_results = run_sdpa_reference(pam.query_data[i],
+                                                              pam.key_data[i],
+                                                              pam.value_data[i],
+                                                              subsequence_desc.num_tokens,
+                                                              kv_seq_len,
+                                                              pam.num_heads,
+                                                              pam.head_size,
+                                                              pam.get_default_scale());
+
+            // concatenate all subsequences into one vector
+            ref_data_output.insert(ref_data_output.end(),
+                                   subsequence_ref_results.first.begin(),
+                                   subsequence_ref_results.first.end());
+            ref_scores_output.insert(ref_scores_output.end(),
+                                     subsequence_ref_results.second.begin(),
+                                     subsequence_ref_results.second.end());
+        }
+
+        return { ref_data_output, ref_scores_output };
+    }
 private:
     std::pair<std::vector<ov::float16>, std::vector<ov::float16>>
         run_reference(const std::vector<ov::float16>& query_data,
@@ -411,6 +440,231 @@ private:
 
         return { get_output_data_vec(output_data_mem, num_queries, head_size, num_heads),
                  get_output_scores_vec(output_scores_mem, num_queries, num_keys, num_heads) };
+    }
+
+    std::pair<std::vector<ov::float16>, std::vector<ov::float16>>
+        run_sdpa_reference(const std::vector<ov::float16>& query_data,
+                           const std::vector<ov::float16>& key_data,
+                           const std::vector<ov::float16>& value_data,
+                           int num_queries,
+                           int num_keys,
+                           int num_heads,
+                           int head_size,
+                           float scale) {
+        int COMPR = 0;
+        if (const auto env_var = std::getenv("COMPR")) {
+            std::istringstream ss(env_var);
+            ss >> COMPR;
+        }
+        const bool kv_compressed = COMPR;
+
+        auto dq_attrs = dynamic_quantize::Attributes();
+        dq_attrs.group_sizes = {1, 1, 1, UINT64_MAX };
+        dq_attrs.output_storage_type = ov::op::internal::DynamicQuantize::OutputStorageType::Planar;
+        dq_attrs.quantization_dt = data_types::i8;
+        dq_attrs.quantization_type = ov::op::internal::DynamicQuantize::QuantizationType::Asymmetric;
+        dq_attrs.scale_dt = data_types::f16;
+        dq_attrs.scales_zp_output_order = {};
+        dq_attrs.zp_dt = data_types::i8;
+
+        auto key_quantized = quantize_data(key_data, dq_attrs, num_keys, num_heads, head_size);
+        auto value_quantized = quantize_data(value_data, dq_attrs, num_keys, num_heads, head_size);
+
+        auto query_shape = ov::PartialShape{1, num_queries, num_heads, head_size};
+        auto key_shape = ov::PartialShape{1, num_keys, num_heads, head_size};
+        auto value_shape = ov::PartialShape{1, num_keys, num_heads, head_size};
+        auto scale_shape = ov::PartialShape{1};
+        auto mask_shape = ov::PartialShape{-1, -1, -1, -1};
+        auto beam_shape = ov::PartialShape{1, 1, num_keys, 1};
+        auto key_scale_shape = ov::PartialShape{-1, num_heads, -1, 1};
+        auto key_zp_shape = ov::PartialShape{-1, num_heads, -1, 1};
+        auto val_scale_shape = ov::PartialShape{-1, num_heads, -1, 1};
+        auto val_zp_shape = ov::PartialShape{-1, num_heads, -1, 1};
+
+        auto key_value_dt = kv_compressed ? data_types::i8 : data_types::f16;
+
+        auto query_layout = layout{query_shape, data_types::f16, format::bfyx};
+        auto key_layout = layout{key_shape, key_value_dt, format::bfyx};
+        auto value_layout = layout{value_shape, key_value_dt, format::bfyx};
+        auto scale_layout = layout{scale_shape, data_types::f16, format::bfyx};
+        auto mask_layout = layout{mask_shape, data_types::f16, format::bfyx};
+        auto beam_layout = layout{beam_shape, data_types::i32, format::bfyx};
+        auto key_scale_layout = layout{key_scale_shape, data_types::f16, format::bfyx};
+        auto key_zp_layout = layout{key_zp_shape, data_types::i8, format::bfyx};
+        auto val_scale_layout = layout{val_scale_shape, data_types::f16, format::bfyx};
+        auto val_zp_layout = layout{val_zp_shape, data_types::i8, format::bfyx};
+
+        OPENVINO_ASSERT(query_layout.count() == query_data.size());
+        OPENVINO_ASSERT(key_layout.count() == key_data.size());
+        OPENVINO_ASSERT(value_layout.count() == value_data.size());
+
+        auto query_mem = test_engine.allocate_memory(query_layout);
+        auto key_mem = kv_compressed ? key_quantized[0]
+                                     : test_engine.allocate_memory(key_layout);
+        auto value_mem = kv_compressed ? value_quantized[0]
+                                       : test_engine.allocate_memory(value_layout);
+        auto scale_mem = test_engine.allocate_memory(scale_layout);
+        auto mask_mem = get_mask_mem(num_queries, num_keys, num_heads);
+        auto beam_mem = test_engine.allocate_memory(beam_layout);
+
+        query_layout.set_partial_shape(ov::PartialShape{-1, -1, num_heads, head_size});
+        key_layout.set_partial_shape(ov::PartialShape{-1, -1, num_heads, head_size});
+        value_layout.set_partial_shape(ov::PartialShape{-1, -1, num_heads, head_size});
+        beam_layout.set_partial_shape(ov::PartialShape{-1, 1, -1, 1});
+
+        std::vector<int> beam_vec(num_keys, 0);
+
+        set_values(query_mem, query_data);
+
+        if (!kv_compressed) {
+            set_values(key_mem, key_data);
+            set_values(value_mem, value_data);
+        }
+
+        set_values(scale_mem, { scale });
+        set_values(beam_mem, beam_vec);
+
+        std::vector<int64_t> default_order(4);
+        std::iota(default_order.begin(), default_order.end(), 0);
+
+        /*
+        [0] : rope:__module.model.layers.0.self_attn/aten::add/Add was: f16:bfyx:?x32x?x128:nopad now: f16:bfyx:1x32x32x128:nopad
+        [1] : kvcachecompressed:__module.model.layers.0.self_attn/aten::cat/Concat_2 was: i8:bfyx:?x32x?x128:dyn_pad_dims now: i8:bfyx:1x32x32x128:dyn_pad_dims
+        [2] : kvcachecompressed:__module.model.layers.0.self_attn/aten::cat/Concat_3 was: i8:bfyx:?x32x?x128:dyn_pad_dims now: i8:bfyx:1x32x32x128:dyn_pad_dims
+        [3] : stridedslice:__module.model.layers.0.self_attn/aten::slice/Slice_7 was: f16:bfyx:?x?x?x?:nopad now: f16:bfyx:1x1x32x32:nopad
+        [4] : kvcachecompressed:__module.model.layers.0.self_attn/aten::cat/Concat_2 was: f16:bfyx:?x32x?x1:dyn_pad_dims now: f16:bfyx:1x32x32x1:dyn_pad_dims
+        [5] : kvcachecompressed:__module.model.layers.0.self_attn/aten::cat/Concat_3 was: f16:bfyx:?x32x?x1:dyn_pad_dims now: f16:bfyx:1x32x32x1:dyn_pad_dims
+        [6] : kvcachecompressed:__module.model.layers.0.self_attn/aten::cat/Concat_2 was: i8:bfyx:?x32x?x1:dyn_pad_dims now: i8:bfyx:1x32x32x1:dyn_pad_dims
+        [7] : kvcachecompressed:__module.model.layers.0.self_attn/aten::cat/Concat_3 was: i8:bfyx:?x32x?x1:dyn_pad_dims now: i8:bfyx:1x32x32x1:dyn_pad_dims
+        [8] : kvcachecompressed:__module.model.layers.0.self_attn/aten::cat/Concat_2 was: i32:bfyx:?x1x?x1:nopad now: i32:bfyx:1x1x32x1:nopad
+         */
+
+        std::vector<input_info> sdpa_inputs = { input_info("query_transposed"),
+                                                input_info("key_transposed"),
+                                                input_info("value_transposed"),
+                                                input_info("mask"),
+                                                // input_info("scale")
+                                                };
+
+        if (kv_compressed) {
+            sdpa_inputs.push_back(input_info("key_scale"));
+            sdpa_inputs.push_back(input_info("value_scale"));
+            sdpa_inputs.push_back(input_info("key_zp"));
+            sdpa_inputs.push_back(input_info("value_zp"));
+        }
+
+        sdpa_inputs.push_back(input_info("beam_idx"));
+
+        auto sdpa = kv_compressed ? scaled_dot_product_attention("sdpa::sdpa",
+                                                                  sdpa_inputs,
+                                                                  false,
+                                                                  0,
+                                                                  default_order,
+                                                                  default_order,
+                                                                  default_order,
+                                                                  default_order,
+                                                                  dq_attrs,
+                                                                  true)
+                                  : scaled_dot_product_attention("sdpa::sdpa",
+                                                                  sdpa_inputs,
+                                                                  false,
+                                                                  0,
+                                                                  default_order,
+                                                                  default_order,
+                                                                  default_order,
+                                                                  default_order);
+
+        topology topology;
+        topology.add(input_layout("query", query_layout),
+                     input_layout("key", key_layout),
+                     input_layout("value", value_layout),
+                     input_layout("mask", mask_layout),
+                    //  input_layout("scale", scale_layout),
+                     input_layout("beam_idx", beam_layout),
+                     permute("query_transposed", input_info("query"), {0, 2, 1, 3}),
+                     permute("key_transposed", input_info("key"), {0, 2, 1, 3}),
+                     permute("value_transposed", input_info("value"), {0, 2, 1, 3}),
+                     sdpa,
+                     reorder("output_data", input_info("sdpa::sdpa"), format::bfyx, data_types::f16));
+
+        if (kv_compressed) {
+            topology.add(input_layout("key_scale", key_scale_layout),
+                         input_layout("key_zp", key_zp_layout),
+                         input_layout("value_scale", val_scale_layout),
+                         input_layout("value_zp", val_zp_layout));
+        }
+
+        ExecutionConfig config = get_test_default_config(test_engine);
+        config.set_property(ov::intel_gpu::optimize_data(true));
+        config.set_property(ov::intel_gpu::allow_new_shape_infer(true));
+
+        network::ptr network = get_network(test_engine, topology, config, get_test_stream_ptr(), false);
+        network->set_input_data("query", query_mem);
+        network->set_input_data("key", key_mem);
+        network->set_input_data("value", value_mem);
+        network->set_input_data("mask", mask_mem);
+        // network->set_input_data("scale", scale_mem);
+        network->set_input_data("beam_idx", beam_mem);
+
+        if (kv_compressed) {
+            network->set_input_data("key_scale", key_quantized[1]);
+            network->set_input_data("key_zp", key_quantized[2]);
+            network->set_input_data("value_scale", value_quantized[1]);
+            network->set_input_data("value_zp", value_quantized[2]);
+        }
+
+        auto outputs = network->execute();
+
+        auto output_data_mem = outputs.at("output_data").get_memory();
+
+        output_data_mem->print_memory(get_test_stream(), output_data_mem->get_layout(), "output_data_mem", false);
+
+        return { {}, {} };
+    }
+
+    std::vector<memory::ptr> quantize_data(const std::vector<ov::float16>& cache_data,
+                                           const dynamic_quantize::Attributes& dq_attrs,
+                                           int num_keys,
+                                           int num_heads,
+                                           int head_size) {
+        auto cache_shape = ov::PartialShape{1, num_keys, num_heads, head_size};
+        auto cache_layout = layout{cache_shape, data_types::f16, format::bfyx};
+
+        auto cache_mem = test_engine.allocate_memory(cache_layout);
+
+        cache_layout.set_partial_shape(ov::PartialShape{-1, -1, num_heads, head_size});
+
+        set_values(cache_mem, cache_data);
+
+        cache_mem->print_memory(get_test_stream(), cache_mem->get_layout(), "input", false);
+
+        topology topology;
+        topology.add(input_layout("cache_data", cache_layout),
+                     permute("cache_data_transposed", input_info("cache_data"), {0, 2, 1, 3}),
+                     dynamic_quantize("dq", input_info("cache_data_transposed"), dq_attrs, cache_shape.size()),
+                     permute("output_data_transposed", input_info("dq", 0), {0, 2, 1, 3}),
+                     reorder("output_data", input_info("output_data_transposed"), format::bfyx, data_types::i8),
+                     reorder("output_scales", input_info("dq", 1), format::bfyx, data_types::f16),
+                     reorder("output_zp", input_info("dq", 2), format::bfyx, data_types::i8));
+
+        ExecutionConfig config = get_test_default_config(test_engine);
+        config.set_property(ov::intel_gpu::optimize_data(true));
+        config.set_property(ov::intel_gpu::allow_new_shape_infer(true));
+
+        network::ptr network = get_network(test_engine, topology, config, get_test_stream_ptr(), false);
+        network->set_input_data("cache_data", cache_mem);
+
+        auto outputs = network->execute();
+
+        auto output_data_mem = outputs.at("output_data").get_memory();
+        auto output_scales_mem = outputs.at("output_scales").get_memory();
+        auto output_zp_mem = outputs.at("output_zp").get_memory();
+
+        output_data_mem->print_memory(get_test_stream(), output_data_mem->get_layout(), "output_data_mem", false);
+        output_scales_mem->print_memory(get_test_stream(), output_scales_mem->get_layout(), "output_scales_mem", false);
+        output_zp_mem->print_memory(get_test_stream(), output_zp_mem->get_layout(), "output_zp_mem", false);
+
+        return { output_data_mem, output_scales_mem, output_zp_mem };
     }
 
     std::vector<ov::float16> get_output_scores_vec(memory::ptr scores_output,
@@ -684,4 +938,53 @@ INSTANTIATE_TEST_SUITE_P(smoke_paged_attention, paged_attention_test, ::testing:
     paged_attention_test_params{ {{10, 0}}, 2, 64, 16, false }, // 1st token
     paged_attention_test_params{ {{1024, 0}}, 2, 64, 16, false }, // 1st token long
     paged_attention_test_params{ {{1, 34}, {1, 515}}, 2, 64, 16, false }, // 2nd token + 2nd token
+}));
+
+template <typename T>
+struct SDPATest : public ::testing::TestWithParam<T> {
+public:
+    random_generator rg;
+    cldnn::engine& engine = get_test_engine();
+    float tolerance = 2e-3;
+
+    void SetUp() override {
+        rg.set_seed(GET_SUITE_NAME);
+    }
+
+    void execute(T& p) {
+        PagedAttentionManager pam(rg, get_test_engine(), get_test_stream(), p.subsequences, p.num_heads, p.head_size, p.block_size);
+
+        auto ref_data = PagedAttentionReference(pam).get_sdpa_reference();
+        // compare(output_data_mem, output_scores_mem, ref_data);
+    }
+
+    void compare(memory::ptr data_output_mem, memory::ptr scores_output_mem, std::pair<std::vector<ov::float16>, std::vector<ov::float16>> ref_data) {
+        if (data_output_mem) {
+            ASSERT_EQ(data_output_mem->count(), ref_data.first.size());
+            mem_lock<ov::float16> mem_ptr(data_output_mem, get_test_stream());
+            for (size_t i = 0; i < data_output_mem->count(); i++) {
+                ASSERT_NEAR(mem_ptr[i], ref_data.first[i], tolerance);
+            }
+        }
+
+        if (scores_output_mem) {
+            ASSERT_EQ(scores_output_mem->count(), ref_data.second.size());
+            mem_lock<ov::float16> mem_ptr(scores_output_mem, get_test_stream());
+            for (size_t i = 0; i < scores_output_mem->count(); i++) {
+                ASSERT_NEAR(mem_ptr[i], ref_data.second[i], tolerance);
+            }
+        }
+    }
+};
+
+class sdpa_test : public SDPATest<paged_attention_test_params> {};
+TEST_P(sdpa_test, basic) {
+    auto p = GetParam();
+
+    execute(p);
+}
+
+INSTANTIATE_TEST_SUITE_P(smoke_sdpa, sdpa_test, ::testing::ValuesIn(std::vector<paged_attention_test_params>{
+    /* with scores output */
+    paged_attention_test_params{ {{10, 0}}, 2, 64, 16, true }, // 1st token
 }));

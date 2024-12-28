@@ -100,6 +100,10 @@ static std::string GetKernelName(std::string base_name, KernelsTypes type, const
         kernel_name += "_finalization";
     }
 
+    if (params.conf.is_kv_compressed) {
+        kernel_name += "_compressed";
+    }
+
     return kernel_name;
 }
 
