@@ -34,13 +34,25 @@ public:
 };
 
 void ExecutionConfig::set_default() {
+    auto default_inference_precision_hint = ov::element::f16;
+    int USE_FP32 = 0;
+    if (const auto env_var = std::getenv("USE_FP32")) {
+        std::istringstream ss(env_var);
+        ss >> USE_FP32;
+    }
+
+    if (USE_FP32) {
+        default_inference_precision_hint = ov::element::f32;
+        std::cout << "inference_precision forced to f32\n";
+    }
+
     register_property<PropertyVisibility::PUBLIC>(
         std::make_tuple(ov::device::id, "0"),
         std::make_tuple(ov::enable_profiling, false),
         std::make_tuple(ov::cache_dir, ""),
         std::make_tuple(ov::num_streams, 1),
         std::make_tuple(ov::compilation_num_threads, std::max(1, static_cast<int>(std::thread::hardware_concurrency()))),
-        std::make_tuple(ov::hint::inference_precision, ov::element::f16, InferencePrecisionValidator()),
+        std::make_tuple(ov::hint::inference_precision, default_inference_precision_hint, InferencePrecisionValidator()),
         std::make_tuple(ov::hint::model_priority, ov::hint::Priority::MEDIUM),
         std::make_tuple(ov::hint::performance_mode, ov::hint::PerformanceMode::LATENCY, PerformanceModeValidator()),
         std::make_tuple(ov::hint::execution_mode, ov::hint::ExecutionMode::PERFORMANCE),

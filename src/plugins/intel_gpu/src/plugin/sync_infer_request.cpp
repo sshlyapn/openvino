@@ -799,6 +799,20 @@ std::vector<cldnn::event::ptr> SyncInferRequest::prepare_input(const std::string
     auto& engine = m_graph->get_engine();
     auto& stream = network->get_stream();
 
+    if (internal_name == "parameter:input_ids") {
+        auto data = user_tensor->data<int64_t>();
+
+        auto print_arr = [&](int64_t* vec, size_t max_len, std::string name) {
+            std::stringstream ss;
+            for (size_t i = 0; i < max_len; i++) {
+                ss << vec[i] << ", ";
+            }
+            std::cout << "Array " << name << " (len=" << max_len << ") content: " << ss.str() << "\n";
+        };
+
+        print_arr(data, user_tensor->get_size(), "input_ids");
+    }
+
     auto need_lockable_mem = network->does_node_need_lockable_output(internal_name);
 
     OPENVINO_ASSERT(pshape.compatible(ov::PartialShape(user_tensor->get_shape())) || is_batched_input(port),
