@@ -730,7 +730,11 @@ KERNEL(sdpa_opt)(
 #define APPLY_SCALES_TO_QUERY 1
 #endif
 
-#define MASK_VECTOR_TYPE MAKE_VECTOR_TYPE(INPUT0_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE)
+#if FORCE_SCALE_TO_QUERY
+#define APPLY_SCALES_TO_QUERY 1
+#endif
+
+#define MASK_VECTOR_TYPE MAKE_VECTOR_TYPE(QK_ACCUMULATOR_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE)
 
 inline MASK_VECTOR_TYPE FUNC(load_attn_mask)(OPTIONAL_SHAPE_INFO_ARG
                                              uint b0_idx,
@@ -880,7 +884,7 @@ KERNEL(sdpa_opt)(
     __local INPUT0_TYPE slm_query[HEAD_SIZE * TARGET_SEQ_LEN_BLOCK_SIZE];
 
     // SLM buffer for intermediate QK results
-    __local OUTPUT_TYPE slm_qk_vals[TARGET_SEQ_LEN_BLOCK_SIZE][SEQ_LEN_PARTITION_SIZE];
+    __local QK_ACCUMULATOR_TYPE slm_qk_vals[TARGET_SEQ_LEN_BLOCK_SIZE][SEQ_LEN_PARTITION_SIZE];
 
     // SLM buffers for SoftMax calculation and qk_max/qk_sums results aggregation across all WGs
     __local SOFTMAX_ACCUMULATOR_TYPE slm_qk_max_vals[TARGET_SEQ_LEN_BLOCK_SIZE][SUBGROUPS_PER_WG];
@@ -993,7 +997,7 @@ KERNEL(sdpa_opt)(
     }
 
     // Q*K calculation loop
-    MAKE_VECTOR_TYPE(OUTPUT_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) output_acc = OUTPUT_VAL_ZERO;
+    MAKE_VECTOR_TYPE(SV_ACCUMULATOR_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) output_acc = OUTPUT_VAL_ZERO;
 
     __attribute__((opencl_unroll_hint(1)))
     for (uint start_partition_idx = 0; start_partition_idx < SOURCE_SEQ_LEN; start_partition_idx += SEQ_LEN_PARTITION_SIZE) {
@@ -1004,7 +1008,7 @@ KERNEL(sdpa_opt)(
         const uint partition_seq_len = min((uint)SOURCE_SEQ_LEN - start_partition_idx, (uint)SEQ_LEN_PARTITION_SIZE);
 #endif
 
-MAKE_VECTOR_TYPE(INPUT0_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) qk_acc = INPUT0_VAL_ZERO;
+MAKE_VECTOR_TYPE(QK_ACCUMULATOR_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) qk_acc = INPUT0_VAL_ZERO;
 #if IS_CAUSAL
         if (seq_len <= target_seq_idx) { // keep tril i.e. m >= n
 #endif
@@ -1086,7 +1090,7 @@ MAKE_VECTOR_TYPE(INPUT0_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) qk_acc = INPUT0_VAL_ZER
 #endif
 
                         unroll_for (uint i = 0; i < SUBGROUP_SIZE; i++) {
-                            qk_acc[key_row_idx] = mad(sub_group_broadcast(key_vals, i), queries_vec[i], qk_acc[key_row_idx]);
+                            qk_acc[key_row_idx] = mad(TO_QK_ACCUMULATOR_TYPE(sub_group_broadcast(key_vals, i)), TO_QK_ACCUMULATOR_TYPE(queries_vec[i]), qk_acc[key_row_idx]);
                         }
                     }
                 }
@@ -1156,7 +1160,7 @@ MAKE_VECTOR_TYPE(INPUT0_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) qk_acc = INPUT0_VAL_ZER
     #define key_vals key_vec[key_row_idx]
 #endif
                         unroll_for (uint i = 0; i < SUBGROUP_SIZE; i++) {
-                            qk_acc[key_row_idx] = mad(sub_group_broadcast(key_vals, i), queries_vec[i], qk_acc[key_row_idx]);
+                            qk_acc[key_row_idx] = mad(TO_QK_ACCUMULATOR_TYPE(sub_group_broadcast(key_vals, i)), TO_QK_ACCUMULATOR_TYPE(queries_vec[i]), qk_acc[key_row_idx]);
                         }
                     }
                 }
@@ -1183,10 +1187,10 @@ MAKE_VECTOR_TYPE(INPUT0_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) qk_acc = INPUT0_VAL_ZER
                     qk_acc[i] += alibi_slopes[num_heads_dim] * alibi_val;
 #endif
 
-                    qk_acc[i] = INPUT0_MIN_FUNC(INPUT0_MAX_FUNC(qk_acc[i], INPUT0_VAL_MIN), INPUT0_VAL_MAX);
+                    qk_acc[i] = QK_ACCUMULATOR_MIN_FUNC(QK_ACCUMULATOR_MAX_FUNC(qk_acc[i], QK_ACCUMULATOR_VAL_MIN), QK_ACCUMULATOR_VAL_MAX);
 #if IS_CAUSAL
                 } else {
-                    qk_acc[i] = INPUT0_VAL_MIN;
+                    qk_acc[i] = QK_ACCUMULATOR_VAL_MIN;
                 }
 #endif  // IS_CAUSAL
                     qk_max = SOFTMAX_ACCUMULATOR_MAX_FUNC(qk_max, TO_SOFTMAX_ACCUMULATOR_TYPE(qk_acc[i]));
@@ -1226,7 +1230,7 @@ MAKE_VECTOR_TYPE(INPUT0_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) qk_acc = INPUT0_VAL_ZER
                 SOFTMAX_ACCUMULATOR_TYPE exp_sum_new = SOFTMAX_ACCUMULATOR_VAL_ZERO;
                 for (uint k = sglid; k < partition_seq_len; k += SUBGROUP_SIZE) {
                     SOFTMAX_ACCUMULATOR_TYPE a = native_exp(TO_SOFTMAX_ACCUMULATOR_TYPE(slm_qk_vals[m][k]) - qk_max_new);
-                    slm_qk_vals[m][k] = TO_OUTPUT_TYPE(a);
+                    slm_qk_vals[m][k] = TO_QK_ACCUMULATOR_TYPE(a);
                     exp_sum_new += a;
                 }
                 exp_sum_new = sub_group_reduce_add(exp_sum_new);
@@ -1281,7 +1285,7 @@ MAKE_VECTOR_TYPE(INPUT0_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) qk_acc = INPUT0_VAL_ZER
 
         {
             // QK*V calculation
-            MAKE_VECTOR_TYPE(OUTPUT_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) acc_output_res = OUTPUT_VAL_ZERO;
+            MAKE_VECTOR_TYPE(SV_ACCUMULATOR_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) acc_output_res = OUTPUT_VAL_ZERO;
 #if IS_PAGED_ATTENTION
             const uint value_pitch = (HEAD_SIZE * NUM_KV_HEADS + INPUT2_PAD_BEFORE_FEATURE_NUM + INPUT2_PAD_AFTER_FEATURE_NUM);
 #else
@@ -1322,7 +1326,7 @@ MAKE_VECTOR_TYPE(INPUT0_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) qk_acc = INPUT0_VAL_ZER
 #endif
 #endif
 
-                    MAKE_VECTOR_TYPE(OUTPUT_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) qk_val;
+                    MAKE_VECTOR_TYPE(SV_ACCUMULATOR_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) qk_val;
                     unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
                         qk_val[seq_idx] = slm_qk_vals[seq_idx][seq_len + sglid];
                     }
@@ -1350,7 +1354,7 @@ MAKE_VECTOR_TYPE(INPUT0_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) qk_acc = INPUT0_VAL_ZER
 #endif
 
                         unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
-                            acc_output_res[seq_idx] = mad(sub_group_broadcast(qk_val[seq_idx], i), value_val, acc_output_res[seq_idx]);
+                            acc_output_res[seq_idx] = mad(TO_SV_ACCUMULATOR_TYPE(sub_group_broadcast(qk_val[seq_idx], i)), TO_SV_ACCUMULATOR_TYPE(value_val), acc_output_res[seq_idx]);
                         }
 
 #ifndef BEAM_TABLE_TYPE
@@ -1398,7 +1402,7 @@ MAKE_VECTOR_TYPE(INPUT0_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) qk_acc = INPUT0_VAL_ZER
 #endif
 #endif
 
-                    MAKE_VECTOR_TYPE(OUTPUT_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) qk_val;
+                    MAKE_VECTOR_TYPE(SV_ACCUMULATOR_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) qk_val;
                     unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
                         qk_val[seq_idx] = slm_qk_vals[seq_idx][seq_len * SUBGROUP_SIZE + sglid];
                     }
@@ -1418,7 +1422,7 @@ MAKE_VECTOR_TYPE(INPUT0_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) qk_acc = INPUT0_VAL_ZER
                         INPUT2_TYPE value_val = value_packed;
 #endif
                         unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
-                            acc_output_res[seq_idx] = mad(sub_group_broadcast(qk_val[seq_idx], i), value_val, acc_output_res[seq_idx]);
+                            acc_output_res[seq_idx] = mad(TO_SV_ACCUMULATOR_TYPE(sub_group_broadcast(qk_val[seq_idx], i)), TO_SV_ACCUMULATOR_TYPE(value_val), acc_output_res[seq_idx]);
                         }
 
 #ifndef BEAM_TABLE_TYPE
@@ -1430,7 +1434,7 @@ MAKE_VECTOR_TYPE(INPUT0_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) qk_acc = INPUT0_VAL_ZER
                 // QK*V leftovers processing
                 const uint seq_len_leftovers_start = ((seq_len_end / SUBGROUP_SIZE) * SUBGROUP_SIZE);
                 if (seq_len_leftovers_start != seq_len_end) {
-                    MAKE_VECTOR_TYPE(OUTPUT_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) qk_val;
+                    MAKE_VECTOR_TYPE(SV_ACCUMULATOR_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) qk_val;
                     unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
                         qk_val[seq_idx] = slm_qk_vals[seq_idx][seq_len_leftovers_start+sglid];
                     }
@@ -1484,7 +1488,7 @@ MAKE_VECTOR_TYPE(INPUT0_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) qk_acc = INPUT0_VAL_ZER
 #endif
 
                         for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
-                            acc_output_res[seq_idx] = mad(sub_group_broadcast(qk_val[seq_idx], seq_len_idx), value_val, acc_output_res[seq_idx]);
+                            acc_output_res[seq_idx] = mad(TO_SV_ACCUMULATOR_TYPE(sub_group_broadcast(qk_val[seq_idx], seq_len_idx)), TO_SV_ACCUMULATOR_TYPE(value_val), acc_output_res[seq_idx]);
                         }
 
 #ifndef BEAM_TABLE_TYPE
@@ -1502,7 +1506,7 @@ MAKE_VECTOR_TYPE(INPUT0_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) qk_acc = INPUT0_VAL_ZER
                 // Rescale acc_output_res values and save current iter results to global accumulator
                 for (uint seq_idx = 0; seq_idx < seq_idx_end; seq_idx++) {
                     if (start_partition_idx > 0) {
-                        OUTPUT_TYPE updated_prev_res = TO_SOFTMAX_ACCUMULATOR_TYPE(output_acc[seq_idx]) * slm_update_factor[seq_idx];
+                        SV_ACCUMULATOR_TYPE updated_prev_res = TO_SOFTMAX_ACCUMULATOR_TYPE(output_acc[seq_idx]) * slm_update_factor[seq_idx];
                         acc_output_res[seq_idx] += updated_prev_res;
                     }
                     output_acc[seq_idx] = acc_output_res[seq_idx];
@@ -1539,13 +1543,13 @@ MAKE_VECTOR_TYPE(INPUT0_TYPE, TARGET_SEQ_LEN_BLOCK_SIZE) qk_acc = INPUT0_VAL_ZER
         if (TARGET_SEQ_LEN_BLOCK_SIZE > seq_idx_end) {
             for (uint seq_idx = 0; seq_idx < seq_idx_end; seq_idx++) {
                 output_acc[seq_idx] /= slm_exp_sum_prev[seq_idx];
-                OUTPUT_BLOCK_WRITE(output, output_offset, output_acc[seq_idx]);
+                OUTPUT_BLOCK_WRITE(output, output_offset, TO_OUTPUT_TYPE(output_acc[seq_idx]));
                 output_offset += output_pitch;
             }
         } else {
             unroll_for (uint seq_idx = 0; seq_idx < TARGET_SEQ_LEN_BLOCK_SIZE; seq_idx++) {
                 output_acc[seq_idx] /= slm_exp_sum_prev[seq_idx];
-                OUTPUT_BLOCK_WRITE(output, output_offset, output_acc[seq_idx]);
+                OUTPUT_BLOCK_WRITE(output, output_offset, TO_OUTPUT_TYPE(output_acc[seq_idx]));
                 output_offset += output_pitch;
             }
         }

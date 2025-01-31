@@ -170,8 +170,49 @@ bool SDPAKernelOpt::Validate(const Params& p) const {
 JitConstants SDPAKernelOpt::GetJitConstants(const sdpa_params& params, size_t kernel_idx) const {
     auto jit = SDPAKernelBase::GetJitConstants(params);
 
+    int USE_FP32_QK = 0;
+    if (const auto env_var = std::getenv("USE_FP32_QK")) {
+        std::istringstream ss(env_var);
+        ss >> USE_FP32_QK;
+        static bool printed = false;
+        if (!printed) {
+            std::cout << "Set USE_FP32_QK=" << USE_FP32_QK << "\n";
+            printed = true;
+        }
+    }
+
+    int USE_FP32_QKV = 0;
+    if (const auto env_var = std::getenv("USE_FP32_QKV")) {
+        std::istringstream ss(env_var);
+        ss >> USE_FP32_QKV;
+        static bool printed = false;
+        if (!printed) {
+            std::cout << "Set USE_FP32_QKV=" << USE_FP32_QKV << "\n";
+            printed = true;
+        }
+    }
+
+    int FORCE_SCALE_TO_QUERY = 0;
+    if (const auto env_var = std::getenv("FORCE_SCALE_TO_QUERY")) {
+        std::istringstream ss(env_var);
+        ss >> FORCE_SCALE_TO_QUERY;
+        static bool printed = false;
+        if (!printed) {
+            std::cout << "Set FORCE_SCALE_TO_QUERY=" << FORCE_SCALE_TO_QUERY << "\n";
+            printed = true;
+        }
+    }
+
+    if (FORCE_SCALE_TO_QUERY) {
+        jit.AddConstant(MakeJitConstant("FORCE_SCALE_TO_QUERY", 1));
+    }
+
     const auto softmax_acc_dt = get_softmax_acc_type();
+    const auto qk_acc_dt = USE_FP32_QK ? Datatype::F32 : params.outputs[0].GetDType();
+    const auto sv_acc_dt = USE_FP32_QKV ? Datatype::F32 : params.outputs[0].GetDType();
     jit.Merge(MakeTypeJitConstants(softmax_acc_dt, "SOFTMAX_ACCUMULATOR"));
+    jit.Merge(MakeTypeJitConstants(qk_acc_dt, "QK_ACCUMULATOR"));
+    jit.Merge(MakeTypeJitConstants(sv_acc_dt, "SV_ACCUMULATOR"));
 
     const auto& config = params.conf;
     jit.AddConstant(MakeJitConstant("SUBGROUP_SIZE", subgroup_size));
