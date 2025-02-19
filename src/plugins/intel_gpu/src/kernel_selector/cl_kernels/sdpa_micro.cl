@@ -34,6 +34,27 @@
 typedef ugemm_kq_c_type s_tile_type;
 typedef ugemm_vs_c_type a_tile_type;
 
+
+
+#define DECLARE_2D_MASK_FILL(tile_type, element_type, sg, br, bc, nbr, nbc) \
+__attribute__((overloadable)) void fill_mask_t(tile_type *t, \
+        int m, int n, int ld, \
+        int offset_r, int offset_c) { \
+    if (offset_c + bc * nbc - 1 <= offset_r) { \
+        tile_fill((*t), 0); \
+        return; \
+    } else if (offset_r + br * nbr <= offset_c) { \
+        tile_fill((*t), -HALF_MAX); \
+        return; \
+    } \
+    _Pragma("unroll") for (int i0 = 0; i0 < br * nbr; i0 += sg) { \
+        int i = i0 + get_sub_group_local_id(); \
+        _Pragma("unroll") for (int j = 0; j < bc * nbc; j++) { \
+            tile_access(*t, i0, j, sg, br, bc, nbr) = (offset_c + j > offset_r + i) ? -HALF_MAX : 0.0f; \
+        } \
+    } \
+}
+
 DECLARE_2D_TILE(q_tile_type, uint, SUBGROUP_SIZE, D_MAX / 2, 1, 1, q_tile_sg_n)
 
 #ifdef BLOCK_Q
@@ -65,6 +86,7 @@ DECLARE_2D_TILE(
 
 DECLARE_2D_TILE(mask_tile_type, half, SUBGROUP_SIZE, ugemm_kq_c_type_block0, ugemm_kq_c_type_block1, ugemm_kq_c_type_nblock0, ugemm_kq_c_type_nblock1)
 DECLARE_2D_TILE(mask_tile_type_float, float, SUBGROUP_SIZE, ugemm_kq_c_type_block0, ugemm_kq_c_type_block1, ugemm_kq_c_type_nblock0, ugemm_kq_c_type_nblock1)
+DECLARE_2D_MASK_FILL(mask_tile_type_float, float, SUBGROUP_SIZE, ugemm_kq_c_type_block0, ugemm_kq_c_type_block1, ugemm_kq_c_type_nblock0, ugemm_kq_c_type_nblock1)
 
 #ifdef BLOCK_A
 DECLARE_2D_TILE_BLOCK_OPS(a_tile_type_half, half, SUBGROUP_SIZE,
@@ -137,19 +159,32 @@ DECLARE_2D_TILE_RSELECT(a_scale_tile_type, SUBGROUP_SIZE, ugemm_vs_sg_tile_n, 1,
 
 #define binary_add(x, y) ((x) + (y))
 
+#define DEBUG_PRINT 0
+
 __attribute__((intel_reqd_sub_group_size(SUBGROUP_SIZE)))
 KERNEL(micro_sdpa)(OPTIONAL_SHAPE_INFO_ARG
         const global KEY_DATA_T *K,
         const global QRY_DATA_T *Q,
         const global VAL_DATA_T *V,
         global half *A,
+#if IS_PAGED_ATTENTION
+    const __global INPUT3_TYPE* subsequence_begins,
+#endif
 #if WITH_ATTN_MASK
         const global half *msk,
 #endif
 #if WITH_SCALE
         global SCALE_DATA_T *scale_ptr,
 #endif
-        int d, int k, int q
+#if IS_PAGED_ATTENTION
+        const __global int* blocked_indexes_start,
+        const __global int* blocked_indexes_end,
+        const __global int* gws_seq_indexes_correspondence
+#else
+        int d,
+        int k,
+        int q
+#endif
 #ifdef KV_COMPRESSED
         , const global KEY_ATTR_SCALES_DATA_T *K_scales
         , const global KEY_ATTR_ZP_DATA_T *K_zp
@@ -157,18 +192,44 @@ KERNEL(micro_sdpa)(OPTIONAL_SHAPE_INFO_ARG
         , const global VAL_ATTR_ZP_DATA_T *V_zp
 #endif
         ) {
+#if IS_PAGED_ATTENTION
+    const uint q_tile_idx = get_group_id(0);
+    const uint block_start_pos = blocked_indexes_start[q_tile_idx];
+    const uint block_end_pos = blocked_indexes_end[q_tile_idx];
+    const uint gws_mapping = gws_seq_indexes_correspondence[q_tile_idx];
+    const uint subsequence_begin = subsequence_begins[gws_mapping];
+    const uint subsequence_begin_next = subsequence_begins[gws_mapping + 1];
+    const uint subsequence_q_tile_idx = block_start_pos - subsequence_begin;
+    // const uint sequence_idx_end = block_end_pos - block_start_pos;
+    const int k = subsequence_begins[gws_mapping + 1] - subsequence_begin;
+    const int q = k;
+    const int d = HEAD_SIZE;
+#if DEBUG_PRINT
+    if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_global_id(2) == 0) {
+        printf("q_tile_idx=%d block_start_pos=%d block_end_pos=%d gws_mapping=%d subsequence_begin=%d subsequence_begin_next=%d subsequence_q_tile_idx=%d k=%d d=%d\n",
+                q_tile_idx, block_start_pos, block_end_pos, gws_mapping, subsequence_begin, subsequence_begin_next, subsequence_q_tile_idx, k, d);
+    }
+#endif
+#endif
     uint sg_ij = sub_group_broadcast(get_local_id(1), 0);
     uint b0 = get_group_id(1);
     uint b1 = get_group_id(2);
     uint b0_kv = b0 / KV_GROUP_SIZE;
 
+#if IS_PAGED_ATTENTION
+    uint wg_j0 = subsequence_q_tile_idx;
+#else
     uint wg_j0 = get_group_id(0) * ugemm_kq_wg_tile_n;
+#endif
 
     /* Leading dimension for matrices */
     uint ldk = TRANSPOSE_K ? KEY_S3 : KEY_S2;
     uint ldq = QRY_S2;
     uint ldv = VAL_S2;
     uint lda = DST_S2;
+
+    if (INPUT2_PAD_BEFORE_FEATURE_NUM != 0)
+        ldv = (128*1*1*1*1*1*(32  + (INPUT2_PAD_BEFORE_FEATURE_NUM / HEAD_SIZE)));
 
 #if KEY_SCALES || KEY_ZERO_POINTS
     uint ldkq = DIV_UP(d, KEY_GROUP_SIZE);
@@ -206,10 +267,17 @@ KERNEL(micro_sdpa)(OPTIONAL_SHAPE_INFO_ARG
     const bool need_sum_barrier = (ugemm_vs_barrier_count == 0);
 
     /* Locate K/Q/V/A matrices within batch */
+#if IS_PAGED_ATTENTION
+    K += b0_kv * HEAD_SIZE + INPUT1_PAD_BEFORE_FEATURE_NUM;
+    Q += b0 * HEAD_SIZE + INPUT0_PAD_BEFORE_FEATURE_NUM;
+    V += b0_kv * HEAD_SIZE + INPUT2_PAD_BEFORE_FEATURE_NUM;
+    A += b0 * HEAD_SIZE;
+#else
     K += (KEY_OFF(b1, b0_kv, 0, 0) + INPUT1_OFFSET) / KEY_ELEMENTS_PER_BYTE;
     Q += (QRY_OFF(b1, b0, 0, 0) + INPUT0_OFFSET);
     V += (VAL_OFF(b1, b0_kv, 0, 0) + INPUT2_OFFSET) / VAL_ELEMENTS_PER_BYTE;
     A += DST_OFF(b1, b0, 0, 0, 0);
+#endif
 
 #if KEY_SCALES
     K_scales += KEY_COMP_OFF(b1, b0_kv, 0, 0);
@@ -297,6 +365,41 @@ KERNEL(micro_sdpa)(OPTIONAL_SHAPE_INFO_ARG
     /* Wait for Q data to reach SLM */
     barrier(CLK_LOCAL_MEM_FENCE);
 
+#if DEBUG_PRINT
+    if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_global_id(2) == 0) {
+        printf("Q SLM (slm_size=%d)\n", Q_slm_size / sizeof(half));
+        // for (int i = 0; i < D_MAX; i++) {
+        // {
+        //     int i = 0;
+        //     int slm_idx = i * ugemm_kq_wg_tile_n;
+        //     printf("%d. %f %f %f %f  %f %f %f %f  %f %f %f %f  %f %f %f %f", i, Q_slm[slm_idx + 0], Q_slm[slm_idx + 1], Q_slm[slm_idx + 2], Q_slm[slm_idx + 3],
+        //                                                                         Q_slm[slm_idx + 4], Q_slm[slm_idx + 5], Q_slm[slm_idx + 6], Q_slm[slm_idx + 7],
+        //                                                                         Q_slm[slm_idx + 8], Q_slm[slm_idx + 9], Q_slm[slm_idx + 10]), Q_slm[slm_idx + 11],
+        //                                                                         Q_slm[slm_idx + 12], Q_slm[slm_idx + 13], Q_slm[slm_idx + 14], Q_slm[slm_idx + 15];
+        // }
+        // {
+        //     int i = 1;
+        //     int slm_idx = i * ugemm_kq_wg_tile_n;
+        //     printf("i=1. %f %f %f %f  %f %f %f %f  %f %f %f %f  %f %f %f %f\n", Q_slm[slm_idx + 0], Q_slm[slm_idx + 1], Q_slm[slm_idx + 2], Q_slm[slm_idx + 3],
+        //                                                                         Q_slm[slm_idx + 4], Q_slm[slm_idx + 5], Q_slm[slm_idx + 6], Q_slm[slm_idx + 7],
+        //                                                                         Q_slm[slm_idx + 8], Q_slm[slm_idx + 9], Q_slm[slm_idx + 10]), Q_slm[slm_idx + 11],
+        //                                                                         Q_slm[slm_idx + 12], Q_slm[slm_idx + 13], Q_slm[slm_idx + 14], Q_slm[slm_idx + 15];
+        // }
+        // {
+        //     int i = 2;
+        //     int slm_idx = i * ugemm_kq_wg_tile_n;
+        //     printf("i=2. %f %f %f %f  %f %f %f %f  %f %f %f %f  %f %f %f %f\n", Q_slm[slm_idx + 0], Q_slm[slm_idx + 1], Q_slm[slm_idx + 2], Q_slm[slm_idx + 3],
+        //                                                                         Q_slm[slm_idx + 4], Q_slm[slm_idx + 5], Q_slm[slm_idx + 6], Q_slm[slm_idx + 7],
+        //                                                                         Q_slm[slm_idx + 8], Q_slm[slm_idx + 9], Q_slm[slm_idx + 10]), Q_slm[slm_idx + 11],
+        //                                                                         Q_slm[slm_idx + 12], Q_slm[slm_idx + 13], Q_slm[slm_idx + 14], Q_slm[slm_idx + 15];
+        // }
+
+        for (int i = 0; i < D_MAX * ugemm_kq_wg_tile_n; i++) {
+            printf("%d. %f\n", i, Q_slm[i]);
+        }
+    }
+#endif
+
     /* Main loop over k blocks */
     for (int k0 = 0; k0 < k; k0 += ugemm_kq_wg_tile_m) {
         bool first = (k0 == 0);
@@ -345,6 +448,18 @@ KERNEL(micro_sdpa)(OPTIONAL_SHAPE_INFO_ARG
         tile_elementwise(S_tile, k_scale_op);
 #endif
 
+#if DEBUG_PRINT
+        if (b0 == 0 && b1 == 0 && k0 == 0 && sg_i_kq == 0 && sg_j_kq == 0 && get_sub_group_local_id() == 0) {
+            printf("S_tile before:\n");
+            for (int i = 0; i < 8; i++) {
+                for (int j = 0; j < 8; j++)
+                    printf("\t%f", xlane_tile_access(S_tile, i, j, SUBGROUP_SIZE, ugemm_kq_c_type_block0,
+                                                     ugemm_kq_c_type_block1, ugemm_kq_c_type_nblock0));
+                printf("\n");
+            }
+        }
+#endif
+
         /* Apply attention mask */
 #if WITH_ATTN_MASK
 #define unscale(x) ((x)*iscale)
@@ -352,6 +467,71 @@ KERNEL(micro_sdpa)(OPTIONAL_SHAPE_INFO_ARG
         tile_copy(mask_tile, mask_tile_float);
         tile_elementwise(mask_tile_float, unscale);
         tile_binary(S_tile, mask_tile_float, binary_add);
+#endif
+
+#if IS_PAGED_ATTENTION
+#define unscale(x) ((x)*iscale)
+        mask_tile_type_float mask_tile_float;
+        // tile_fill(mask_tile_float, -66.0f);
+#if DEBUG_PRINT
+        if (b0 == 0 && b1 == 0 && k0 == 0 && sg_i_kq == 0 && sg_j_kq == 0 && get_sub_group_local_id() == 0) {
+            printf("mask after init:\n");
+            printf("fill_mask_t(q=%d, k=%d, col_r=%d, col_c=%d; br=%d bc=%d nbr=%d nbc=%d)\n", q, k, sg_j0_kq + wg_j0, k0 + sg_i0_kq, ugemm_kq_c_type_block0, ugemm_kq_c_type_block1, ugemm_kq_c_type_nblock0, ugemm_kq_c_type_nblock1);
+            for (int i = 0; i < 8; i++) {
+                for (int j = 0; j < 8; j++)
+                    printf("\t%f", xlane_tile_access(mask_tile_float, i, j, SUBGROUP_SIZE, ugemm_kq_c_type_block0,
+                                                     ugemm_kq_c_type_block1, ugemm_kq_c_type_nblock0));
+                printf("\n");
+            }
+        }
+#endif
+
+        fill_mask_t(&mask_tile_float, q, k, q, sg_j0_kq + wg_j0, k0 + sg_i0_kq);
+
+#if DEBUG_PRINT
+        if (b0 == 0 && b1 == 0 && k0 == 0 && sg_i_kq == 0 && sg_j_kq == 0 && (get_sub_group_local_id() < 4)) {
+            printf("mask values for %d sglid: %f %f %f %f  %f %f %f %f\n", get_sub_group_local_id(), mask_tile_float.x[0].s0, mask_tile_float.x[0].s1,
+            mask_tile_float.x[0].s2, mask_tile_float.x[0].s3,
+            mask_tile_float.x[0].s4, mask_tile_float.x[0].s5,
+            mask_tile_float.x[0].s6, mask_tile_float.x[0].s7);
+        }
+#endif
+
+#if DEBUG_PRINT
+        if (b0 == 0 && b1 == 0 && k0 == 0 && sg_i_kq == 0 && sg_j_kq == 0 && get_sub_group_local_id() == 0) {
+            printf("updated mask before scale:\n");
+            printf("fill_mask_t(q=%d, k=%d, col_r=%d, col_c=%d; br=%d bc=%d nbr=%d nbc=%d)\n", q, k, sg_j0_kq + wg_j0, k0 + sg_i0_kq, ugemm_kq_c_type_block0, ugemm_kq_c_type_block1, ugemm_kq_c_type_nblock0, ugemm_kq_c_type_nblock1);
+            for (int i = 0; i < 8; i++) {
+                for (int j = 0; j < 8; j++)
+                    printf("\t%f", xlane_tile_access(mask_tile_float, i, j, SUBGROUP_SIZE, ugemm_kq_c_type_block0,
+                                                     ugemm_kq_c_type_block1, ugemm_kq_c_type_nblock0));
+                printf("\n");
+            }
+        }
+#endif
+
+        tile_elementwise(mask_tile_float, unscale);
+        tile_binary(S_tile, mask_tile_float, binary_add);
+#endif
+
+#if DEBUG_PRINT
+        if (b0 == 0 && b1 == 0 && k0 == 0 && sg_i_kq == 0 && sg_j_kq == 0 && get_sub_group_local_id() == 0) {
+            printf("mask after scale:\n");
+            for (int i = 0; i < 8; i++) {
+                for (int j = 0; j < 8; j++)
+                    printf("\t%f", xlane_tile_access(mask_tile_float, i, j, SUBGROUP_SIZE, ugemm_kq_c_type_block0,
+                                                     ugemm_kq_c_type_block1, ugemm_kq_c_type_nblock0));
+                printf("\n");
+            }
+
+            printf("S_tile after:\n");
+            for (int i = 0; i < 8; i++) {
+                for (int j = 0; j < 8; j++)
+                    printf("\t%f", xlane_tile_access(S_tile, i, j, SUBGROUP_SIZE, ugemm_kq_c_type_block0,
+                                                     ugemm_kq_c_type_block1, ugemm_kq_c_type_nblock0));
+                printf("\n");
+            }
+        }
 #endif
 
         /* Apply k mask */

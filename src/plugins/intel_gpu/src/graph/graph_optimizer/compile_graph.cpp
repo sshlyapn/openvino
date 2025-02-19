@@ -24,10 +24,7 @@ void compile_graph::run(program& p) {
         }
     }
 
-    auto task_executor = p.get_task_executor();
     auto& proc_order = p.get_processing_order();
-    std::vector<ov::threading::Task> tasks;
-    std::exception_ptr exception;
 
     for (size_t idx = 0; idx < proc_order.size(); idx++) {
         auto& node = *(std::next(proc_order.begin(), idx));
@@ -36,37 +33,28 @@ void compile_graph::run(program& p) {
                                !(node->is_type<mutable_data>() && node->get_dependencies().empty());
 
         if (can_select_impl) {
-            tasks.push_back([node, &exception] {
-                try {
-                    const auto& params = node->get_kernel_impl_params();
-                    auto shape_type = ImplementationManager::get_shape_type(*params);
-                    auto selected_impl_manager = node->type()->choose_impl(*node, shape_type);
-                    std::string fail_reason = "";
-                    try {
-                        if (selected_impl_manager) {
-                            node->selected_impl = selected_impl_manager->create(*node, *params);
-                        }
-                    } catch (std::exception& e) {
-                        fail_reason = e.what();
-                    }
+            // std::cout << "Compiling " << node->id() << "\n";
+            // if (idx + 1 < proc_order.size())
+            //     std::cout << "Compiling next id " << (*(std::next(proc_order.begin(), idx + 1)))->id() << "\n";
 
-                    OPENVINO_ASSERT(shape_type == shape_types::dynamic_shape || node->selected_impl != nullptr,
-                                    "[GPU] Failed to select implementation for"
-                                    "\nname:", node->id(),
-                                    "\ntype: ", node->get_primitive()->type_string(),
-                                    "\noriginal_type: ", node->get_primitive()->origin_op_type_name,
-                                    (!fail_reason.empty() ? fail_reason : ""));
-                } catch(...) {
-                    exception = std::current_exception();
+            const auto& params = node->get_kernel_impl_params();
+            auto shape_type = ImplementationManager::get_shape_type(*params);
+            auto selected_impl_manager = node->type()->choose_impl(*node, shape_type);
+            std::string fail_reason = "";
+            try {
+                if (selected_impl_manager) {
+                    node->selected_impl = selected_impl_manager->create(*node, *params);
                 }
-            });
+            } catch (std::exception& e) {
+                fail_reason = e.what();
+            }
+
+            OPENVINO_ASSERT(shape_type == shape_types::dynamic_shape || node->selected_impl != nullptr,
+                            "[GPU] Failed to select implementation for"
+                            "\nname:", node->id(),
+                            "\ntype: ", node->get_primitive()->type_string(),
+                            "\noriginal_type: ", node->get_primitive()->origin_op_type_name,
+                            (!fail_reason.empty() ? fail_reason : ""));
         }
-    }
-
-    task_executor->run_and_wait(tasks);
-    tasks.clear();
-
-    if (exception) {
-        std::rethrow_exception(exception);
     }
 }

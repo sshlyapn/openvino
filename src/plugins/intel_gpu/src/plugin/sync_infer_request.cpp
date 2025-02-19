@@ -810,6 +810,17 @@ std::vector<cldnn::event::ptr> SyncInferRequest::prepare_input(const std::string
                     user_tensor->get_shape(),
                     ") are incompatible");
 
+    auto print_arr = [&](const int64_t* vec, size_t max_len, std::string name) {
+        std::stringstream ss;
+        for (size_t i = 0; i < max_len; i++) {
+            ss << vec[i] << ", ";
+        }
+        std::cout << "Array " << name << " (len=" << max_len << ") content: " << ss.str() << "\n";
+    };
+
+    if (internal_name == "parameter:input_ids")
+        print_arr(user_tensor->data<int64_t>(), user_tensor->get_size(), "input_ids");
+
     auto device_tensor_et = convert_to_supported_device_type(element_type);
     bool convert_needed = is_convert_required(element_type, device_tensor_et);
 

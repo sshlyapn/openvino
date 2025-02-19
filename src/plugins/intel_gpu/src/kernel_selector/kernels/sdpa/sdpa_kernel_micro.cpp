@@ -96,6 +96,7 @@ sdpa_config_t xehpg_h64_2nd = {8, 16, 16, 8, 8, 1, 4, 2};
 sdpa_config_t xehpg_q_h64 = {32, 16, 16, 16, 4, 4, 4, 4};
 sdpa_config_t xehpg_q_h64_2nd = {16, 16, 8, 8, 16, 1, 8, 2};
 
+sdpa_config_t xehpg_custom = {8, 8, 16, 8, 16, 2, 16, 2};
 sdpa_config_t xehpg_h128 = {16, 16, 32, 8, 8, 4, 4, 8};
 sdpa_config_t xehpg_h128_s32 = {16, 16, 16, 8, 16, 2, 8, 4};
 sdpa_config_t xehpg_h128_2nd = {8, 16, 16, 8, 16, 1, 8, 2};
@@ -140,6 +141,7 @@ sdpa_config_t xehpc_h256_s64 = {16, 32, 32, 32, 8, 1, 8, 1};
 sdpa_config_t xehpc_h256_2nd = {16, 16, 16, 16, 16, 1, 16, 1};
 
 sdpa_config_t *choose_config_xehpg(int head_size, int seq, bool thin_q, bool quantized) {
+    return &xehpg_custom;
     if (head_size <= 32) {
         if (quantized && seq >= 128) {
             if (thin_q) return &xehpg_q_h32_2nd;
@@ -267,6 +269,11 @@ void SDPAKernelMicro::init_microkernels(const sdpa_params& params, micro::Packag
         }
         default: break;
     }
+
+    std::cout << config->unroll_m_kq << " "
+              << config->unroll_n_kq << " "
+              << config->unroll_m_vs << " "
+              << config->unroll_n_vs << " - config\n";
 
     OPENVINO_ASSERT(config != nullptr);
 
@@ -415,6 +422,7 @@ void SDPAKernelMicro::init_microkernels(const sdpa_params& params, micro::Packag
 
 ParamsKey SDPAKernelMicro::GetSupportedKey() const {
     ParamsKey k;
+    k.EnableInputDataType(Datatype::INT32);
     k.EnableInputDataType(Datatype::INT8);
     k.EnableInputDataType(Datatype::UINT8);
     k.EnableInputDataType(Datatype::F16);
@@ -438,38 +446,86 @@ bool SDPAKernelMicro::Validate(const Params& p) const {
 
     const sdpa_params& params = static_cast<const sdpa_params&>(p);
 
-    if (params.should_use_sdpa_opt)
+    if (params.should_use_sdpa_opt) {
+        std::cout << "Validate false\n";
         return false;
+    }
 
-    if (params.conf.is_paged_attention)
-        return false;
+    // if (params.conf.is_paged_attention)
+    //     return false;
 
-    if (params.engineInfo.arch < gpu_arch::xe_hpg || !params.engineInfo.supports_microkernels)
+    if (params.engineInfo.arch < gpu_arch::xe_hpg || !params.engineInfo.supports_microkernels) {
+        std::cout << "Validate false2\n";
         return false;
+    }
 
-    if (params.conf.is_causal)
-        return false;
+    // if (params.conf.is_causal)
+    //     return false;
 
-    if (params.indirect_axis != -1)
+    if (params.indirect_axis != -1) {
+        std::cout << "Validate false3\n";
         return false;
+    }
 
     auto Q_num_heads_dim = get_num_heads(params.inputs[0], params.input0_order);
     auto K_num_heads_dim = get_num_heads(params.inputs[1], params.input1_order);
     auto V_num_heads_dim = get_num_heads(params.inputs[2], params.input2_order);
 
-    if (params.input0_order[3] != 3 || params.input1_order[3] != 3 || params.input2_order[3] != 3)
-        return false;
+    auto print_arr_new = [&](const std::vector<int64_t>& vec, size_t max_len, std::string name) {
+        std::stringstream ss;
+        for (size_t i = 0; i < std::min(max_len, vec.size()); i++) {
+            ss << vec[i] << ", ";
+        }
+        std::cout << "Array " << name << " (len=" << vec.size() << ") content: " << ss.str() << "\n";
+    };
 
-    if (Q_num_heads_dim.is_dynamic || K_num_heads_dim.is_dynamic || V_num_heads_dim.is_dynamic || K_num_heads_dim.v != V_num_heads_dim.v)
-        return false;
+    print_arr_new(params.input0_order, params.input0_order.size(), "params.input0_order");
+    print_arr_new(params.input1_order, params.input1_order.size(), "params.input1_order");
+    print_arr_new(params.input2_order, params.input2_order.size(), "params.input2_order");
 
-    if (params.conf.head_size > 256)
+    std::cout << "Q_num_heads_dim=" << Q_num_heads_dim.v << "\n";
+    std::cout << "K_num_heads_dim=" << K_num_heads_dim.v << "\n";
+    std::cout << "V_num_heads_dim=" << V_num_heads_dim.v << "\n";
+
+    if (params.input0_order[3] != 3 || params.input1_order[3] != 3 || params.input2_order[3] != 3) {
+        std::cout << "Validate false4\n";
         return false;
+    }
+
+    if (Q_num_heads_dim.is_dynamic || K_num_heads_dim.is_dynamic || V_num_heads_dim.is_dynamic || K_num_heads_dim.v != V_num_heads_dim.v) {
+        std::cout << "Validate false5\n";
+        auto q_dims = params.inputs[0].GetDims();
+        auto k_dims = params.inputs[1].GetDims();
+        auto v_dims = params.inputs[2].GetDims();
+        auto print_arr = [&](const std::vector<Tensor::Dim>& vec, size_t max_len, std::string name) {
+            std::stringstream ss;
+            for (size_t i = 0; i < std::min(max_len, vec.size()); i++) {
+                ss << vec[i].v << ", ";
+            }
+            std::cout << "Array " << name << " (len=" << vec.size() << ") content: " << ss.str() << "\n";
+        };
+
+        print_arr(q_dims, q_dims.size(), "q_dims");
+        print_arr(k_dims, k_dims.size(), "k_dims");
+        print_arr(v_dims, v_dims.size(), "v_dims");
+        std::cout << Q_num_heads_dim.is_dynamic << " "
+                  << K_num_heads_dim.is_dynamic << " "
+                  << V_num_heads_dim.is_dynamic << " " << K_num_heads_dim.v << " " << V_num_heads_dim.v << "\n";
+        return false;
+    }
+
+    if (params.conf.head_size > 256) {
+        std::cout << "Validate false6\n";
+        return false;
+    }
 
     // Do not use sdpa_micro kernel with a scalar-value mask
-    if (params.inputs.size() > 3 && !params.inputs[3].is_dynamic() && params.inputs[3].LogicalSize() == 1)
+    if (params.inputs.size() > 3 && !params.inputs[3].is_dynamic() && params.inputs[3].LogicalSize() == 1) {
+        std::cout << "Validate false7\n";
         return false;
+    }
 
+    std::cout << "Validate true\n";
     return true;
 }
 
@@ -493,19 +549,25 @@ JitConstants SDPAKernelMicro::GetJitConstants(const sdpa_params& params, const m
     const auto n_queries = get_seq_length(Q, prim_params.input0_order);
     const auto n_values = V.X();
 
+    auto sdpa_inputs = params.inputs.size();
+    if (params.conf.is_paged_attention)
+        sdpa_inputs--;
+
     jit.AddConstant(MakeJitConstant("D_MAX", d_max));
     jit.AddConstant(MakeJitConstant("SUBGROUP_SIZE", subgroup_size(prim_params.engineInfo.arch)));
     jit.AddConstant(MakeJitConstant("INVERT_SCALE", false));
     jit.AddConstant(MakeJitConstant("SCALE_DATA_T", "half"));
+    jit.AddConstant(MakeJitConstant("HEAD_SIZE", head_size));
 
-    jit.AddConstant(MakeJitConstant("WITH_ATTN_MASK", params.inputs.size() > 3));
-    jit.AddConstant(MakeJitConstant("WITH_SCALE", params.inputs.size() > 4));
+    jit.AddConstant(MakeJitConstant("WITH_ATTN_MASK", sdpa_inputs > 3));
+    jit.AddConstant(MakeJitConstant("WITH_SCALE", sdpa_inputs > 4));
     jit.AddConstant(MakeJitConstant("Q_ALIGN", micro::alignment_for_ld(ldq)));
     jit.AddConstant(MakeJitConstant("K_ALIGN", micro::alignment_for_ld(ldk)));
     jit.AddConstant(MakeJitConstant("V_ALIGN", micro::alignment_for_ld(ldv)));
     jit.AddConstant(MakeJitConstant("A_ALIGN", micro::alignment_for_ld(lda)));
 
     jit.AddConstant(MakeJitConstant("TRANSPOSE_K", false));
+    jit.AddConstant(MakeJitConstant("IS_PAGED_ATTENTION", params.conf.is_paged_attention));
 
     jit.AddConstant(MakeJitConstant("QRY_DATA_T", toCLType(Q.GetDType())));
     jit.AddConstant(MakeJitConstant("KEY_DATA_T", toCLType(K.GetDType())));
@@ -532,6 +594,8 @@ JitConstants SDPAKernelMicro::GetJitConstants(const sdpa_params& params, const m
         }
     };
 
+    std::cout << "Check is_kv_compressed=" << params.conf.is_kv_compressed << "\n";
+
     jit.AddConstant(MakeJitConstant("KEY_ELEMENTS_PER_BYTE", elems_per_byte(params.inputs[1].GetDType())));
     jit.AddConstant(MakeJitConstant("VAL_ELEMENTS_PER_BYTE", elems_per_byte(params.inputs[2].GetDType())));
 
@@ -557,10 +621,19 @@ JitConstants SDPAKernelMicro::GetJitConstants(const sdpa_params& params, const m
     int tile_q = gemm_kq.getSetting("wg_tile_n");
     int tile_v = gemm_vs.getSetting("wg_tile_m");
 
+    std::cout << "tile_q=" << tile_q << "\n";
+    std::cout << "tile_k=" << tile_k << "\n";
+    std::cout << "tile_v=" << tile_v << "\n";
+
     bool d_full = (head_size == d_max);
     bool v_full = (head_size == tile_v);
     bool k_full = !n_keys.is_dynamic && (n_keys.v % tile_k) == 0;
     bool q_full = !n_queries.is_dynamic && (n_queries.v % tile_q) == 0;
+
+    std::cout << "Check d_full=" << d_full << "\n";
+    std::cout << "Check v_full=" << v_full << "\n";
+    std::cout << "Check k_full=" << k_full << "\n";
+    std::cout << "Check q_full=" << q_full << "\n";
 
     auto Q_num_heads_dim = get_num_heads(Q, params.input0_order);
     auto K_num_heads_dim = get_num_heads(K, params.input1_order);
@@ -647,6 +720,7 @@ JitConstants SDPAKernelMicro::GetJitConstants(const sdpa_params& params, const m
         jit.Merge(unit_parameters("VAL_COMP"));
     }
 
+    std::cout << "GetJitCoonstants call - DONE\n";
     return jit;
 }
 
@@ -659,9 +733,20 @@ CommonDispatchData SDPAKernelMicro::SetDefault(const sdpa_params& params, const 
     dispatch_data.lws = {subgroup_size(params.engineInfo.arch), (size_t)sg_per_wg, 1};
     dispatch_data.gws = dispatch_data.lws;
 
-    dispatch_data.gws[0] *= CeilDiv(get_seq_length(params.inputs[0], params.input0_order).v, wg_tile_q);
-    dispatch_data.gws[1] *= params.outputs[0].Feature().v;
-    dispatch_data.gws[2] *= params.outputs[0].Batch().v;
+    auto seq_length = get_seq_length(params.inputs[0], params.input0_order).v;
+    if (params.conf.is_paged_attention) {
+        seq_length = params.conf.paged_attention_aligned_seq_len;
+        GPU_DEBUG_TRACE_DETAIL << "seq_len=" << seq_length << "\n";
+        GPU_DEBUG_TRACE_DETAIL << "wg_tile_q=" << wg_tile_q << "\n";
+    }
+
+    auto heads_num = params.conf.is_paged_attention ? params.conf.heads_num : params.outputs[0].Feature().v;
+    auto batch_size = params.conf.is_paged_attention ? 1 : params.outputs[0].Batch().v;
+    std::cout << "Set heads_num=" << heads_num << "\n";
+
+    dispatch_data.gws[0] *= CeilDiv(seq_length, wg_tile_q);
+    dispatch_data.gws[1] *= heads_num;
+    dispatch_data.gws[2] *= batch_size;
 
     return dispatch_data;
 }
@@ -689,14 +774,23 @@ clKernelData SDPAKernelMicro::get_kernel_data(const sdpa_params& params, bool is
     kernel.params.arguments.push_back({ArgumentDescriptor::Types::INPUT, 2}); // V
     kernel.params.arguments.push_back({ArgumentDescriptor::Types::OUTPUT, 0}); // A
 
-    if (params.inputs.size() >= 4)
-        kernel.params.arguments.push_back({ArgumentDescriptor::Types::INPUT, 3}); // mask
-    if (params.inputs.size() >= 5)
-        kernel.params.arguments.push_back({ArgumentDescriptor::Types::INPUT, 4}); // Scale
 
-    kernel.params.arguments.push_back({ArgumentDescriptor::Types::SCALAR, 0}); // D
-    kernel.params.arguments.push_back({ArgumentDescriptor::Types::SCALAR, 1}); // K
-    kernel.params.arguments.push_back({ArgumentDescriptor::Types::SCALAR, 2}); // Q
+    if (params.conf.is_paged_attention) {
+        kernel.params.arguments.push_back({ArgumentDescriptor::Types::INPUT, 3}); // subsequence_begins
+
+        kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 0});
+        kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 1});
+        kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 2});
+    } else {
+        if (params.inputs.size() >= 4)
+            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INPUT, 3}); // mask
+        if (params.inputs.size() >= 5)
+            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INPUT, 4}); // Scale
+
+        kernel.params.arguments.push_back({ArgumentDescriptor::Types::SCALAR, 0}); // D
+        kernel.params.arguments.push_back({ArgumentDescriptor::Types::SCALAR, 1}); // K
+        kernel.params.arguments.push_back({ArgumentDescriptor::Types::SCALAR, 2}); // Q
+    }
 
     if (params.conf.is_kv_compressed) {
         uint32_t input_idx = static_cast<uint32_t>(params.inputs.size());
@@ -717,6 +811,9 @@ clKernelData SDPAKernelMicro::get_kernel_data(const sdpa_params& params, bool is
 
     auto head_size = params.conf.head_size;
 
+    std::cout << "n_queries=" << n_queries.v << "\n";
+    std::cout << "n_keys=" << n_keys.v << "\n";
+
     ScalarDescriptor s_d;
     s_d.t = ScalarDescriptor::Types::INT32;
     s_d.v.s32 = static_cast<uint32_t>(head_size);
@@ -732,6 +829,8 @@ clKernelData SDPAKernelMicro::get_kernel_data(const sdpa_params& params, bool is
     kernel.params.scalars.push_back(s_d);
     kernel.params.scalars.push_back(s_k);
     kernel.params.scalars.push_back(s_q);
+
+    std::cout << "kernel.params.scalars.size()=" << kernel.params.scalars.size() << "\n";
 
     /* Generate microkernel shims */
     micro::ShimOptions shim_options;
@@ -761,6 +860,8 @@ clKernelData SDPAKernelMicro::get_kernel_data(const sdpa_params& params, bool is
         kernel.micro_kernels.push_back(std::make_shared<micro::MicroKernelPackage>(p));
     }
 
+    std::cout << "Done\n";
+
     return kernel;
 }
 
@@ -774,6 +875,7 @@ KernelsData SDPAKernelMicro::GetKernelsData(const Params& params) const {
     }
 
     for (size_t i = 0; i < num_kernels; i++) {
+        std::cout << "get_kernel_data\n";
         kd.kernels[i] = get_kernel_data(prim_params, i == prefill_id);
     }
 
@@ -831,6 +933,20 @@ void SDPAKernelMicro::GetUpdateDispatchDataFunc(KernelData& kd) const {
 KernelsPriority SDPAKernelMicro::GetKernelsPriority(const Params& /*params*/) const {
     return FORCE_PRIORITY_1;
 }
+
+size_t SDPAKernelMicro::GetTileQSize(const KernelData& kernel_data) {
+    const bool is_prefill = true;//n_queries.v > 1;
+
+    OPENVINO_ASSERT(kernel_data.kernels.size() == 2, "[GPU] Invalid kernels size for update dispatch data func, got ", kernel_data.kernels.size());
+    OPENVINO_ASSERT(kernel_data.kernels[prefill_id].micro_kernels.size() > 0, "[GPU] Invalid kernels passed to GetTileQSize() function");
+
+    size_t target_kernel = is_prefill ? prefill_id : generate_id;
+    const auto& gemms = kernel_data.kernels[target_kernel].micro_kernels;
+    const auto wg_tile_q = gemms[kq_id]->p.getSetting("wg_tile_n");
+
+    return wg_tile_q;
+}
+
 }  // namespace kernel_selector
 
 #endif // ENABLE_ONEDNN_FOR_GPU

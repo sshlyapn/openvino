@@ -225,6 +225,7 @@ class Kernels2CHeaders(object):
         return self.post_process_sources(res)
 
     def post_process_sources(self, content):
+        return content
         comment_regexp = re.compile(r'(^)?[^\S\n]*/(?:\*(.*?)\*/[^\S\n]*|/[^\n]*)($)?', re.DOTALL | re.MULTILINE)
 
         def comment_replacer(match):

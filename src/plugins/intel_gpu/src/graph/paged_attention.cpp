@@ -114,6 +114,9 @@ void paged_attention_inst::on_execute() {
         (stage == PagedAttentionStage::GENERATE && !has_scores_output))
         return;
 
+    OPENVINO_ASSERT(_impl != nullptr, "[GPU] impl shouldn't be nullptr");
+    _impl->update_inst_params(*this);
+
     auto& stream = get_network().get_stream();
     const auto past_lens_mem = past_lens_memory_ptr();
     const auto subsequence_begins_mem = subsequence_begins_memory_ptr();
@@ -179,7 +182,7 @@ void paged_attention_inst::on_execute() {
 
     size_t index = 0;
     size_t subsequence_offsets_acc = 0;
-    const auto target_seq_len_block_size = 16; // TODO: Get block size from the impl
+    const auto target_seq_len_block_size = static_cast<int>(tile_q_size);
     for (size_t i = 0; i < subsequence_begins_mem_lock.size() - 1; i++) {
         const auto past_len = past_lens_mem_lock[i];
         const auto seq_start = subsequence_begins_mem_lock[i];
