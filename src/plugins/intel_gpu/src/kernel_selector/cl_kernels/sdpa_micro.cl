@@ -177,9 +177,7 @@ KERNEL(micro_sdpa)(OPTIONAL_SHAPE_INFO_ARG
         global SCALE_DATA_T *scale_ptr,
 #endif
 #if IS_PAGED_ATTENTION
-        const __global int* blocked_indexes_start,
-        const __global int* blocked_indexes_end,
-        const __global int* gws_seq_indexes_correspondence
+        const __global int* blocked_indexes_start_and_gws_mapping
 #else
         int d,
         int k,
@@ -193,23 +191,18 @@ KERNEL(micro_sdpa)(OPTIONAL_SHAPE_INFO_ARG
 #endif
         ) {
 #if IS_PAGED_ATTENTION
-    const uint q_tile_idx = get_group_id(0);
-    const uint block_start_pos = blocked_indexes_start[q_tile_idx];
-    const uint block_end_pos = blocked_indexes_end[q_tile_idx];
-    const uint gws_mapping = gws_seq_indexes_correspondence[q_tile_idx];
+    const uint q_tile_idx = get_group_id(0) * 2;
+    const uint block_start_pos = blocked_indexes_start_and_gws_mapping[q_tile_idx];
+    const uint gws_mapping = blocked_indexes_start_and_gws_mapping[q_tile_idx + 1];
     const uint subsequence_begin = subsequence_begins[gws_mapping];
-    const uint subsequence_begin_next = subsequence_begins[gws_mapping + 1];
+    const uint subsequence_end = subsequence_begins[gws_mapping + 1];
     const uint subsequence_q_tile_idx = block_start_pos - subsequence_begin;
-    // const uint sequence_idx_end = block_end_pos - block_start_pos;
-    const int k = subsequence_begins[gws_mapping + 1] - subsequence_begin;
+    const int k = subsequence_end - subsequence_begin;
     const int q = k;
     const int d = HEAD_SIZE;
-#if DEBUG_PRINT
-    if (get_global_id(0) == 0 && get_global_id(1) == 0 && get_global_id(2) == 0) {
-        printf("q_tile_idx=%d block_start_pos=%d block_end_pos=%d gws_mapping=%d subsequence_begin=%d subsequence_begin_next=%d subsequence_q_tile_idx=%d k=%d d=%d\n",
-                q_tile_idx, block_start_pos, block_end_pos, gws_mapping, subsequence_begin, subsequence_begin_next, subsequence_q_tile_idx, k, d);
-    }
-#endif
+//     content: 0, 0, 16, 0, 32, 0, 48, 0, 64, 0, 80, 0, 96, 0, 112, 0, 128, 0, 144, 0, 160, 0, 176, 0, 192, 0, 208, 0, 224, 0, 240, 0,
+//              256, 1, 272, 1, 288, 1, 304, 1,
+//              305, 2, 321, 2, 337, 2,
 #endif
     uint sg_ij = sub_group_broadcast(get_local_id(1), 0);
     uint b0 = get_group_id(1);
@@ -268,10 +261,14 @@ KERNEL(micro_sdpa)(OPTIONAL_SHAPE_INFO_ARG
 
     /* Locate K/Q/V/A matrices within batch */
 #if IS_PAGED_ATTENTION
-    K += b0_kv * HEAD_SIZE + INPUT1_PAD_BEFORE_FEATURE_NUM;
-    Q += b0 * HEAD_SIZE + INPUT0_PAD_BEFORE_FEATURE_NUM;
-    V += b0_kv * HEAD_SIZE + INPUT2_PAD_BEFORE_FEATURE_NUM;
-    A += b0 * HEAD_SIZE;
+    K += subsequence_begin * (HEAD_SIZE * KV_HEADS_NUM + INPUT1_PAD_BEFORE_FEATURE_NUM + INPUT1_PAD_AFTER_FEATURE_NUM)
+       + b0_kv * HEAD_SIZE + INPUT1_PAD_BEFORE_FEATURE_NUM;
+    Q += subsequence_begin * (HEAD_SIZE * HEADS_NUM + INPUT0_PAD_BEFORE_FEATURE_NUM + INPUT0_PAD_AFTER_FEATURE_NUM)
+       + b0 * HEAD_SIZE + INPUT0_PAD_BEFORE_FEATURE_NUM;
+    V += subsequence_begin * (HEAD_SIZE * KV_HEADS_NUM + INPUT2_PAD_BEFORE_FEATURE_NUM + INPUT2_PAD_AFTER_FEATURE_NUM)
+       + b0_kv * HEAD_SIZE + INPUT2_PAD_BEFORE_FEATURE_NUM;
+    A += subsequence_begin * (HEAD_SIZE * HEADS_NUM)
+       + b0 * HEAD_SIZE;
 #else
     K += (KEY_OFF(b1, b0_kv, 0, 0) + INPUT1_OFFSET) / KEY_ELEMENTS_PER_BYTE;
     Q += (QRY_OFF(b1, b0, 0, 0) + INPUT0_OFFSET);

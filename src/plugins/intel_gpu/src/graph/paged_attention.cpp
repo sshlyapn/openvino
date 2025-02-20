@@ -169,6 +169,7 @@ void paged_attention_inst::on_execute() {
     mem_lock<int32_t, mem_lock_type::write> blocks_indexes_end_lock(blocks_indexes_end_mem, stream);
     mem_lock<int32_t, mem_lock_type::write> blocked_gws_subseq_mapping_mem_lock(blocked_gws_subseq_mapping_mem, stream);
     std::unique_ptr<mem_lock<int32_t, mem_lock_type::write>> sequential_gws_subseq_mapping_lock = nullptr;
+    std::unique_ptr<mem_lock<int32_t, mem_lock_type::write>> micro_sdpa_block_starts_and_gws_mapping_lock = nullptr;
 
     if (stage == PagedAttentionStage::MIXED) {
         const size_t sequential_gws_subseq_mapping_idx = has_scores_output ? 8 : 6;
@@ -180,9 +181,18 @@ void paged_attention_inst::on_execute() {
         sequential_gws_subseq_mapping_lock.reset(new mem_lock<int32_t, mem_lock_type::write>(sequential_gws_subseq_mapping_mem, stream));
     }
 
+    if (stage == PagedAttentionStage::PREFILL && use_micro_sdpa) {
+        const auto sequential_gws_subseq_mapping_idx = _intermediates_memory.size() - 1;
+
+        auto micro_sdpa_block_starts_and_gws_mapping_mem = _intermediates_memory[sequential_gws_subseq_mapping_idx];
+        micro_sdpa_block_starts_and_gws_mapping_lock.reset(new mem_lock<int32_t, mem_lock_type::write>(micro_sdpa_block_starts_and_gws_mapping_mem, stream));
+    }
+
     size_t index = 0;
+    size_t micro_sdpa_index = 0;
     size_t subsequence_offsets_acc = 0;
-    const auto target_seq_len_block_size = static_cast<int>(tile_q_size);
+    const auto sdpa_micro_target_seq_len_block_size = static_cast<int>(tile_q_size);
+    const auto target_seq_len_block_size = static_cast<int>(16);
     for (size_t i = 0; i < subsequence_begins_mem_lock.size() - 1; i++) {
         const auto past_len = past_lens_mem_lock[i];
         const auto seq_start = subsequence_begins_mem_lock[i];
@@ -216,6 +226,15 @@ void paged_attention_inst::on_execute() {
             index++;
         }
 
+        if (stage == PagedAttentionStage::PREFILL && use_micro_sdpa) {
+            for (int32_t j = 0; j < seq_length; j += sdpa_micro_target_seq_len_block_size) {
+                auto block_start_pos = subsequence_begins_mem_lock[i] + j;
+
+                micro_sdpa_block_starts_and_gws_mapping_lock->operator[](micro_sdpa_index++) = block_start_pos;
+                micro_sdpa_block_starts_and_gws_mapping_lock->operator[](micro_sdpa_index++) = static_cast<int32_t>(i);
+            }
+        }
+
         if (stage == PagedAttentionStage::MIXED) {
             for (int32_t idx = seq_start; idx < seq_end; idx++) {
                 sequential_gws_subseq_mapping_lock->operator[](idx) = static_cast<int32_t>(i);
@@ -227,6 +246,20 @@ void paged_attention_inst::on_execute() {
             subsequence_offsets_acc += seq_length + past_len;
         }
     }
+
+    // if (stage == PagedAttentionStage::PREFILL && use_micro_sdpa) {
+    //     auto print_arr = [&](const int32_t* vec, size_t max_len, std::string name) {
+    //         std::stringstream ss;
+    //         for (size_t i = 0; i < max_len; i++) {
+    //             ss << vec[i] << ", ";
+    //         }
+    //         std::cout << "Array " << name << " (len=" << max_len << ") content: " << ss.str() << "\n";
+    //     };
+
+    //     print_arr(micro_sdpa_block_starts_and_gws_mapping_lock->data(),
+    //               micro_sdpa_block_starts_and_gws_mapping_lock->size(),
+    //               "micro_sdpa_block_starts_and_gws_mapping_lock");
+    // }
 }
 
 paged_attention_inst::typed_primitive_inst(network& network, const paged_attention_node& node)

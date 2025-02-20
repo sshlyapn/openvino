@@ -20,6 +20,16 @@
 namespace cldnn {
 namespace ocl {
 
+inline ::std::ostream& operator<<(::std::ostream& os, const std::set<size_t>& vals) {
+    os << "[ ";
+    for (const auto& val : vals) {
+        os << val << " ";
+    }
+    os << "]";
+
+    return os;
+}
+
 struct paged_attention_impl : multi_stage_primitive<paged_attention> {
     using parent = multi_stage_primitive<paged_attention>;
     using parent::parent;
@@ -72,25 +82,29 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         OPENVINO_ASSERT(inst.get_impl() == this);
 
         auto& pa_inst = reinterpret_cast<paged_attention_inst&>(inst);
-        if (is_micro_kernel_used) {
+        if (use_micro_sdpa) {
             auto tile_q_size = get_target_seq_len_block_size(PagedAttentionStage::PREFILL);
             pa_inst.tile_q_size = tile_q_size;
-            std::cout << "update_inst_params: from micro-sdpa tile_q_size = " << tile_q_size << "\n";
+            pa_inst.use_micro_sdpa = true;
+            // std::cout << "update_inst_params: from micro-sdpa tile_q_size = " << tile_q_size << "\n";
         } else {
             pa_inst.tile_q_size = get_target_seq_len_block_size(PagedAttentionStage::PREFILL);
-            std::cout << "update_inst_params: sdpa_opt tile_q_size = " << get_target_seq_len_block_size(PagedAttentionStage::PREFILL) << "\n";
+            pa_inst.use_micro_sdpa = false;
+            // std::cout << "update_inst_params: sdpa_opt tile_q_size = " << get_target_seq_len_block_size(PagedAttentionStage::PREFILL) << "\n";
         }
     }
 
     size_t get_target_seq_len_block_size(const PagedAttentionStage& stage) const {
+        const auto default_block_size = 16;
+
         if (stage == PagedAttentionStage::PREFILL) {
-            if (is_micro_kernel_used) {
+            if (use_micro_sdpa) {
                 return kernel_selector::SDPAKernelMicro::GetTileQSize(_kernels_data[Stage::SDPA]);
             } else {
-                return 16;
+                return default_block_size;
             }
         } else {
-            return 16;
+            return default_block_size;
         }
     }
 
@@ -125,7 +139,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         ob << make_data(&has_rotated_blocks, sizeof(bool));
     }
 
-    std::vector<layout> get_internal_buffer_layouts_impl() const override {
+    std::vector<kernel_selector::InternalBuffer> get_internal_buffers_desc() const {
         /*
         * Internal buffers allocation owners and users:
         * +--------------------------------------+--------------------+--------------------+
@@ -145,6 +159,8 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         * +--------------------------------------+--------------------+--------------------+
         * | PA_SDPA (mixed mode) + scores output | [3, 4, 5, 6, 7, 8] |                    |
         * +--------------------------------------+--------------------+--------------------+
+        * | SDPA (1st token, micro-kernel)       | [last(8/9)]        | [0, 1, 2]          |
+        * +--------------------------------------+--------------------+--------------------+
         *
         * Description:
         * 0, 1, 2 - Buffers used for proper blocks distribution for kv_cache_update and
@@ -157,24 +173,36 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         *           Filled in PA/SDPA kernels.
         * 8       - Optional buffer used for mixed PA execution mode, mapping gws idx to subsequence id.
         *           Filled in paged_attention_inst::on_execute() call.
+        * last    -
         */
 
-        auto add_internal_buffers = [](std::vector<layout>& layouts, const kernel_selector::KernelData& kd) {
-            if (kd.internalBufferSizes.empty())
-                return;
-
-            auto dtype = from_data_type(kd.internalBufferDataType);
-            const auto bpp = data_type_traits::size_of(dtype);
-            for (auto size : kd.internalBufferSizes) {
-                layout inbuf_layout = {dtype, format::bfyx, // simple linear format (flattern to x channel)
-                                       {1, 1, 1, (tensor::value_type)(size / bpp)}};
-                layouts.push_back(inbuf_layout);
-            }
+        auto add_internal_buffers = [](std::vector<kernel_selector::InternalBuffer>& internal_buffers,
+                                       const kernel_selector::KernelData& kd) {
+            internal_buffers.insert(internal_buffers.end(), kd.internalBuffers.begin(), kd.internalBuffers.end());
         };
 
+        std::vector<kernel_selector::InternalBuffer> internal_buffers;
+        // size_t count = 0;
+        add_internal_buffers(internal_buffers, _kernels_data[Stage::KV_CACHE_UPDATE]);
+        // std::cout << "Stage::KV_CACHE_UPDATE added: " << internal_buffers.size() - count << "\n";
+        // count = internal_buffers.size();
+        add_internal_buffers(internal_buffers, _kernels_data[Stage::PA_SDPA]);
+        // std::cout << "Stage::PA_SDPA added: " << internal_buffers.size() - count << "\n";
+        // count = internal_buffers.size();
+
+        if (use_micro_sdpa) {
+            add_internal_buffers(internal_buffers, _kernels_data[Stage::SDPA]);
+            // std::cout << "Stage::SDPA added: " << internal_buffers.size() - count << "\n";
+        }
+
+        return internal_buffers;
+    }
+
+    std::vector<layout> get_internal_buffer_layouts_impl() const override {
         std::vector<layout> layouts;
-        add_internal_buffers(layouts, _kernels_data[Stage::KV_CACHE_UPDATE]);
-        add_internal_buffers(layouts, _kernels_data[Stage::PA_SDPA]);
+
+        for (const auto& buffer : get_internal_buffers_desc())
+            layouts.emplace_back(ov::PartialShape{static_cast<int64_t>(buffer.byte_count)}, ov::element::u8, format::bfyx);
 
         return layouts;
     }
@@ -273,12 +301,15 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
     }
 
     std::set<size_t> get_lockable_internal_buffers() const override {
-        size_t mixed_mode_buffer = has_scores_output ? 8 : 6;
+        std::set<size_t> lockable_ids;
+        const auto& internal_buffers = get_internal_buffers_desc();
+        for (size_t i = 0; i < internal_buffers.size(); i++) {
+            if (internal_buffers[i].lockable) {
+                lockable_ids.insert(i);
+            }
+        }
 
-        std::set<size_t> lockable_ids = { 0, 1, 2, /* SDPA and KV_CACHE_UPDATE indexes configuration */
-                                          mixed_mode_buffer /* PA_SDPA multiple tokens mode */ };
-        if (has_scores_output)
-            lockable_ids.insert(4 /* Precalculated accumulated sequence length offsets for each subsequence */);
+        // std::cout << "Lockable indexes: " << lockable_ids << "\n";
 
         return lockable_ids;
     };
@@ -299,12 +330,12 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         size_t internal_buffers_offset = 0;
         size_t internal_buffers_count = 0;
         if (stage == Stage::PA_SDPA) {
-            internal_buffers_offset = _kernels_data[Stage::KV_CACHE_UPDATE].internalBufferSizes.size();
-            internal_buffers_count = _kernels_data[Stage::PA_SDPA].internalBufferSizes.size();
+            internal_buffers_offset = _kernels_data[Stage::KV_CACHE_UPDATE].internalBuffers.size();
+            internal_buffers_count = _kernels_data[Stage::PA_SDPA].internalBuffers.size();
         } else if (stage == Stage::KV_CACHE_UPDATE) {
-            internal_buffers_count = _kernels_data[Stage::KV_CACHE_UPDATE].internalBufferSizes.size();
+            internal_buffers_count = _kernels_data[Stage::KV_CACHE_UPDATE].internalBuffers.size();
         } else if (stage == Stage::SDPA) {
-            internal_buffers_count = _kernels_data[Stage::KV_CACHE_UPDATE].internalBufferSizes.size();
+            internal_buffers_count = _kernels_data[Stage::KV_CACHE_UPDATE].internalBuffers.size();
 
             const auto desc = instance.get_node().as<paged_attention>().get_primitive();
             if (desc->has_scores_output()) {
@@ -331,6 +362,10 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
             args.intermediates.insert(args.intermediates.end(),
                                       intermediate_memories.begin() + internal_buffers_offset,
                                       intermediate_memories.begin() + internal_buffers_offset + internal_buffers_count);
+
+            if (use_micro_sdpa && stage == Stage::SDPA) {
+                args.intermediates.push_back(intermediate_memories.back());
+            }
 
             GPU_DEBUG_TRACE_DETAIL << "Execute stage=" << stage << " kernel=" << kd_idx << " " << _kernels_data[stage].kernelName << " start_offset="
                                    << internal_buffers_offset << " count=" << internal_buffers_count << "\n";
@@ -627,7 +662,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
 
             new_layout.set_partial_shape(new_shape);
 
-            std::cout << "Convert layout: " << input_layout.to_short_string() << " -> " << new_layout.to_short_string() << "\n";
+            // std::cout << "Convert layout: " << input_layout.to_short_string() << " -> " << new_layout.to_short_string() << "\n";
 
             return convert_data_tensor(new_layout);
         };
@@ -808,7 +843,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
             (_kernels_data[Stage::KV_CACHE_ROTATE].update_dispatch_data_func)(kv_cache_rotate_kernel_params, _kernels_data[Stage::KV_CACHE_ROTATE]);
         }
 
-        auto kv_cache_update_kernel_params = get_kv_cache_update_kernel_params(impl_param, stage, input_tensors, get_target_seq_len_block_size(stage), impl_param.is_dynamic());
+        auto kv_cache_update_kernel_params = get_kv_cache_update_kernel_params(impl_param, stage, input_tensors, 16 /* default_block_size */, impl_param.is_dynamic());
         (_kernels_data[Stage::KV_CACHE_UPDATE].update_dispatch_data_func)(kv_cache_update_kernel_params, _kernels_data[Stage::KV_CACHE_UPDATE]);
 
         if (stage == PagedAttentionStage::PREFILL) {
@@ -854,9 +889,8 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         impl->has_rotated_blocks = desc->has_rotated_blocks;
 
         if (!kernels_data[Stage::SDPA].kernels[0].micro_kernels.empty()) {
-            std::cout << "Micro SDPA is choosen!\n";
-            std::cout << "tile_q_size = " << kernel_selector::SDPAKernelMicro::GetTileQSize(kernels_data[Stage::SDPA]) << "\n";
-            impl->is_micro_kernel_used = true;
+            std::cout << "Micro SDPA is choosen! tile_q_size = " << kernel_selector::SDPAKernelMicro::GetTileQSize(kernels_data[Stage::SDPA]) << "\n";
+            impl->use_micro_sdpa = true;
         }
 
         return impl;
@@ -865,7 +899,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
 private:
     bool has_scores_output = false;
     bool has_rotated_blocks = false;
-    bool is_micro_kernel_used = false;
+    bool use_micro_sdpa = false;
 };
 
 namespace detail {

@@ -96,7 +96,7 @@ sdpa_config_t xehpg_h64_2nd = {8, 16, 16, 8, 8, 1, 4, 2};
 sdpa_config_t xehpg_q_h64 = {32, 16, 16, 16, 4, 4, 4, 4};
 sdpa_config_t xehpg_q_h64_2nd = {16, 16, 8, 8, 16, 1, 8, 2};
 
-sdpa_config_t xehpg_custom = {8, 8, 16, 8, 16, 2, 16, 2};
+// sdpa_config_t xehpg_custom = {8, 8, 16, 8, 16, 2, 16, 2};
 sdpa_config_t xehpg_h128 = {16, 16, 32, 8, 8, 4, 4, 8};
 sdpa_config_t xehpg_h128_s32 = {16, 16, 16, 8, 16, 2, 8, 4};
 sdpa_config_t xehpg_h128_2nd = {8, 16, 16, 8, 16, 1, 8, 2};
@@ -141,7 +141,7 @@ sdpa_config_t xehpc_h256_s64 = {16, 32, 32, 32, 8, 1, 8, 1};
 sdpa_config_t xehpc_h256_2nd = {16, 16, 16, 16, 16, 1, 16, 1};
 
 sdpa_config_t *choose_config_xehpg(int head_size, int seq, bool thin_q, bool quantized) {
-    return &xehpg_custom;
+    // return &xehpg_custom;
     if (head_size <= 32) {
         if (quantized && seq >= 128) {
             if (thin_q) return &xehpg_q_h32_2nd;
@@ -269,11 +269,6 @@ void SDPAKernelMicro::init_microkernels(const sdpa_params& params, micro::Packag
         }
         default: break;
     }
-
-    std::cout << config->unroll_m_kq << " "
-              << config->unroll_n_kq << " "
-              << config->unroll_m_vs << " "
-              << config->unroll_n_vs << " - config\n";
 
     OPENVINO_ASSERT(config != nullptr);
 
@@ -471,29 +466,11 @@ bool SDPAKernelMicro::Validate(const Params& p) const {
     auto K_num_heads_dim = get_num_heads(params.inputs[1], params.input1_order);
     auto V_num_heads_dim = get_num_heads(params.inputs[2], params.input2_order);
 
-    auto print_arr_new = [&](const std::vector<int64_t>& vec, size_t max_len, std::string name) {
-        std::stringstream ss;
-        for (size_t i = 0; i < std::min(max_len, vec.size()); i++) {
-            ss << vec[i] << ", ";
-        }
-        std::cout << "Array " << name << " (len=" << vec.size() << ") content: " << ss.str() << "\n";
-    };
-
-    print_arr_new(params.input0_order, params.input0_order.size(), "params.input0_order");
-    print_arr_new(params.input1_order, params.input1_order.size(), "params.input1_order");
-    print_arr_new(params.input2_order, params.input2_order.size(), "params.input2_order");
-
-    std::cout << "Q_num_heads_dim=" << Q_num_heads_dim.v << "\n";
-    std::cout << "K_num_heads_dim=" << K_num_heads_dim.v << "\n";
-    std::cout << "V_num_heads_dim=" << V_num_heads_dim.v << "\n";
-
     if (params.input0_order[3] != 3 || params.input1_order[3] != 3 || params.input2_order[3] != 3) {
-        std::cout << "Validate false4\n";
         return false;
     }
 
     if (Q_num_heads_dim.is_dynamic || K_num_heads_dim.is_dynamic || V_num_heads_dim.is_dynamic || K_num_heads_dim.v != V_num_heads_dim.v) {
-        std::cout << "Validate false5\n";
         auto q_dims = params.inputs[0].GetDims();
         auto k_dims = params.inputs[1].GetDims();
         auto v_dims = params.inputs[2].GetDims();
@@ -525,7 +502,24 @@ bool SDPAKernelMicro::Validate(const Params& p) const {
         return false;
     }
 
-    std::cout << "Validate true\n";
+    // Scores output is not supported
+    if (params.conf.is_paged_attention && params.outputs.size() > 1)
+        return false;
+
+    int DISABLE_MICRO = 0;
+    if (const auto env_var = std::getenv("DISABLE_MICRO")) {
+        std::istringstream ss(env_var);
+        ss >> DISABLE_MICRO;
+        static bool printed = false;
+        if (!printed) {
+            std::cout << "Set DISABLE_MICRO=" << DISABLE_MICRO << "\n";
+            printed = true;
+        }
+    }
+
+    if (DISABLE_MICRO)
+        return false;
+
     return true;
 }
 
@@ -568,6 +562,8 @@ JitConstants SDPAKernelMicro::GetJitConstants(const sdpa_params& params, const m
 
     jit.AddConstant(MakeJitConstant("TRANSPOSE_K", false));
     jit.AddConstant(MakeJitConstant("IS_PAGED_ATTENTION", params.conf.is_paged_attention));
+    jit.AddConstant(MakeJitConstant("KV_HEADS_NUM", params.conf.kv_heads_num));
+    jit.AddConstant(MakeJitConstant("HEADS_NUM", params.conf.heads_num));
 
     jit.AddConstant(MakeJitConstant("QRY_DATA_T", toCLType(Q.GetDType())));
     jit.AddConstant(MakeJitConstant("KEY_DATA_T", toCLType(K.GetDType())));
@@ -594,8 +590,6 @@ JitConstants SDPAKernelMicro::GetJitConstants(const sdpa_params& params, const m
         }
     };
 
-    std::cout << "Check is_kv_compressed=" << params.conf.is_kv_compressed << "\n";
-
     jit.AddConstant(MakeJitConstant("KEY_ELEMENTS_PER_BYTE", elems_per_byte(params.inputs[1].GetDType())));
     jit.AddConstant(MakeJitConstant("VAL_ELEMENTS_PER_BYTE", elems_per_byte(params.inputs[2].GetDType())));
 
@@ -621,19 +615,10 @@ JitConstants SDPAKernelMicro::GetJitConstants(const sdpa_params& params, const m
     int tile_q = gemm_kq.getSetting("wg_tile_n");
     int tile_v = gemm_vs.getSetting("wg_tile_m");
 
-    std::cout << "tile_q=" << tile_q << "\n";
-    std::cout << "tile_k=" << tile_k << "\n";
-    std::cout << "tile_v=" << tile_v << "\n";
-
     bool d_full = (head_size == d_max);
     bool v_full = (head_size == tile_v);
     bool k_full = !n_keys.is_dynamic && (n_keys.v % tile_k) == 0;
     bool q_full = !n_queries.is_dynamic && (n_queries.v % tile_q) == 0;
-
-    std::cout << "Check d_full=" << d_full << "\n";
-    std::cout << "Check v_full=" << v_full << "\n";
-    std::cout << "Check k_full=" << k_full << "\n";
-    std::cout << "Check q_full=" << q_full << "\n";
 
     auto Q_num_heads_dim = get_num_heads(Q, params.input0_order);
     auto K_num_heads_dim = get_num_heads(K, params.input1_order);
@@ -720,7 +705,6 @@ JitConstants SDPAKernelMicro::GetJitConstants(const sdpa_params& params, const m
         jit.Merge(unit_parameters("VAL_COMP"));
     }
 
-    std::cout << "GetJitCoonstants call - DONE\n";
     return jit;
 }
 
@@ -736,13 +720,12 @@ CommonDispatchData SDPAKernelMicro::SetDefault(const sdpa_params& params, const 
     auto seq_length = get_seq_length(params.inputs[0], params.input0_order).v;
     if (params.conf.is_paged_attention) {
         seq_length = params.conf.paged_attention_aligned_seq_len;
-        GPU_DEBUG_TRACE_DETAIL << "seq_len=" << seq_length << "\n";
-        GPU_DEBUG_TRACE_DETAIL << "wg_tile_q=" << wg_tile_q << "\n";
     }
 
     auto heads_num = params.conf.is_paged_attention ? params.conf.heads_num : params.outputs[0].Feature().v;
     auto batch_size = params.conf.is_paged_attention ? 1 : params.outputs[0].Batch().v;
-    std::cout << "Set heads_num=" << heads_num << "\n";
+
+    std::cout << "seq_len=" << seq_length << " wg_tile_q=" << wg_tile_q << " heads_num=" << heads_num << "\n";
 
     dispatch_data.gws[0] *= CeilDiv(seq_length, wg_tile_q);
     dispatch_data.gws[1] *= heads_num;
@@ -753,6 +736,8 @@ CommonDispatchData SDPAKernelMicro::SetDefault(const sdpa_params& params, const 
 
 clKernelData SDPAKernelMicro::get_kernel_data(const sdpa_params& params, bool is_prefill) const {
     auto name = kernelName + (is_prefill ? "_prefill" : "_generate");
+    if (params.conf.is_paged_attention)
+        name = "pa_" + name;
 
     std::vector<micro::Package> gemms(2); // KQ and VS
     init_microkernels(params, gemms[kq_id], gemms[vs_id], is_prefill);
@@ -778,9 +763,9 @@ clKernelData SDPAKernelMicro::get_kernel_data(const sdpa_params& params, bool is
     if (params.conf.is_paged_attention) {
         kernel.params.arguments.push_back({ArgumentDescriptor::Types::INPUT, 3}); // subsequence_begins
 
-        kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 0});
-        kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 1});
-        kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 2});
+        // kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 0});
+        // kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 1});
+        kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 3});
     } else {
         if (params.inputs.size() >= 4)
             kernel.params.arguments.push_back({ArgumentDescriptor::Types::INPUT, 3}); // mask
@@ -811,9 +796,6 @@ clKernelData SDPAKernelMicro::get_kernel_data(const sdpa_params& params, bool is
 
     auto head_size = params.conf.head_size;
 
-    std::cout << "n_queries=" << n_queries.v << "\n";
-    std::cout << "n_keys=" << n_keys.v << "\n";
-
     ScalarDescriptor s_d;
     s_d.t = ScalarDescriptor::Types::INT32;
     s_d.v.s32 = static_cast<uint32_t>(head_size);
@@ -829,8 +811,6 @@ clKernelData SDPAKernelMicro::get_kernel_data(const sdpa_params& params, bool is
     kernel.params.scalars.push_back(s_d);
     kernel.params.scalars.push_back(s_k);
     kernel.params.scalars.push_back(s_q);
-
-    std::cout << "kernel.params.scalars.size()=" << kernel.params.scalars.size() << "\n";
 
     /* Generate microkernel shims */
     micro::ShimOptions shim_options;
@@ -860,8 +840,6 @@ clKernelData SDPAKernelMicro::get_kernel_data(const sdpa_params& params, bool is
         kernel.micro_kernels.push_back(std::make_shared<micro::MicroKernelPackage>(p));
     }
 
-    std::cout << "Done\n";
-
     return kernel;
 }
 
@@ -875,7 +853,6 @@ KernelsData SDPAKernelMicro::GetKernelsData(const Params& params) const {
     }
 
     for (size_t i = 0; i < num_kernels; i++) {
-        std::cout << "get_kernel_data\n";
         kd.kernels[i] = get_kernel_data(prim_params, i == prefill_id);
     }
 
@@ -927,6 +904,17 @@ void SDPAKernelMicro::GetUpdateDispatchDataFunc(KernelData& kd) const {
         kernel_data.kernels[target_kernel].params.scalars.push_back(s_d);
         kernel_data.kernels[target_kernel].params.scalars.push_back(s_k);
         kernel_data.kernels[target_kernel].params.scalars.push_back(s_q);
+
+        if (prim_params.conf.is_paged_attention) {
+            const auto indexes_dt = Datatype::INT32;
+            const auto wg_tile_q = GetTileQSize(kernel_data);
+            const auto target_seq_len = std::max(prim_params.conf.paged_attention_aligned_seq_len, static_cast<int64_t>(1));
+            const auto indexes_buf_size = CeilDiv(target_seq_len, wg_tile_q) * BytesPerElement(indexes_dt) * 2;
+
+            kernel_data.internalBuffers.clear();
+            kernel_data.internalBufferDataType = indexes_dt;
+            kernel_data.internalBuffers.emplace_back(indexes_buf_size, true);
+        }
     };
 }
 

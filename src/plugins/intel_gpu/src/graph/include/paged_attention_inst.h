@@ -62,6 +62,7 @@ public:
     memory::ptr rotation_deltas_memory_ptr() const { return input_memory_ptr(14); }
     memory::ptr rotation_trig_lut_memory_ptr() const { return input_memory_ptr(15); }
 
+    bool use_micro_sdpa = false;
     size_t tile_q_size = 0;
 
 protected:
