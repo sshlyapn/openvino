@@ -216,13 +216,17 @@ KERNEL(micro_sdpa)(OPTIONAL_SHAPE_INFO_ARG
 #endif
 
     /* Leading dimension for matrices */
+#if IS_PAGED_ATTENTION
+    uint ldk = HEAD_SIZE * KV_HEADS_NUM + INPUT1_PAD_BEFORE_FEATURE_NUM + INPUT1_PAD_AFTER_FEATURE_NUM;
+    uint ldq = HEAD_SIZE * HEADS_NUM + INPUT0_PAD_BEFORE_FEATURE_NUM + INPUT0_PAD_AFTER_FEATURE_NUM;
+    uint ldv = HEAD_SIZE * KV_HEADS_NUM + INPUT2_PAD_BEFORE_FEATURE_NUM + INPUT2_PAD_AFTER_FEATURE_NUM;
+    uint lda = HEAD_SIZE * HEADS_NUM;
+#else
     uint ldk = TRANSPOSE_K ? KEY_S3 : KEY_S2;
     uint ldq = QRY_S2;
     uint ldv = VAL_S2;
     uint lda = DST_S2;
-
-    if (INPUT2_PAD_BEFORE_FEATURE_NUM != 0)
-        ldv = (128*1*1*1*1*1*(32  + (INPUT2_PAD_BEFORE_FEATURE_NUM / HEAD_SIZE)));
+#endif
 
 #if KEY_SCALES || KEY_ZERO_POINTS
     uint ldkq = DIV_UP(d, KEY_GROUP_SIZE);
@@ -323,7 +327,7 @@ KERNEL(micro_sdpa)(OPTIONAL_SHAPE_INFO_ARG
         float iscale = native_recip(scale);
     #endif
 #else
-    float iscale = sqrt(convert_float(INPUT1_SIZE_X));
+    float iscale = sqrt(convert_float(HEAD_SIZE));
     float scale = native_recip(iscale);
 #endif
     scale *= 1.442695f; // log2(e)

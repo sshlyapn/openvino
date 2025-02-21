@@ -649,27 +649,9 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
                                                        bool is_dynamic) {
         const auto desc = impl_param.typed_desc<paged_attention>();
         auto params = get_default_params<sdpa_kernel_params_t>(impl_param, is_dynamic);
-
-        auto get_sdpa_tensor = [&](const layout& input_layout, size_t head_size) {
-            auto new_layout = input_layout;
-            auto orig_shape = new_layout.get_partial_shape();
-            auto new_shape = ov::PartialShape::dynamic(4);
-
-            new_shape[0] = orig_shape[0];
-            new_shape[1] = orig_shape[1] / head_size;
-            new_shape[2] = 1;
-            new_shape[3] = head_size;
-
-            new_layout.set_partial_shape(new_shape);
-
-            // std::cout << "Convert layout: " << input_layout.to_short_string() << " -> " << new_layout.to_short_string() << "\n";
-
-            return convert_data_tensor(new_layout);
-        };
-
-        const auto query_tensor = get_sdpa_tensor(impl_param.get_input_layout(0), desc->head_size);
-        const auto key_tensor = get_sdpa_tensor(impl_param.get_input_layout(1), desc->head_size);;
-        const auto value_tensor = get_sdpa_tensor(impl_param.get_input_layout(2), desc->head_size);;
+        const auto query_tensor = convert_data_tensor(impl_param.get_input_layout(0));
+        const auto key_tensor = convert_data_tensor(impl_param.get_input_layout(1));
+        const auto value_tensor = convert_data_tensor(impl_param.get_input_layout(2));
         const auto& subsequence_begins_tensor = input_tensors[6];
         const auto& scale_tensor = input_tensors[9];
         const auto& alibi_tensor = input_tensors[11];
@@ -698,7 +680,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         if (has_alibi)
             params.inputs[input_idx++] = alibi_tensor;
 
-        params.outputs[0] = get_sdpa_tensor(impl_param.get_output_layout(0), desc->head_size);;
+        params.outputs[0] = convert_data_tensor(impl_param.get_output_layout(0));
         if (has_scores_output) {
             params.outputs.resize(2);
             params.outputs[1] = convert_data_tensor(impl_param.get_output_layout(1));
@@ -869,7 +851,6 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         auto kv_cache_update_kernel_params = get_kv_cache_update_kernel_params(impl_param, stage, input_tensors, 0, impl_param.is_dynamic());
         auto& kv_cache_update_kernel_selector = kv_cache_update_kernel_selector_t::Instance();
         kernels_data.push_back(kv_cache_update_kernel_selector.get_best_kernel(kv_cache_update_kernel_params));
-
         auto sdpa_kernel_params = get_sdpa_kernel_params(impl_param, stage, input_tensors, 0, impl_param.is_dynamic());
         auto& sdpa_kernel_selector = sdpa_kernel_selector_t::Instance();
         kernels_data.push_back(sdpa_kernel_selector.get_best_kernel(sdpa_kernel_params));

@@ -60,11 +60,17 @@ Tensor::NDims normalize_dims(const DataTensor& qkv) {
     return dims;
 }
 
-Tensor::Dim get_num_heads(const DataTensor& qkv, const std::vector<int64_t>& order) {
+Tensor::Dim get_num_heads(const sdpa_params& params, const DataTensor& qkv, const std::vector<int64_t>& order) {
+    if (params.conf.is_paged_attention)
+        return normalize_dims(qkv)[1].v / params.conf.head_size;
+
     return normalize_dims(qkv)[order[1]];
 }
 
-Tensor::Dim get_seq_length(const DataTensor& qkv, const std::vector<int64_t>& order) {
+Tensor::Dim get_seq_length(const sdpa_params& params, const DataTensor& qkv, const std::vector<int64_t>& order) {
+    if (params.conf.is_paged_attention)
+        return Tensor::Dim(params.conf.paged_attention_aligned_seq_len);
+
     return normalize_dims(qkv)[order[2]];
 }
 
@@ -244,9 +250,9 @@ void SDPAKernelMicro::init_microkernels(const sdpa_params& params, micro::Packag
     auto& out = params.outputs[0];
     const auto head_size = params.conf.head_size;
     const auto d_max = get_d_max(head_size);
-    const Tensor::Dim n_keys = get_seq_length(K, params.input1_order);
-    const Tensor::Dim n_queries = get_seq_length(Q, params.input0_order);
-    const Tensor::Dim n_values = V.X();
+    const Tensor::Dim n_keys = get_seq_length(params, K, params.input1_order);
+    const Tensor::Dim n_queries = get_seq_length(params, Q, params.input0_order);
+    const Tensor::Dim n_values = Tensor::Dim(head_size);
     const auto batch = out.Batch().v * out.Feature().v;
 
     /* Retrieve pre-tuned kernel configuration */
@@ -462,9 +468,9 @@ bool SDPAKernelMicro::Validate(const Params& p) const {
         return false;
     }
 
-    auto Q_num_heads_dim = get_num_heads(params.inputs[0], params.input0_order);
-    auto K_num_heads_dim = get_num_heads(params.inputs[1], params.input1_order);
-    auto V_num_heads_dim = get_num_heads(params.inputs[2], params.input2_order);
+    auto Q_num_heads_dim = get_num_heads(params, params.inputs[0], params.input0_order);
+    auto K_num_heads_dim = get_num_heads(params, params.inputs[1], params.input1_order);
+    auto V_num_heads_dim = get_num_heads(params, params.inputs[2], params.input2_order);
 
     if (params.input0_order[3] != 3 || params.input1_order[3] != 3 || params.input2_order[3] != 3) {
         return false;
@@ -539,9 +545,9 @@ JitConstants SDPAKernelMicro::GetJitConstants(const sdpa_params& params, const m
     auto lda = head_size * prim_params.outputs[0].ElementSize();
 
     const auto d_max = get_d_max(head_size);
-    const auto n_keys = get_seq_length(K, prim_params.input1_order);
-    const auto n_queries = get_seq_length(Q, prim_params.input0_order);
-    const auto n_values = V.X();
+    const auto n_keys = get_seq_length(params, K, prim_params.input1_order);
+    const auto n_queries = get_seq_length(params, Q, prim_params.input0_order);
+    const auto n_values = Tensor::Dim(head_size);
 
     auto sdpa_inputs = params.inputs.size();
     if (params.conf.is_paged_attention)
@@ -620,8 +626,8 @@ JitConstants SDPAKernelMicro::GetJitConstants(const sdpa_params& params, const m
     bool k_full = !n_keys.is_dynamic && (n_keys.v % tile_k) == 0;
     bool q_full = !n_queries.is_dynamic && (n_queries.v % tile_q) == 0;
 
-    auto Q_num_heads_dim = get_num_heads(Q, params.input0_order);
-    auto K_num_heads_dim = get_num_heads(K, params.input1_order);
+    auto Q_num_heads_dim = get_num_heads(params, Q, params.input0_order);
+    auto K_num_heads_dim = get_num_heads(params, K, params.input1_order);
 
     jit.AddConstant(MakeJitConstant("REMAINDER_K", !k_full));
     jit.AddConstant(MakeJitConstant("KV_GROUP_SIZE", Q_num_heads_dim.v / K_num_heads_dim.v));
@@ -717,11 +723,7 @@ CommonDispatchData SDPAKernelMicro::SetDefault(const sdpa_params& params, const 
     dispatch_data.lws = {subgroup_size(params.engineInfo.arch), (size_t)sg_per_wg, 1};
     dispatch_data.gws = dispatch_data.lws;
 
-    auto seq_length = get_seq_length(params.inputs[0], params.input0_order).v;
-    if (params.conf.is_paged_attention) {
-        seq_length = params.conf.paged_attention_aligned_seq_len;
-    }
-
+    auto seq_length = get_seq_length(params, params.inputs[0], params.input0_order).v;
     auto heads_num = params.conf.is_paged_attention ? params.conf.heads_num : params.outputs[0].Feature().v;
     auto batch_size = params.conf.is_paged_attention ? 1 : params.outputs[0].Batch().v;
 
@@ -791,8 +793,8 @@ clKernelData SDPAKernelMicro::get_kernel_data(const sdpa_params& params, bool is
     const auto& Q = params.inputs[0];
     const auto& K = params.inputs[1];
 
-    const auto n_queries = get_seq_length(Q, params.input0_order);
-    const auto n_keys = get_seq_length(K, params.input1_order);
+    const auto n_queries = get_seq_length(params, Q, params.input0_order);
+    const auto n_keys = get_seq_length(params, K, params.input1_order);
 
     auto head_size = params.conf.head_size;
 
@@ -867,8 +869,8 @@ void SDPAKernelMicro::GetUpdateDispatchDataFunc(KernelData& kd) const {
         const auto& Q = prim_params.inputs[0];
         const auto& K = prim_params.inputs[1];
 
-        const auto n_queries = get_seq_length(Q, prim_params.input0_order);
-        const auto n_keys = get_seq_length(K, prim_params.input1_order);
+        const auto n_queries = get_seq_length(prim_params, Q, prim_params.input0_order);
+        const auto n_keys = get_seq_length(prim_params, K, prim_params.input1_order);
 
         auto head_size = prim_params.conf.head_size;
 
