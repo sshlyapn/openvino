@@ -19,6 +19,7 @@ class TRANSFORMATIONS_API ConvertPagedAttnInputs;
 
 class ConvertPagedAttnInputs : public ov::pass::MatcherPass {
 public:
+    using UpdateShapeFunc = std::function<void(ov::element::Type, bool, size_t, int64_t&, int64_t&)>;
     struct KVCacheConfig {
         ov::element::Type keyCachePrecision;
         ov::element::Type valueCachePrecision;
@@ -34,7 +35,7 @@ public:
     };
 
     OPENVINO_MATCHER_PASS_RTTI("ConvertPagedAttnInputs");
-    ConvertPagedAttnInputs(const KVCacheConfig& config);
+    ConvertPagedAttnInputs(const KVCacheConfig& config, UpdateShapeFunc update_shape_func);
 
     void setKVCacheConfig(const KVCacheConfig& config);
 
@@ -42,6 +43,7 @@ public:
 
 private:
     KVCacheConfig m_config;
+    UpdateShapeFunc m_update_shape_func;
 };
 
 }  // namespace pass
