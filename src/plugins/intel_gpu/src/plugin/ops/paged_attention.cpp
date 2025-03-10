@@ -51,6 +51,12 @@ static void CreatePagedAttentionExtensionOp(ProgramBuilder& p, const std::shared
     prim.kv_heads_num = kv_heads_num;
     prim.heads_num = heads_num;
 
+    static bool print_once = true;
+    if (print_once) {
+        std::cout << "PA config: heads=" << heads_num << " kv_heads=" << kv_heads_num << "\n";
+        print_once = false;
+    }
+
     const size_t scale_idx = 9;
     const size_t sliding_window_idx = 10;
     const size_t alibi_idx = 11;

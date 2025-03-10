@@ -13,6 +13,7 @@ namespace kernel_selector {
 namespace {
 enum KernelsTypes {
     SINGLE_TOKEN = 0,
+    SINGLE_TOKEN_GQA,
     MULTI_TOKENS,
     FINALIZATION,
     FINALIZATION_MULTI_TOKENS,
@@ -20,15 +21,59 @@ enum KernelsTypes {
     TOTAL_KERNELS_NUM
 };
 
+static size_t get_heads_per_iteration(const pa_sdpa_params& params) {
+    int HEADS_PER_ITER = 0;
+    if (const auto env_var = std::getenv("HEADS_PER_ITER")) {
+        std::istringstream ss(env_var);
+        ss >> HEADS_PER_ITER;
+        static bool printed = false;
+        if (!printed) {
+            std::cout << "Set HEADS_PER_ITER=" << HEADS_PER_ITER << "\n";
+            printed = true;
+        }
+    }
+    if (HEADS_PER_ITER) {
+        return HEADS_PER_ITER;
+    }
+
+    if (params.conf.kv_group_size > 1) {
+        std::vector<size_t> preferable_heads_combined = {4, 3, 2};
+        for (const auto& heads_num : preferable_heads_combined) {
+            const auto leftovers = params.conf.kv_group_size % heads_num;
+            if (leftovers == 0 || heads_num - leftovers <= 1) {
+                return heads_num;
+            }
+        }
+    }
+
+    return 1;
+}
+
+constexpr size_t heads_per_iteration = 4;
 constexpr size_t subgroup_size = 16;
 constexpr size_t seq_len_partition_size = 256;
 constexpr size_t paged_attention_block_size = 16;
 constexpr Datatype softmax_acc_dt = Datatype::F32;
 
 size_t get_sg_number_scale_factor(const pa_sdpa_params& params, size_t head_size, size_t kernel_type) {
+    int SG_SCALE = 0;
+    if (const auto env_var = std::getenv("SG_SCALE")) {
+        std::istringstream ss(env_var);
+        ss >> SG_SCALE;
+        static bool printed = false;
+        if (!printed) {
+            std::cout << "Set SG_SCALE=" << SG_SCALE << "\n";
+            printed = true;
+        }
+    }
+
+    if (SG_SCALE != 0)
+        return SG_SCALE;
+
     if (params.conf.is_kv_compressed) {
         const size_t optimal_scale_factor = 2;
         if (kernel_type == KernelsTypes::SINGLE_TOKEN ||
+            kernel_type == KernelsTypes::SINGLE_TOKEN_GQA ||
             kernel_type == KernelsTypes::MULTI_TOKENS) {
             if (head_size * optimal_scale_factor <= params.engineInfo.maxWorkGroupSize) {
                 return optimal_scale_factor;
@@ -45,6 +90,8 @@ static std::string GetKernelName(std::string base_name, KernelsTypes type) {
 
     if (type == KernelsTypes::SINGLE_TOKEN) {
         kernel_name += "_single_token";
+    } else if (type == KernelsTypes::SINGLE_TOKEN_GQA) {
+        kernel_name += "_single_token_gqa";
     } else if (type == KernelsTypes::MULTI_TOKENS) {
         kernel_name += "_multi_tokens_seq";
     } else if (type == KernelsTypes::FINALIZATION) {
@@ -65,6 +112,7 @@ KernelsData PagedAttentionSDPAKernelOpt::GetKernelsData(const Params& p) const {
 
     const auto& params = static_cast<const pa_sdpa_params&>(p);
     std::vector<KernelsTypes> kernels_type = { KernelsTypes::SINGLE_TOKEN,
+                                               KernelsTypes::SINGLE_TOKEN_GQA,
                                                KernelsTypes::MULTI_TOKENS,
                                                KernelsTypes::FINALIZATION,
                                                KernelsTypes::FINALIZATION_MULTI_TOKENS };
@@ -90,7 +138,7 @@ KernelsData PagedAttentionSDPAKernelOpt::GetKernelsData(const Params& p) const {
 
         int inputs_num = static_cast<int>(params.inputs.size());
         int outputs_num = 1;
-        if (kernel_type == KernelsTypes::SINGLE_TOKEN) {
+        if (kernel_type == KernelsTypes::SINGLE_TOKEN || kernel_type == KernelsTypes::SINGLE_TOKEN_GQA) {
             // SINGLE_TOKEN kernel doesn't use the subsequence_begins input
             inputs_num -= 1;
         } else if (kernel_type == KernelsTypes::FINALIZATION) {
@@ -221,6 +269,7 @@ JitConstants PagedAttentionSDPAKernelOpt::GetJitConstants(const pa_sdpa_params& 
     jit.AddConstant(MakeJitConstant("HEAD_SIZE", config.head_size));
     jit.AddConstant(MakeJitConstant("HEADS_NUM", config.heads_num));
     jit.AddConstant(MakeJitConstant("KV_HEADS_NUM", config.kv_heads_num));
+    jit.AddConstant(MakeJitConstant("KV_HEADS_GROUP_SIZE", config.kv_group_size));
     jit.AddConstant(MakeJitConstant("SEQ_LEN_PARTITION_SIZE", seq_len_partition_size));
     jit.AddConstant(MakeJitConstant("PAGED_ATTENTION_BLOCK_SIZE", paged_attention_block_size));
     jit.AddConstant(MakeJitConstant("SUBGROUP_SIZE", subgroup_size));
@@ -236,8 +285,21 @@ JitConstants PagedAttentionSDPAKernelOpt::GetJitConstants(const pa_sdpa_params& 
         jit.AddConstant(MakeJitConstant("ADJUSTED_HEAD_SIZE", params.conf.head_size));
     }
 
-    if (config.broadcast_axis != -1) {
-        jit.AddConstant(MakeJitConstant("BROADCAST_GROUP_SIZE", config.group_size));
+    if (kernel_idx == KernelsTypes::SINGLE_TOKEN_GQA) {
+        jit.AddConstant(MakeJitConstant("HEADS_PER_WI", get_heads_per_iteration(params)));
+        jit.AddConstant(MakeJitConstant("ITERATIONS_PER_KV_HEADS_GROUP", CeilDiv(config.kv_group_size, get_heads_per_iteration(params))));
+        jit.AddConstant(MakeJitConstant("HEADS_LEFTOVERS_NUM", config.kv_group_size % get_heads_per_iteration(params)));
+
+        static bool print_once = true;
+        if (print_once) {
+            std::cout << "KV_HEADS_GROUP_SIZE=" << config.kv_group_size << "\n";
+            std::cout << "HEADS_PER_WI=" << get_heads_per_iteration(params) << "\n";
+            std::cout << "ITERATIONS_PER_KV_HEADS_GROUP=" << CeilDiv(config.kv_group_size, get_heads_per_iteration(params)) << "\n";
+            std::cout << "HEADS_LEFTOVERS_NUM=" << config.kv_group_size % get_heads_per_iteration(params) << "\n";
+            print_once = false;
+        }
+    } else {
+        jit.AddConstant(MakeJitConstant("HEADS_PER_WI", 1));
     }
 
     auto sdpa_stage = 0;
@@ -293,6 +355,16 @@ CommonDispatchData PagedAttentionSDPAKernelOpt::SetDefault(const pa_sdpa_params&
                                   heads_num,
                                   head_size * num_of_partitions * sg_scale };
             dispatch_data.lws = { 1, 1, head_size * sg_scale };
+        } else if (kernel_idx == KernelsTypes::SINGLE_TOKEN_GQA) {
+            auto sg_scale = get_sg_number_scale_factor(params, head_size, kernel_idx);
+
+            auto kv_groups = heads_num / params.conf.kv_group_size;
+            auto gqa_heads_num = kv_groups * CeilDiv(params.conf.kv_group_size, get_heads_per_iteration(params));
+
+            dispatch_data.gws = { total_tokens,
+                                  gqa_heads_num,
+                                  head_size * num_of_partitions * sg_scale };
+            dispatch_data.lws = { 1, 1, head_size * sg_scale };
         } else if (kernel_idx == KernelsTypes::SCORES_CALCULATION) {
             const auto& past_lens = params.inputs[3];
             const auto subsequences_number = past_lens.Batch().v;
@@ -322,6 +394,24 @@ CommonDispatchData PagedAttentionSDPAKernelOpt::SetDefault(const pa_sdpa_params&
     return dispatch_data;
 }
 
+static size_t get_gqa_seq_len() {
+    int REQ_SEQ_LEN = 0;
+    if (const auto env_var = std::getenv("REQ_SEQ_LEN")) {
+        std::istringstream ss(env_var);
+        ss >> REQ_SEQ_LEN;
+        static bool printed = false;
+        if (!printed) {
+            std::cout << "Set REQ_SEQ_LEN=" << REQ_SEQ_LEN << "\n";
+            printed = true;
+        }
+    }
+
+    if (REQ_SEQ_LEN)
+        return REQ_SEQ_LEN;
+
+    return 8 * seq_len_partition_size;
+}
+
 void PagedAttentionSDPAKernelOpt::GetUpdateDispatchDataFunc(KernelData& kd) const {
     kd.update_dispatch_data_func = [](const Params& params, KernelData& kd) {
         const auto& prim_params = static_cast<const pa_sdpa_params&>(params);
@@ -334,13 +424,37 @@ void PagedAttentionSDPAKernelOpt::GetUpdateDispatchDataFunc(KernelData& kd) cons
         const auto scores_calc_only = prim_params.stage == PagedAttentionStage::PREFILL && has_scores_output;
         const auto multi_tokens_mode = prim_params.stage == PagedAttentionStage::MIXED;
 
-        auto dispatch_data1 = SetDefault(prim_params, KernelsTypes::SINGLE_TOKEN);
-        kd.kernels[KernelsTypes::SINGLE_TOKEN].params.workGroups.global = dispatch_data1.gws;
-        kd.kernels[KernelsTypes::SINGLE_TOKEN].params.workGroups.local = dispatch_data1.lws;
-        kd.kernels[KernelsTypes::SINGLE_TOKEN].skip_execution = multi_tokens_mode || scores_calc_only;
+        // Apply GQA optimization starting from a certain sequence length value
+        const auto min_gqa_sequence_len = get_gqa_seq_len();
+        // Apply GQA only if there is a single subsequence in the request,
+        // as multiple subsequences might have significantly different lengths
+        const auto max_subsequences_num = 1;
+        const auto subsequences_num = prim_params.inputs[0].Batch().v;
+        const auto can_use_gqa_kernel = prim_params.conf.paged_attention_max_len >= static_cast<int64_t>(min_gqa_sequence_len) &&
+                                        subsequences_num <= max_subsequences_num &&
+                                        prim_params.conf.kv_group_size > 1 &&
+                                        !multi_tokens_mode &&
+                                        !scores_calc_only;
+        // std::cout << "stage=" << prim_params.stage
+        //           << " paged_attention_max_len=" << prim_params.conf.paged_attention_max_len
+        //           << " (" << (prim_params.conf.paged_attention_max_len >= static_cast<int64_t>(required_gqa_sequence_len))
+        //           << ", " << (subsequences_num <= max_subsequences_num)
+        //           << ", " << (prim_params.conf.kv_group_size > 1)
+        //           << ", " << (!multi_tokens_mode)
+        //           << ", " << (!scores_calc_only) << ")\n";
 
-        kd.kernels[KernelsTypes::MULTI_TOKENS].params.workGroups.global = dispatch_data1.gws;
-        kd.kernels[KernelsTypes::MULTI_TOKENS].params.workGroups.local = dispatch_data1.lws;
+        auto dispatch_data = SetDefault(prim_params, KernelsTypes::SINGLE_TOKEN_GQA);
+        kd.kernels[KernelsTypes::SINGLE_TOKEN_GQA].params.workGroups.global = dispatch_data.gws;
+        kd.kernels[KernelsTypes::SINGLE_TOKEN_GQA].params.workGroups.local = dispatch_data.lws;
+        kd.kernels[KernelsTypes::SINGLE_TOKEN_GQA].skip_execution = multi_tokens_mode || scores_calc_only || !can_use_gqa_kernel;
+
+        dispatch_data = SetDefault(prim_params, KernelsTypes::SINGLE_TOKEN);
+        kd.kernels[KernelsTypes::SINGLE_TOKEN].params.workGroups.global = dispatch_data.gws;
+        kd.kernels[KernelsTypes::SINGLE_TOKEN].params.workGroups.local = dispatch_data.lws;
+        kd.kernels[KernelsTypes::SINGLE_TOKEN].skip_execution = multi_tokens_mode || scores_calc_only || can_use_gqa_kernel;
+
+        kd.kernels[KernelsTypes::MULTI_TOKENS].params.workGroups.global = dispatch_data.gws;
+        kd.kernels[KernelsTypes::MULTI_TOKENS].params.workGroups.local = dispatch_data.lws;
         kd.kernels[KernelsTypes::MULTI_TOKENS].skip_execution = !multi_tokens_mode || scores_calc_only;
 
         size_t partition_size = 0;
@@ -351,13 +465,13 @@ void PagedAttentionSDPAKernelOpt::GetUpdateDispatchDataFunc(KernelData& kd) cons
         }
         const size_t num_of_partitions = CeilDiv(prim_params.conf.paged_attention_max_len, partition_size);
 
-        auto dispatch_data2 = SetDefault(prim_params, KernelsTypes::FINALIZATION);
-        kd.kernels[KernelsTypes::FINALIZATION].params.workGroups.global = dispatch_data2.gws;
-        kd.kernels[KernelsTypes::FINALIZATION].params.workGroups.local = dispatch_data2.lws;
+        dispatch_data = SetDefault(prim_params, KernelsTypes::FINALIZATION);
+        kd.kernels[KernelsTypes::FINALIZATION].params.workGroups.global = dispatch_data.gws;
+        kd.kernels[KernelsTypes::FINALIZATION].params.workGroups.local = dispatch_data.lws;
         kd.kernels[KernelsTypes::FINALIZATION].skip_execution = num_of_partitions == 1 || multi_tokens_mode || scores_calc_only;
 
-        kd.kernels[KernelsTypes::FINALIZATION_MULTI_TOKENS].params.workGroups.global = dispatch_data2.gws;
-        kd.kernels[KernelsTypes::FINALIZATION_MULTI_TOKENS].params.workGroups.local = dispatch_data2.lws;
+        kd.kernels[KernelsTypes::FINALIZATION_MULTI_TOKENS].params.workGroups.global = dispatch_data.gws;
+        kd.kernels[KernelsTypes::FINALIZATION_MULTI_TOKENS].params.workGroups.local = dispatch_data.lws;
         kd.kernels[KernelsTypes::FINALIZATION_MULTI_TOKENS].skip_execution = num_of_partitions == 1 || !multi_tokens_mode || scores_calc_only;
 
         ScalarDescriptor num_of_partitions_scalar;
@@ -369,7 +483,7 @@ void PagedAttentionSDPAKernelOpt::GetUpdateDispatchDataFunc(KernelData& kd) cons
         kd.kernels[KernelsTypes::FINALIZATION_MULTI_TOKENS].params.scalars[0] = num_of_partitions_scalar;
 
         if (has_scores_output) {
-            auto dispatch_data = SetDefault(prim_params, KernelsTypes::SCORES_CALCULATION);
+            dispatch_data = SetDefault(prim_params, KernelsTypes::SCORES_CALCULATION);
             kd.kernels[KernelsTypes::SCORES_CALCULATION].params.workGroups.global = dispatch_data.gws;
             kd.kernels[KernelsTypes::SCORES_CALCULATION].params.workGroups.local = dispatch_data.lws;
             kd.kernels[KernelsTypes::SCORES_CALCULATION].skip_execution = false;

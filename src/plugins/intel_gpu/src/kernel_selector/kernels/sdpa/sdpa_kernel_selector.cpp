@@ -17,7 +17,18 @@ sdpa_kernel_selector::sdpa_kernel_selector() {
     Attach<SDPAKernelOpt>();
     Attach<SDPAKernelRef>();
 #ifdef ENABLE_ONEDNN_FOR_GPU
-    Attach<SDPAKernelMicro>();
+    int DISABLE_MICRO = 0;
+    if (const auto env_var = std::getenv("DISABLE_MICRO")) {
+        std::istringstream ss(env_var);
+        ss >> DISABLE_MICRO;
+        static bool printed = false;
+        if (!printed) {
+            std::cout << "Set DISABLE_MICRO=" << DISABLE_MICRO << "\n";
+            printed = true;
+        }
+    }
+    if (!DISABLE_MICRO)
+        Attach<SDPAKernelMicro>();
 #endif
 }
 
