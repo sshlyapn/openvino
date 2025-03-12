@@ -8,6 +8,7 @@
 #include "sdpa_kernel_micro.h"
 
 #include "pa_sdpa_kernel_opt.h"
+#include "pa_sdpa_kernel_micro.h"
 #include "pa_kv_cache_update_kernel_ref.h"
 #include "pa_kv_cache_rotate_kernel_ref.h"
 
@@ -43,6 +44,9 @@ KernelsData kv_cache_rotate_kernel_selector::GetBestKernels(const Params& params
 
 pa_sdpa_kernel_selector::pa_sdpa_kernel_selector() {
     Attach<PagedAttentionSDPAKernelOpt>();
+#ifdef ENABLE_ONEDNN_FOR_GPU
+    Attach<PagedAttentionSDPAKernelMicro>();
+#endif
 }
 
 KernelsData pa_sdpa_kernel_selector::GetBestKernels(const Params& params) const {
