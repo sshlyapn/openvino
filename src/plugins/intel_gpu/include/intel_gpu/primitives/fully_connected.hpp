@@ -52,7 +52,9 @@ struct fully_connected : public primitive_base<fully_connected> {
           bias(bias),
           input_size(input_size),
           weights_rank(weights_rank)
-    {}
+    {
+        add_inputs(weights, bias);
+    }
 
     /// @brief Constructs fully connected layer.
     /// @param id This primitive id.
@@ -71,7 +73,9 @@ struct fully_connected : public primitive_base<fully_connected> {
           bias(bias),
           input_size(input_size),
           weights_rank(weights_rank)
-    {}
+    {
+        add_inputs(weights, bias);
+    }
 
     /// @brief Constructs fully connected compressed layer.
     /// @param id This primitive id.
@@ -100,6 +104,7 @@ struct fully_connected : public primitive_base<fully_connected> {
           input_size(input_size),
           weights_rank(weights_rank) {
         OPENVINO_ASSERT(!decompression_scale.empty(), "[GPU] Compressed fully connected requires at least decompression scale input");
+        add_inputs(weights, bias, decompression_scale, decompression_zero_point);
     }
 
     /// @brief Constructs fully connected compressed layer.
@@ -140,6 +145,7 @@ struct fully_connected : public primitive_base<fully_connected> {
             dynamic_quantized_activation_zp = true;
 
         OPENVINO_ASSERT(!decompression_scale.empty(), "[GPU] Compressed fully connected requires at least decompression scale input");
+        add_inputs(weights, bias, decompression_scale, decompression_zero_point, activation_scale, activation_zero_point);
     }
 
     /// @brief Primitive id containing weights data.
@@ -242,26 +248,28 @@ struct fully_connected : public primitive_base<fully_connected> {
     }
 
 protected:
-    std::vector<input_info> get_dependencies() const override {
-        std::vector<input_info> ret;
-        ret.push_back(weights);
+    void add_inputs(const input_info& weights,
+                    const input_info& bias = input_info(),
+                    const input_info& decompression_scale = input_info(),
+                    const input_info& decompression_zero_point = input_info(),
+                    const input_info& activation_scale = input_info(),
+                    const input_info& activation_zero_point = input_info()) {
+        input.push_back(weights);
 
-        if (!bias.empty())
-            ret.push_back(bias);
+        if (bias.is_valid())
+            input.push_back(bias);
 
-        if (!decompression_scale.empty())
-            ret.push_back(decompression_scale);
+        if (decompression_scale.is_valid())
+            input.push_back(decompression_scale);
 
-        if (!decompression_zero_point.empty())
-            ret.push_back(decompression_zero_point);
+        if (decompression_zero_point.is_valid())
+            input.push_back(decompression_zero_point);
 
         if (activation_scale.is_valid())
-            ret.push_back(activation_scale);
+            input.push_back(activation_scale);
 
         if (activation_zero_point.is_valid())
-            ret.push_back(activation_zero_point);
-
-        return ret;
+            input.push_back(activation_zero_point);
     }
 };
 }  // namespace cldnn

@@ -28,6 +28,13 @@ post_optimize_weights::weights_bias_offset post_optimize_weights::get_weights_bi
 }
 
 template <>
+post_optimize_weights::weights_bias_offset post_optimize_weights::get_weights_bias_offset(const fully_connected_node& node) {
+    const size_t weights_idx = 1;
+    const size_t weights_num = 1;
+    return weights_bias_offset(weights_idx, weights_num);
+}
+
+template <>
 post_optimize_weights::weights_bias_offset post_optimize_weights::get_weights_bias_offset(const lstm_seq_node& node) {
     const int W_idx = 3;
     return weights_bias_offset(W_idx, 3);

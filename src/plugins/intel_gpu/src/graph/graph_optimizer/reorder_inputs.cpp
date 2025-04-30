@@ -405,8 +405,9 @@ const char *dir_msg(direction_e dir) {
 static bool is_weights_dependency(program_node* predecessor, program_node* successor) {
     bool is_weights_dep = false;
     if (successor->is_type<convolution>() || successor->is_type<deconvolution>() || successor->is_type<fully_connected>()) {
+        const size_t weights_idx = 1;
         size_t dep_idx = successor->get_dependency_index(*predecessor);
-        is_weights_dep = dep_idx == successor->get_primitive()->input_size();
+        is_weights_dep = dep_idx == weights_idx;
     }
     return is_weights_dep;
 }

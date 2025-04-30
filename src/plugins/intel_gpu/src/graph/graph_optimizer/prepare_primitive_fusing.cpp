@@ -1282,8 +1282,8 @@ void prepare_primitive_fusing::fuse_constant_transposes(program& p) {
         if (next_node->is_type<fully_connected>() ||
             next_node->is_type<deconvolution>() ||
             next_node->is_type<convolution>()) {
-            size_t weights_offset = next_node->get_primitive()->input_size();
-            std::vector<size_t> valid_weights_indices = {next_node->get_primitive()->input_size()};
+            const size_t weights_offset = 1;
+            std::vector<size_t> valid_weights_indices = {weights_offset};
             if (next_node->is_type<fully_connected>()) {
                 auto& fc = next_node->as<fully_connected>();
                 auto desc = fc.get_primitive();
