@@ -14,6 +14,7 @@
 #include <utility>
 #include <vector>
 
+#include "openvino/core/any.hpp"
 #include "openvino/core/except.hpp"
 
 namespace cldnn {
@@ -59,6 +60,8 @@ struct is_primitive : public std::integral_constant<bool,
 
 /// @defgroup cpp_helpers Helpers
 /// @{
+
+using ov::util::to_string;
 
 template <typename T>
 std::enable_if_t<std::is_integral_v<T>, T> align_to(T size, size_t align) {
@@ -218,14 +221,6 @@ constexpr bool everyone_is(T val, P item) {
 template <typename T, typename P, typename... Args>
 constexpr bool everyone_is(T val, P item, Args... item_others) {
     return val == item && everyone_is(val, item_others...);
-}
-
-// Helpers to get string for types that have operator<< defined
-template <typename T>
-inline std::string to_string(const T& v) {
-    std::stringstream s;
-    s << v;
-    return s.str();
 }
 
 // The following code is derived from Boost C++ library

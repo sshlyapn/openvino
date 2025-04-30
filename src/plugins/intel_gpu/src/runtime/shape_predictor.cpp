@@ -73,7 +73,7 @@ std::pair<bool, ov::Shape> ShapePredictor::predict_preallocation_shape(const std
 
     auto id_record = orig_id;
     if (out_idx > 0) {
-        id_record += ("_out" + to_string(out_idx));
+        id_record += ("_out" + std::to_string(out_idx));
     }
 
     add_shape(id_record, current_shape);

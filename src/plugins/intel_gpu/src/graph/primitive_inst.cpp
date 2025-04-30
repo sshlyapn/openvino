@@ -3,6 +3,7 @@
 //
 
 #include "intel_gpu/graph/kernel_impl_params.hpp"
+#include "intel_gpu/graph/serialization/utils.hpp"
 #include "intel_gpu/primitives/implementation_desc.hpp"
 #include "intel_gpu/runtime/stream.hpp"
 #include "program_helpers.h"
@@ -2005,7 +2006,8 @@ void primitive_inst::execute() {
                 } else {
                     actual_mem = engine.allocate_memory(actual_input_layout);
                 }
-                _unfused_subgraph->set_input_data(d.first->id(), std::move(actual_mem));
+                auto input_name = d.first->id() + "." + std::to_string(d.second);
+                _unfused_subgraph->set_input_data(input_name, std::move(actual_mem));
             }
         }
         GPU_DEBUG_TRACE_DETAIL << "[Start] Executing unfused subgraph of " << id() << std::endl;
@@ -2557,6 +2559,7 @@ cldnn::network::ptr primitive_inst::get_unfused_subgraph() {
         std::vector<primitive_id> outer_dep_ids;
         // Add input primitives: constants are moved as is
         // Any other primitive types are replaced with input_layout
+        CustomDependenciesMap custom_dependencies;
         auto prim_of_fused_node = std::const_pointer_cast<primitive>(_impl_params->desc);
         size_t dep_idx = 0;
         for (auto& dep : _node->get_dependencies()) {
@@ -2571,7 +2574,9 @@ cldnn::network::ptr primitive_inst::get_unfused_subgraph() {
                 data data_prim(dep_id, data_node.get_attached_memory_ptr());
                 t.add(data_prim);
             } else {
-                input_layout in_prim(dep_id, dep.first->get_output_layout());
+                auto input_name = dep_id + "." + std::to_string(dep.second);
+                custom_dependencies[input_info(dep_id, dep.second)] = input_info(input_name);
+                input_layout in_prim(input_name, dep.first->get_output_layout());
                 t.add(in_prim);
             }
             outer_dep_ids.push_back(dep_id);
@@ -2634,7 +2639,8 @@ cldnn::network::ptr primitive_inst::get_unfused_subgraph() {
             ov::intel_gpu::allow_static_input_reorder(true),
             ov::intel_gpu::allow_new_shape_infer(true),
             ov::enable_profiling(get_network().get_config().get_enable_profiling()),
-            ov::intel_gpu::use_onednn(get_network().get_config().get_use_onednn())
+            ov::intel_gpu::use_onednn(get_network().get_config().get_use_onednn()),
+            ov::intel_gpu::custom_dependencies(std::map<std::string, CustomDependenciesMap>{{_node->id(), custom_dependencies}})
         };
         auto prog = program::build_program(get_network().get_engine(),
                                            t,

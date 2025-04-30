@@ -40,6 +40,7 @@ OV_CONFIG_RELEASE_INTERNAL_OPTION(ov::intel_gpu, optimize_data, false, "Enable/D
 OV_CONFIG_RELEASE_INTERNAL_OPTION(ov::intel_gpu, enable_memory_pool, true, "Enable/Disable memory pool usage")
 OV_CONFIG_RELEASE_INTERNAL_OPTION(ov::intel_gpu, allow_static_input_reorder, false, "Controls if weights tensors can be reordered during model compilation to more friendly layout for specific kernel")
 OV_CONFIG_RELEASE_INTERNAL_OPTION(ov::intel_gpu, custom_outputs, std::vector<std::string>{}, "List of output primitive names")
+OV_CONFIG_RELEASE_INTERNAL_OPTION(ov::intel_gpu, custom_dependencies, std::map<std::string, cldnn::CustomDependenciesMap>{}, "List of custom primitive dependencies")
 OV_CONFIG_RELEASE_INTERNAL_OPTION(ov::intel_gpu, force_implementations, ImplForcingMap{}, "Specifies the list of forced implementations for the primitives")
 OV_CONFIG_RELEASE_INTERNAL_OPTION(ov::intel_gpu, partial_build_program, false, "Early exit from model compilation process which allows faster execution graph dumping")
 OV_CONFIG_RELEASE_INTERNAL_OPTION(ov::intel_gpu, allow_new_shape_infer, false, "Switch between new and old shape inference flow. Shall be removed soon")

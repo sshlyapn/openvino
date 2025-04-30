@@ -54,7 +54,7 @@ struct input_info {
     primitive_id pid;
     int32_t idx;
     struct cmp {
-        bool operator() (const input_info a, const input_info b) {
+        bool operator() (const input_info& a, const input_info& b) const {
             if (a.pid < b.pid) {
                 return true;
             } else if (a.pid == b.pid) {
@@ -85,6 +85,8 @@ struct input_info {
         return ss.str();
     }
 };
+
+using CustomDependenciesMap = std::map<cldnn::input_info, cldnn::input_info, cldnn::input_info::cmp>;
 
 static inline std::ostream& operator<< (std::ostream& os, input_info& info) {
     os << info.to_string();
