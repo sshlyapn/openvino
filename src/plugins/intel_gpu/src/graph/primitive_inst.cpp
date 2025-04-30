@@ -2005,7 +2005,8 @@ void primitive_inst::execute() {
                 } else {
                     actual_mem = engine.allocate_memory(actual_input_layout);
                 }
-                _unfused_subgraph->set_input_data(d.first->id(), std::move(actual_mem));
+                auto input_name = d.first->id() + "." + std::to_string(d.second);
+                _unfused_subgraph->set_input_data(input_name, std::move(actual_mem));
             }
         }
         GPU_DEBUG_TRACE_DETAIL << "[Start] Executing unfused subgraph of " << id() << std::endl;
@@ -2271,7 +2272,7 @@ void primitive_inst::update_weights() {
     if (reorder_kernel_params)
         reorder_kernel_params->prog = get_network().get_program().get();
 
-    auto weights_idx = _node->get_primitive()->input.size();
+    const auto weights_idx = 1;
     auto original_weights_memory = dep_memory_ptr(weights_idx);
     const auto& original_layout = original_weights_memory->get_layout();
 
@@ -2557,6 +2558,7 @@ cldnn::network::ptr primitive_inst::get_unfused_subgraph() {
         std::vector<primitive_id> outer_dep_ids;
         // Add input primitives: constants are moved as is
         // Any other primitive types are replaced with input_layout
+        std::map<size_t, input_info> new_input_ids;
         auto prim_of_fused_node = std::const_pointer_cast<primitive>(_impl_params->desc);
         size_t dep_idx = 0;
         for (auto& dep : _node->get_dependencies()) {
@@ -2571,7 +2573,9 @@ cldnn::network::ptr primitive_inst::get_unfused_subgraph() {
                 data data_prim(dep_id, data_node.get_attached_memory_ptr());
                 t.add(data_prim);
             } else {
-                input_layout in_prim(dep_id, dep.first->get_output_layout());
+                auto input_name = dep_id + "." + std::to_string(dep.second);
+                input_layout in_prim(input_name, dep.first->get_output_layout());
+                new_input_ids[dep_idx] = input_info(input_name);
                 t.add(in_prim);
             }
             outer_dep_ids.push_back(dep_id);
@@ -2620,13 +2624,18 @@ cldnn::network::ptr primitive_inst::get_unfused_subgraph() {
             t.add_primitive(prim);
             outer_dep_ids.push_back(prim->id);
         }
+        std::cout << "Inputs number of " << prim_of_fused_node->id << ": " << prim_of_fused_node->input.size() << "\n";
         // Samely, need to update dependency of the current fused nodes' input primitive ids with those in the current program
         for (size_t i = 0; i < prim_of_fused_node->input.size(); ++i) {
             auto& in = prim_of_fused_node->input[i];
-            if (std::find_if(outer_dep_ids.begin(), outer_dep_ids.end(),
+            if (new_input_ids.count(i)) {
+                std::cout << "Update " << i << " input of " << _node->id() << " node\n";
+                in = new_input_ids.find(i)->second;
+            } else if (std::find_if(outer_dep_ids.begin(), outer_dep_ids.end(),
                              [&](const primitive_id& pid) {
                                  return pid == in.pid;
                              }) == outer_dep_ids.end()) {
+                std::cout << "Update " << i << " input of " << _node->id() << " node\n";
                 in = _node->get_dependency(i).id();
             }
         }
@@ -2822,7 +2831,7 @@ std::shared_ptr<primitive_impl> ImplementationsFactory::get_primitive_impl_for_p
     // Change weights layout of `updated_params` to original one to have valid information
     // in _impl->_weights_reorder_params about required weights format after impl selection
     if (inst.get_node().is_type<fully_connected>() || inst.get_node().is_type<convolution>() || inst.get_node().is_type<deconvolution>()) {
-        const auto weights_idx = inst.get_node().get_primitive()->input.size();
+        const auto weights_idx = 1;
         const auto original_weights_memory = inst.dep_memory_ptr(weights_idx);
         updated_params.weights_layout = optional_layout(original_weights_memory->get_layout());
     }
