@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "intel_gpu/primitives/primitive.hpp"
 #include "openvino/core/any.hpp"
 #include "openvino/runtime/plugin_config.hpp"
 #include "intel_gpu/runtime/device_info.hpp"

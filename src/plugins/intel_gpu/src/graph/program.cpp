@@ -421,6 +421,7 @@ void program::prepare_nodes(std::set<std::shared_ptr<program_node>> const& nodes
 
 // create all nodes from topology primitives, add dependencies among them and create inputs list
 void program::prepare_nodes(topology const& topology) {
+    const auto& custom_dependencies_list = _config.get_custom_dependencies();
     auto const& topo_map = topology.get_primitives();
     for (const auto& prim : topo_map) {
         get_or_create(prim.second);
@@ -429,7 +430,11 @@ void program::prepare_nodes(topology const& topology) {
         auto node_ptr = node.second.get();
         if (node_ptr == nullptr)
             throw std::runtime_error("NULL pointer in nodes_map.");
-        add_node_dependencies(node_ptr);
+        auto custom_dependencies = CustomDependenciesMap{};
+        auto node_custom_dependencies_it = custom_dependencies_list.find(node.first);
+        if (node_custom_dependencies_it != custom_dependencies_list.end())
+            custom_dependencies = node_custom_dependencies_it->second;
+        add_node_dependencies(node_ptr, custom_dependencies);
         if (node_ptr->dependencies.size() == 0) {
             inputs.push_back(node_ptr);
         }
@@ -437,8 +442,11 @@ void program::prepare_nodes(topology const& topology) {
 }
 
 // add node's dependencies from its primitive dependencies
-void program::add_node_dependencies(program_node* node) {
+void program::add_node_dependencies(program_node* node, const CustomDependenciesMap& custom_dependencies) {
     auto deps = node->get_primitive()->dependencies();
+    for (const auto& custom_dep : custom_dependencies)
+        deps[custom_dep.first] = custom_dep.second;
+
     // add pointers to node's dependencies
     for (auto& dep : deps) {
         try {

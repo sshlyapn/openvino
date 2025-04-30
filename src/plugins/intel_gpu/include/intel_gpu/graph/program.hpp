@@ -336,7 +336,7 @@ private:
     void prepare_nodes(topology const& topology);
     /* build nodes internal structure based on the subset of nodes of other program  (used in propagate_constants) */
     void prepare_nodes(std::set<std::shared_ptr<program_node>> const& nodes);
-    void add_node_dependencies(program_node* node_ptr);
+    void add_node_dependencies(program_node* node_ptr, const CustomDependenciesMap& custom_dependencies = {});
     void copy_node_dependencies(program_node* dest, program_node* src);
     void build_program(bool is_internal);
     void init_graph();

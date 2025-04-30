@@ -86,6 +86,8 @@ struct input_info {
     }
 };
 
+using CustomDependenciesMap = std::map<size_t, cldnn::input_info>;
+
 static inline std::ostream& operator<< (std::ostream& os, input_info& info) {
     os << info.to_string();
     return os;
