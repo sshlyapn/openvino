@@ -208,6 +208,16 @@ struct loop : public primitive_base<loop> {
               back_edges(back_edges),
               max_num_iterations(max_num_iterations) {
         OPENVINO_ASSERT(inputs.front().pid == num_iteration_id, "first input of inputs should be num_iteration_id");
+
+        // add external_id in dependencies if not exist
+        for (const auto& mapping : input_primitive_maps) {
+            auto exists = std::any_of(new_custom_inputs.begin(), new_custom_inputs.end(), [&](const input_info& info) {
+                return info.pid == mapping.external_id.pid;
+            });
+            if (!exists) {
+                new_custom_inputs.push_back(mapping.external_id);
+            }
+        }
     }
 
     /// @brief Body program to be recurrently executed.
@@ -270,21 +280,6 @@ struct loop : public primitive_base<loop> {
         ib >> output_primitive_maps;
         ib >> back_edges;
         ib >> max_num_iterations;
-    }
-
-protected:
-    std::vector<input_info> get_dependencies() const override {
-        std::vector<input_info> ret;
-        // add external_id in dependencies if not exist
-        for (const auto& mapping : input_primitive_maps) {
-            auto target = std::find_if(input.begin(), input.end(),
-                                    [&](const input_info& info) {
-                                        return info.pid == mapping.external_id.pid;});
-            if (target == input.end()) {
-                ret.push_back(mapping.external_id.pid);
-            }
-        }
-        return ret;
     }
 };
 

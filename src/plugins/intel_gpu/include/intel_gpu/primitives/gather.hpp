@@ -62,7 +62,7 @@ struct gather : public primitive_base<gather> {
            const ov::Shape& output_shape,
            const int64_t batch_dim = 0,
            const bool support_neg_ind = false)
-        : primitive_base(id, {dict, idx})
+        : primitive_base(id, {dict, idx, decompression_scale})
         , axis(axis)
         , input_rank(input_rank)
         , output_shape(output_shape)
@@ -73,6 +73,9 @@ struct gather : public primitive_base<gather> {
         , decompression_scale(decompression_scale)
         , decompression_zero_point(decompression_zero_point) {
             OPENVINO_ASSERT(decompression_scale.is_valid(), "[GPU] Compressed gather requires at least decompression scale input");
+
+            if (decompression_zero_point.is_valid())
+                new_custom_inputs.push_back(decompression_zero_point);
         }
 
     /// @brief Gathering axis
@@ -164,19 +167,6 @@ struct gather : public primitive_base<gather> {
         } else {
             decompression_zero_point_scalar = std::optional<float>();
         }
-    }
-
-protected:
-    std::vector<input_info> get_dependencies() const override {
-        std::vector<input_info> ret;
-
-        if (decompression_scale.is_valid())
-            ret.push_back(decompression_scale.pid);
-
-        if (decompression_zero_point.is_valid())
-            ret.push_back(decompression_zero_point.pid);
-
-        return ret;
     }
 };
 }  // namespace cldnn

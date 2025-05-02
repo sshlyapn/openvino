@@ -2567,7 +2567,7 @@ cldnn::network::ptr primitive_inst::get_unfused_subgraph() {
             if (dep.first->is_type<data>()) {
                 auto& data_node = dep.first->as<data>();
                 // need to rename primitive ids of dependent data of the current fused nodes with those in the original primitive
-                if (dep_idx >= prim_of_fused_node->input_size() && dep_idx < prim_of_fused_node->dependencies().size())
+                if (dep_idx >= prim_of_fused_node->new_input_size() && dep_idx < prim_of_fused_node->dependencies().size())
                     dep_id = prim_of_fused_node->dependencies()[dep_idx].pid;
                 // mem field of original primitive can be nullified during transfer_memory_to_device pass, thus use mem from program_node
                 data data_prim(dep_id, data_node.get_attached_memory_ptr());
@@ -2589,8 +2589,8 @@ cldnn::network::ptr primitive_inst::get_unfused_subgraph() {
         // Add primitives for fused-ops
         for (auto& fd : _impl_params->fused_desc) {
             auto prim = std::const_pointer_cast<primitive>(fd.desc);
-            for (size_t i = 0; i < prim->input.size(); i++) {
-                auto& in = prim->input[i];
+            for (size_t i = 0; i < prim->new_custom_inputs.size(); i++) {
+                auto& in = prim->new_custom_inputs[i];
                 // If dependency name is not found in current topology, we need to remap it
                 // It may happen if dependency primitive has been fused into some previous primitive, e.g:
                 // prim1 -> eltwise1 -> eltwise2
@@ -2624,10 +2624,10 @@ cldnn::network::ptr primitive_inst::get_unfused_subgraph() {
             t.add_primitive(prim);
             outer_dep_ids.push_back(prim->id);
         }
-        std::cout << "Inputs number of " << prim_of_fused_node->id << ": " << prim_of_fused_node->input.size() << "\n";
+        std::cout << "Inputs number of " << prim_of_fused_node->id << ": " << prim_of_fused_node->new_custom_inputs.size() << "\n";
         // Samely, need to update dependency of the current fused nodes' input primitive ids with those in the current program
-        for (size_t i = 0; i < prim_of_fused_node->input.size(); ++i) {
-            auto& in = prim_of_fused_node->input[i];
+        for (size_t i = 0; i < prim_of_fused_node->new_custom_inputs.size(); ++i) {
+            auto& in = prim_of_fused_node->new_custom_inputs[i];
             if (new_input_ids.count(i)) {
                 std::cout << "Update " << i << " input of " << _node->id() << " node\n";
                 in = new_input_ids.find(i)->second;

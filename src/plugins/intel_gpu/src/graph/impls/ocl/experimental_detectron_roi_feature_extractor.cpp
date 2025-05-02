@@ -33,7 +33,7 @@ public:
         const auto& primitive = impl_param.typed_desc<experimental_detectron_roi_feature_extractor>();
         auto params = get_default_params<kernel_selector::experimental_detectron_roi_feature_extractor_params>(impl_param);
 
-        size_t number_of_inputs = primitive->input_size() - 1;
+        size_t number_of_inputs = primitive->new_input_size() - 1;
         for (std::size_t i = 1; i < number_of_inputs; i++) {
             params.inputs.push_back(convert_data_tensor(impl_param.get_input_layout(i)));
         }

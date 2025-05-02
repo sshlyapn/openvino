@@ -134,6 +134,10 @@ struct gemm : public primitive_base<gemm> {
             throw std::invalid_argument("Invalid inputs count - gemm expects either two or three inputs");
         }
 
+        if (beam_table.is_valid()) {
+            new_custom_inputs.push_back(beam_table);
+        }
+
         transpose_input0 = get_transpose_mode(input0_transpose_order);
         transpose_input1 = get_transpose_mode(input1_transpose_order);
     }
@@ -229,12 +233,6 @@ struct gemm : public primitive_base<gemm> {
         ib >> indirect_axis;
         ib >> beam_table.pid;
         ib >> beam_table.idx;
-    }
-
-    std::vector<input_info> get_dependencies() const override {
-        if (beam_table.is_valid())
-            return { beam_table };
-        return {};
     }
 
 private:

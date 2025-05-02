@@ -391,7 +391,7 @@ void prepare_primitive_fusing::fuse_bias(program &p) {
             }
 
             auto conv_with_bias_prim = std::make_shared<convolution>(desc->id + "_tmp",
-                                                                     desc->input[0],
+                                                                     desc->new_custom_inputs[0],
                                                                      desc->weights,
                                                                      biases,
                                                                      desc->weights_zero_points,
@@ -430,7 +430,7 @@ void prepare_primitive_fusing::fuse_bias(program &p) {
             }
 
             auto deconv_with_bias_prim = std::make_shared<deconvolution>(desc->id + "_tmp",
-                                                                         desc->input[0],
+                                                                         desc->new_custom_inputs[0],
                                                                          desc->weights,
                                                                          biases,
                                                                          desc->groups,
@@ -463,7 +463,7 @@ void prepare_primitive_fusing::fuse_bias(program &p) {
             }
 
             auto fc_with_bias_prim = std::make_shared<fully_connected>(desc->id + "_tmp",
-                                                                       desc->input[0],
+                                                                       desc->new_custom_inputs[0],
                                                                        desc->weights,
                                                                        bias_name,
                                                                        fc.get_output_layout().data_type,
@@ -1211,7 +1211,7 @@ void prepare_primitive_fusing::fuse_simple_primitives(program &p) {
                     auto curr_users = current_node.first->get_users();
                     auto invalid_user_iter = std::find_if(curr_users.begin(), curr_users.end(), [&](cldnn::program_node* user) {
                         return (user->is_output() ||
-                                    (!(user->is_type<eltwise>() && user->get_primitive()->input.size() == 2 &&
+                                    (!(user->is_type<eltwise>() && user->get_primitive()->new_custom_inputs.size() == 2 &&
                                         (std::find(supported_modes.begin(), supported_modes.end(),
                                         (user->as<eltwise>()).get_primitive()->mode) != supported_modes.end())) &&
                                     !(user->is_type<activation>() && user->get_dependency(0).get_users().size() == 1)));

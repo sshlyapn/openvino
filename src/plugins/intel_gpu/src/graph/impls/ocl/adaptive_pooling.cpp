@@ -29,7 +29,7 @@ protected:
 
         // Legacy multi-output
         if (desc->num_outputs == 1 && desc->mode == adaptive_pooling_mode::max) {
-            args.outputs.push_back(instance.dep_memory_ptr(2));
+            args.outputs.push_back(instance.dep_memory_ptr(1));
         }
 
         return args;
@@ -50,7 +50,7 @@ public:
                 params.outputs.push_back(convert_data_tensor(impl_param.get_output_layout(1)));
             } else {
                 // Legacy multi-output
-                params.outputs.push_back(convert_data_tensor(impl_param.get_input_layout(2)));
+                params.outputs.push_back(convert_data_tensor(impl_param.get_input_layout(1)));
             }
         }
 

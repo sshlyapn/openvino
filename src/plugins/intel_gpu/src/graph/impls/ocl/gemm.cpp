@@ -56,7 +56,8 @@ struct gemm_impl : multi_stage_primitive<gemm> {
 
 protected:
     static size_t get_beam_table_id(std::shared_ptr<const gemm> primitive) {
-        return primitive->input_size() == 3 ? 3 : 2;
+        OPENVINO_ASSERT(primitive->indirect_a || primitive->indirect_b);
+        return 2;
     }
 
     kernel_arguments_data get_arguments(const gemm_inst& instance, size_t stage) const override {
@@ -172,8 +173,8 @@ public:
         const auto& primitive = impl_param.typed_desc<gemm>();
 
         auto params = get_default_params<kernel_selector::gemm_params>(impl_param, is_shape_agnostic);
-
-        for (size_t i = 1; i < primitive->input_size(); ++i) {
+        const auto data_inputs = 2;
+        for (size_t i = 1; i < data_inputs; ++i) {
             params.inputs.push_back(convert_data_tensor(impl_param.input_layouts[i]));
         }
 

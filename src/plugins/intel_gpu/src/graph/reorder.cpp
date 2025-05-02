@@ -35,7 +35,7 @@ layout reorder_inst::calc_output_layout(reorder_node const& node, kernel_impl_pa
 
         auto out_shape = input_layout.get_partial_shape();
         out_shape[c_dim] = 3;
-        if (desc->input_size() == 1)
+        if (desc->new_input_size() == 1)
             out_shape[h_dim] = out_shape[h_dim] * 2 / 3;
 
         if (ofmt != ifmt)

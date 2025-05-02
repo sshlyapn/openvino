@@ -90,7 +90,7 @@ protected:
     }
 
     static size_t get_beam_table_id(std::shared_ptr<const scaled_dot_product_attention> primitive) {
-        return primitive->input_size() - 1;
+        return primitive->new_input_size() - 1;
     }
 
     static bool has_indirect_inputs(const kernel_impl_params& impl_param) {

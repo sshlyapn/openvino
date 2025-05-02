@@ -24,7 +24,7 @@ protected:
         kernel_arguments_data args = parent::get_arguments(instance);
         // Legacy multi-output
         if (instance.desc()->num_outputs == 1) {
-            args.outputs.push_back(instance.dep_memory_ptr(instance.desc()->input_size() - 1));
+            args.outputs.push_back(instance.dep_memory_ptr(instance.desc()->new_input_size() - 1));
         }
 
         return args;

@@ -70,7 +70,7 @@ public:
         if (primitive->deformable_mode) {
             conv_params.inputs.push_back(convert_data_tensor(impl_param.input_layouts[1]));
             conv_params.deformable_mode = true;
-            if (primitive->input.size() == 3) {
+            if (primitive->data_inputs_num == 3) {
                 conv_params.inputs.push_back(convert_data_tensor(impl_param.input_layouts[2]));
                 conv_params.deformable_mask_enabled = true;
             }
@@ -83,7 +83,7 @@ public:
         conv_params.groups = groups;
 
         auto deform_conv_dep_offset = primitive->deformable_mode ? 1 : 0;
-        if (primitive->input.size() == 3)
+        if (primitive->data_inputs_num == 3)
             deform_conv_dep_offset++;
 
         const auto& weights_layout = impl_param.input_layouts[1 + 0 + deform_conv_dep_offset]

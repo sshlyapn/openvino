@@ -175,7 +175,7 @@ public:
     std::pair<program_node*, int32_t> get_dependency_with_port(size_t idx) const { return dependencies.at(idx); }
 
     // Count of original primitive inputs, i.e. it doesn't include fused dependencies
-    size_t get_inputs_count() const { return desc->input_size(); }
+    size_t get_inputs_count() const { return desc->new_input_size(); }
     // Count of original primitive outputs
     size_t get_outputs_count() const { return desc->output_size(); }
 

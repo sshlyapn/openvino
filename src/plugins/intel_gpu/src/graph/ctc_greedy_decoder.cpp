@@ -28,7 +28,7 @@ std::vector<layout> ctc_greedy_decoder_inst::calc_output_layouts(ctc_greedy_deco
     auto desc = impl_param.typed_desc<ctc_greedy_decoder>();
 
     std::vector<ShapeType> input_shapes;
-    for (size_t i = 0; i < desc->input.size(); ++i) {
+    for (size_t i = 0; i < desc->new_custom_inputs.size(); ++i) {
         auto input_shape = impl_param.get_input_layout(i).get<ShapeType>();
         input_shapes.push_back(input_shape);
     }

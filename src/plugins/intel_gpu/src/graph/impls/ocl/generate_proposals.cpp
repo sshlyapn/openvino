@@ -48,7 +48,7 @@ public:
 
         if (impl_param.prog-> is_new_shape_infer()) {
             params.roi_num_type = to_data_type(primitive->output_data_types[2].value());
-            const size_t num_inputs = primitive->input_size();
+            const size_t num_inputs = primitive->new_input_size();
             for (size_t i = 1; i < num_inputs; i++) {
                 params.inputs.push_back(convert_data_tensor(impl_param.get_input_layout(i)));
             }
@@ -57,7 +57,7 @@ public:
             params.outputs.push_back(convert_data_tensor(impl_param.output_layouts[2]));
         } else {
             params.roi_num_type = primitive->roi_num_type == cldnn::data_types::i32 ? kernel_selector::Datatype::INT32 : kernel_selector::Datatype::INT64;
-            const size_t num_deps = primitive->input_size();
+            const size_t num_deps = primitive->new_input_size();
             OPENVINO_ASSERT(num_deps == 6, "Unexpected deps num: ", num_deps);
             const size_t num_inputs = num_deps - 2;
             for (size_t i = 1; i < num_inputs; i++) {

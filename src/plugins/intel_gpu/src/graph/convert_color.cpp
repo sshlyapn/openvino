@@ -19,7 +19,7 @@ std::vector<layout> convert_color_inst::calc_output_layouts(convert_color_node c
     auto dst_fmt = desc->output_color_format;
     auto dst_is_rgb_or_bgr = dst_fmt == convert_color::color_format::BGR ||
                              dst_fmt == convert_color::color_format::RGB;
-    auto inputs_count = desc->input_size();
+    auto inputs_count = desc->new_input_size();
     bool single_plane_input = inputs_count == 1;
     const size_t h_dim = 1;
     const size_t c_dim = 3;
@@ -46,7 +46,7 @@ layout convert_color_inst::calc_output_layout(convert_color_node const& /* node 
     auto dst_fmt = desc->output_color_format;
     auto dst_is_rgb_or_bgr = dst_fmt == convert_color::color_format::BGR ||
                              dst_fmt == convert_color::color_format::RGB;
-    auto inputs_count = desc->input_size();
+    auto inputs_count = desc->new_input_size();
     bool single_plane_input = inputs_count == 1;
     const size_t h_dim = 1;
     const size_t c_dim = 3;

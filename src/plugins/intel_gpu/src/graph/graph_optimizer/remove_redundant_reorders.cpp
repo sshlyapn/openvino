@@ -257,7 +257,7 @@ void remove_redundant_reorders::run(program& p) {
 
         auto orig_reorder_prim = r_node.get_primitive();
         auto new_reorder_prim = std::make_shared<reorder>(r_node.id() + "_fused",
-            orig_reorder_prim->input[0],
+            orig_reorder_prim->new_custom_inputs[0],
             new_layout);
         new_reorder_prim->input_mem_type = orig_reorder_prim->input_mem_type;
 

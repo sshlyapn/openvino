@@ -56,8 +56,9 @@ public:
         auto&& output_layout = impl_param.get_output_layout();
         auto params = get_default_params<kernel_selector::reorder_params>(impl_param, is_shape_agnostic);
 
-        auto inputs_count = primitive->input.size();
         bool has_mean = !primitive->mean.empty();
+        auto inputs_count = has_mean ? primitive->new_custom_inputs.size() - 1
+                                     : primitive->new_custom_inputs.size();
         for (size_t i = 1; i < inputs_count; i++) {
             params.inputs.push_back(convert_data_tensor(impl_param.get_input_layout(i)));
         }

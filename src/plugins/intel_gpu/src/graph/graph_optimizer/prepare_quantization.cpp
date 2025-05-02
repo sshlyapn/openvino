@@ -234,7 +234,7 @@ void prepare_quantization::prepare_scale_shift_opt(program &p, quantize_node& qu
     auto out_scale_prim = std::make_shared<data>(quantize_node.id() + "_output_scale", mem_output_scale);
     auto out_shift_prim = std::make_shared<data>(quantize_node.id() + "_output_shift", mem_output_shift);
 
-    std::vector<input_info> quantize_inputs = quantize_node.get_primitive()->input;
+    std::vector<input_info> quantize_inputs = quantize_node.get_primitive()->new_custom_inputs;
     quantize_inputs.push_back(in_scale_prim->id);
     quantize_inputs.push_back(in_shift_prim->id);
     quantize_inputs.push_back(out_scale_prim->id);

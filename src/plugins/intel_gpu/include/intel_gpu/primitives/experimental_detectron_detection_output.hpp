@@ -159,17 +159,5 @@ struct experimental_detectron_detection_output : public primitive_base<experimen
         ib >> max_delta_log_wh;
         ib >> deltas_weights;
     }
-
-protected:
-    std::vector<input_info> get_dependencies() const override {
-        std::vector<input_info> ret;
-        if (!output_classes.empty())
-            ret.emplace_back(output_classes);
-
-        if (!output_scores.empty())
-            ret.emplace_back(output_scores);
-
-        return ret;
-    }
 };
 }  // namespace cldnn

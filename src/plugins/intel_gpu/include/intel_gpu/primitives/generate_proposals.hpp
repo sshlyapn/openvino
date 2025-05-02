@@ -122,15 +122,5 @@ struct generate_proposals
         ib >> attrs.nms_eta;
         ib >> make_data(&roi_num_type, sizeof(data_types));
     }
-
-protected:
-    std::vector<input_info> get_dependencies() const override {
-        std::vector<input_info> ret;
-        if (!output_rois_scores.empty())
-            ret.push_back(output_rois_scores);
-        if (!output_rois_num.empty())
-            ret.push_back(output_rois_num);
-        return ret;
-    }
 };
 }  // namespace cldnn

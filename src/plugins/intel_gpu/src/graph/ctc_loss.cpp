@@ -30,7 +30,7 @@ layout ctc_loss_inst::calc_output_layout(const ctc_loss_node& node, const kernel
 std::string ctc_loss_inst::to_string(const ctc_loss_node& node) {
     auto primitive = node.get_primitive();
     json_composite ctc_loss_info;
-    for (size_t i = 0; i < primitive->input_size(); ++i) {
+    for (size_t i = 0; i < primitive->new_input_size(); ++i) {
         ctc_loss_info.add("input_" + std::to_string(i), node.input(i).id());
     }
     ctc_loss_info.add("preprocess_collapse_repeated", primitive->preprocess_collapse_repeated);

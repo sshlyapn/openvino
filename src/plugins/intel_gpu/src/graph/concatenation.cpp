@@ -31,7 +31,7 @@ layout concatenation_inst::calc_output_layout(concatenation_node const& node, ke
 
     // calculate sum of features from all inputs
     result_sizes[axis_index] = 0;
-    for (size_t i = 0; i < desc->input.size(); ++i) {
+    for (size_t i = 0; i < desc->new_custom_inputs.size(); ++i) {
         auto input_sizes = impl_param.get_input_layout(i).get_dims();
         if (impl_param.get_input_layout(i).format == format::b_fs_yx_fsv16)
             output_format = format::b_fs_yx_fsv16;
@@ -55,7 +55,7 @@ std::vector<layout> concatenation_inst::calc_output_layouts(const concatenation_
         output_dt = impl_param.get_output_element_type();
     }
     auto output_format = input_layout.format;
-    for (size_t i = 0; i < desc->input.size(); ++i) {
+    for (size_t i = 0; i < desc->new_custom_inputs.size(); ++i) {
         if (impl_param.get_input_layout(i).format == format::b_fs_yx_fsv16)
             output_format = format::b_fs_yx_fsv16;
     }
@@ -63,7 +63,7 @@ std::vector<layout> concatenation_inst::calc_output_layouts(const concatenation_
     auto axis_index = desc->axis;
     std::vector<ShapeType> input_shapes;
 
-    for (size_t i = 0; i < desc->input.size(); ++i) {
+    for (size_t i = 0; i < desc->new_custom_inputs.size(); ++i) {
         auto input_shape = impl_param.get_input_layout(i).get<ShapeType>();
         input_shapes.push_back(input_shape);
     }

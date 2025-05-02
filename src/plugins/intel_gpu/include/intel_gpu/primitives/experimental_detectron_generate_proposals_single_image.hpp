@@ -105,13 +105,5 @@ struct experimental_detectron_generate_proposals_single_image
         ib >> pre_nms_count;
         ib >> post_nms_count;
     }
-
-protected:
-    std::vector<input_info> get_dependencies() const override {
-        std::vector<input_info> ret;
-        if (!output_roi_scores.empty())
-            ret.push_back(output_roi_scores);
-        return ret;
-    }
 };
 }  // namespace cldnn

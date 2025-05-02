@@ -34,7 +34,7 @@ public:
 
     int32_t get_deform_conv_dep_offset() const {
         auto offset = deformable_mode ? 1 : 0;
-        if (get_primitive()->input.size() == 3)
+        if (get_primitive()->data_inputs_num == 3)
             offset++;
         return offset;
     }

@@ -295,7 +295,7 @@ private:
                 input_mem->copy_from(strm, get_intermediate_data());
             }
 
-            reorder_rep.reorder->input = {input_info("input")};
+            reorder_rep.reorder->new_custom_inputs = {input_info("input")};
             topology topology(input_layout("input", *reorder_rep.input_layout),
                               *reorder_rep.reorder);
             cldnn::network network(engine, topology, {});

@@ -112,10 +112,10 @@ struct arg_max_min : public primitive_base<arg_max_min> {
     }
 
     size_t get_output_nums() const {
-        return (input_size() == 3 ? 2 : output_size());
+        return (new_input_size() == 3 ? 2 : output_size());
     }
     bool has_second_output() const { return get_output_nums() == 2; }
-    bool use_multiple_outputs() const { return input_size() != 3; }
+    bool use_multiple_outputs() const { return new_input_size() != 3; }
 
     void save(BinaryOutputBuffer& ob) const override {
         primitive_base<arg_max_min>::save(ob);

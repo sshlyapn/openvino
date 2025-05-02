@@ -129,7 +129,7 @@ void concat_input_order::run(program& p) {
         auto prim = concat_node.get_primitive();
 
         bool along_f = prim->axis == 1;
-        size_t inputs_count = prim->input_size();
+        size_t inputs_count = prim->new_input_size();
         bool no_fusing = !concat_node.has_fused_primitives() && concat_node.get_dependencies().size() == inputs_count;
 
         auto out_format = concat_node.get_output_layout().format;
@@ -206,10 +206,10 @@ void concat_input_order::run(program& p) {
         std::vector<input_info> new_input_info;
         new_input_info.reserve(inputs_count);
         for (auto& ord : new_order) {
-            new_input_info.push_back(input_info(prim->input[ord].pid, prim->input[ord].idx));
+            new_input_info.push_back(input_info(prim->new_custom_inputs[ord].pid, prim->new_custom_inputs[ord].idx));
         }
         auto mutable_prim = std::const_pointer_cast<concatenation>(prim);
-        mutable_prim->input = new_input_info;
+        mutable_prim->new_custom_inputs = new_input_info;
         // Correct users for shuffled features
         for (auto& user : concat_node.get_users()) {
             shuffle_features(*user, shuffled_ranges, p.get_stream());

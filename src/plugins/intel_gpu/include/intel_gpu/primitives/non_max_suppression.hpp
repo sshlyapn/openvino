@@ -63,7 +63,20 @@ struct non_max_suppression : public primitive_base<non_max_suppression> {
         , score_threshold(score_threshold)
         , soft_nms_sigma(soft_nms_sigma)
         , second_output(second_output)
-        , third_output(third_output) {}
+        , third_output(third_output) {
+            if (!num_select_per_class.empty())
+                new_custom_inputs.push_back(num_select_per_class);
+            if (!iou_threshold.empty())
+                new_custom_inputs.push_back(iou_threshold);
+            if (!score_threshold.empty())
+                new_custom_inputs.push_back(score_threshold);
+            if (!soft_nms_sigma.empty())
+                new_custom_inputs.push_back(soft_nms_sigma);
+            if (!second_output.empty())
+                new_custom_inputs.push_back(second_output);
+            if (!third_output.empty())
+                new_custom_inputs.push_back(third_output);
+        }
 
     int selected_indices_num;
     bool center_point_box;
@@ -108,24 +121,6 @@ struct non_max_suppression : public primitive_base<non_max_suppression> {
                cmp_fields(third_output.empty()) &&
                cmp_fields(rotation);
         #undef cmp_fields
-    }
-
-    std::vector<input_info> get_dependencies() const override {
-        std::vector<input_info> ret;
-        if (!num_select_per_class.empty())
-            ret.push_back(num_select_per_class);
-        if (!iou_threshold.empty())
-            ret.push_back(iou_threshold);
-        if (!score_threshold.empty())
-            ret.push_back(score_threshold);
-        if (!soft_nms_sigma.empty())
-            ret.push_back(soft_nms_sigma);
-        if (!second_output.empty())
-            ret.push_back(second_output);
-        if (!third_output.empty())
-            ret.push_back(third_output);
-
-        return ret;
     }
 
     void save(BinaryOutputBuffer& ob) const override {

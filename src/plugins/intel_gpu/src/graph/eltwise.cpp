@@ -45,7 +45,7 @@ layout eltwise_inst::calc_output_layout(eltwise_node const& node, kernel_impl_pa
 
     auto size = input_node_layout.get_tensor();
     auto format = input_node_layout.format;
-    for (size_t i = 0; i < desc->input_size(); i++) {
+    for (size_t i = 0; i < desc->new_input_size(); i++) {
         if (i == primary_input_idx)
             continue;
 
@@ -130,7 +130,7 @@ std::vector<layout> eltwise_inst::calc_output_layouts(eltwise_node const& /*node
 
         std::vector<ShapeType> output_shapes = {ShapeType()};
         std::vector<ShapeType> input_shapes;
-        for (size_t i = 0; i < desc->input_size(); i++) {
+        for (size_t i = 0; i < desc->new_input_size(); i++) {
             input_shapes.push_back(impl_param.get_input_layout(i).get<ShapeType>());
         }
 
@@ -146,7 +146,7 @@ std::vector<layout> eltwise_inst::calc_output_layouts(eltwise_node const& /*node
         else if (input_layout.format == format::bs_fs_zyx_bsv16_fsv16)
             out_format = format::bs_fs_zyx_bsv16_fsv16;
 
-        for (size_t i = 0; i < desc->input_size(); i++) {
+        for (size_t i = 0; i < desc->new_input_size(); i++) {
             if (impl_param.primary_input_idx == i)
                 continue;
 
@@ -427,7 +427,7 @@ eltwise_inst::typed_primitive_inst(network& network, eltwise_node const& node) :
 }
 
 void eltwise_inst::check_inputs_count(eltwise_node const& node) {
-    const size_t inputs_number = node.get_primitive()->input.size();
+    const size_t inputs_number = node.get_primitive()->new_custom_inputs.size();
     const eltwise_mode mode = node.get_primitive()->mode;
 
     switch (mode) {

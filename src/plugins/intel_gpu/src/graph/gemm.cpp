@@ -64,7 +64,7 @@ layout gemm_inst::calc_output_layout(gemm_node const& node, kernel_impl_params c
     auto input1_shape_update = update_input_shape(input1_shape, weight_rank, input1_transpose_order, false);
 
     ov::Shape bias_shape(output_rank);
-    if (prim->input_size() == 3) {
+    if (prim->new_input_size() == 3) {
         bias_shape = impl_param.get_input_layout(2).get_shape();
         bias_shape = update_input_shape(bias_shape, weight_rank, input1_transpose_order, false);
     }
@@ -236,7 +236,7 @@ std::vector<layout> gemm_inst::transform_input_layouts(const std::shared_ptr<con
     layouts[1].set_partial_shape(transposed_input1_pshape);
     layouts[1].data_padding = get_transposed_padding(layouts[1].data_padding, weight_rank, weight_format_rank, primitive->transpose_input1, false);
 
-    if (primitive->input_size() == 3) {
+    if (primitive->new_input_size() == 3) {
         auto bias_pshape = input_layouts[2].get_partial_shape();
         auto updated_bias_pshape = get_transposed_input_shape(bias_pshape, weight_rank, output_rank, primitive->transpose_input1, false);
         layouts[2].set_partial_shape(updated_bias_pshape);
@@ -269,7 +269,7 @@ layout gemm_inst::transform_output_layout(const std::shared_ptr<const gemm> prim
         auto N = transposed_input1_pshape[transposed_input1_pshape.size() - 1];
 
         auto output_pshape = transposed_input0_pshape;
-        for (size_t i = 0; i != primitive->input_size(); ++i) {
+        for (size_t i = 0; i != primitive->new_input_size(); ++i) {
             auto input_pshape = (i == 0) ? transposed_input0_pshape :
                                 (i == 1) ? transposed_input1_pshape :
                                 input_layouts[i].get_partial_shape();

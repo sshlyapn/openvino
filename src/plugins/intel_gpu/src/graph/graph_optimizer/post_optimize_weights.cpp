@@ -24,12 +24,14 @@ post_optimize_weights::post_optimize_weights(reorder_factory& rf_ref)
 
 template <typename T>
 post_optimize_weights::weights_bias_offset post_optimize_weights::get_weights_bias_offset(const T& node) {
-    return weights_bias_offset(node.get_primitive()->input.size(), program_helpers::wrap_if_single(node.get_primitive()->weights).size());
+    const size_t weights_idx = 1;
+    const size_t weights_num = 1;
+    return weights_bias_offset(weights_idx, weights_num);
 }
 
 template <>
-post_optimize_weights::weights_bias_offset post_optimize_weights::get_weights_bias_offset(const fully_connected_node& node) {
-    const size_t weights_idx = 1;
+post_optimize_weights::weights_bias_offset post_optimize_weights::get_weights_bias_offset(const convolution_node& node) {
+    const size_t weights_idx = node.get_primitive()->data_inputs_num;
     const size_t weights_num = 1;
     return weights_bias_offset(weights_idx, weights_num);
 }
@@ -119,7 +121,7 @@ void post_optimize_weights::optimize_weights(T& node, program& p) {
                     onednn_weights_params->_in_desc = onednn::layout_to_memory_desc(updated_input_layout);
                 }
 #endif // ENABLE_ONEDNN_FOR_GPU
-                auto weights_reorder = _rf.get_weights_reorder(prev_node.get_primitive()->input[0].pid,
+                auto weights_reorder = _rf.get_weights_reorder(prev_node.get_primitive()->new_custom_inputs[0].pid,
                                                                weights_reorder_params);
                 auto& weights_reorder_node = p.get_or_create(weights_reorder.first);
                 p.replace(prev_node, weights_reorder_node);

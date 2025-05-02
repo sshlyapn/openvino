@@ -42,7 +42,7 @@ struct normalize : public primitive_base<normalize> {
               const primitive_id& scale_input,
               const bool across_spatial = true,
               const float epsilon = 1e-10f)
-        : primitive_base(id, {input}),
+        : primitive_base(id, {input, scale_input}),
           scale_input(scale_input),
           across_spatial(across_spatial),
           epsilon(epsilon) {}
@@ -86,8 +86,5 @@ struct normalize : public primitive_base<normalize> {
         ib >> across_spatial;
         ib >> epsilon;
     }
-
-protected:
-    std::vector<input_info> get_dependencies() const override { return {scale_input}; }
 };
 }  // namespace cldnn

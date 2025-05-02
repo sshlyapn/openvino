@@ -387,7 +387,7 @@ in_out_fmts_t ConvolutionImplementationManager::query_formats(const program_node
         // Conv or deconv gets a preferred format for its data input based on source memory description
         // But an input format for fused post-ops should be same with an output format of conv/deconv
         size_t prim_input = node.get_dependency_index(conv_node.input());
-        size_t prim_weights = node.get_primitive()->input_size();
+        size_t prim_weights = node.get_primitive()->new_input_size();
 
         // Note: did not handle attribute properly. especially for zero-point
         cldnn::format src_fmt = format::any;

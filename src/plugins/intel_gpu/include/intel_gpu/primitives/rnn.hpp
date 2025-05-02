@@ -64,7 +64,7 @@ struct RNNParams : public primitive_base<PType> {
         std::vector<std::string> pids{initial_hidden_state.pid, initial_cell_state.pid, W.pid, R.pid, B.pid, seq_lenghts.pid};
         for (auto pid : pids) {
             if (!pid.empty()) {
-                primitive_base<PType>::input.push_back(pid);
+                primitive_base<PType>::new_custom_inputs.push_back(pid);
             }
         }
     }

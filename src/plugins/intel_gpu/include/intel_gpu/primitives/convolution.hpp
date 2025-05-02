@@ -63,6 +63,7 @@ struct convolution : public primitive_base<convolution> {
               weights_zero_points(w_zero_point),
               activations_zero_points(a_zero_point),
               compensation(compensation) {
+        configure_inputs(weights, bias, w_zero_point, a_zero_point, compensation);
     }
 
     /// @brief Constructs convolution primitive.
@@ -105,6 +106,7 @@ struct convolution : public primitive_base<convolution> {
           weights_zero_points(""),
           activations_zero_points(""),
           compensation("") {
+        configure_inputs(weights, bias);
     }
 
     /// @brief Constructs convolution primitive.
@@ -154,6 +156,7 @@ struct convolution : public primitive_base<convolution> {
       weights_zero_points(""),
       activations_zero_points(""),
       compensation("") {
+        configure_inputs(weights, bias);
     }
 
     /// @brief Number of feature groups (grouped convolution). If more than 1 then weights/bias count needs to be 1.
@@ -182,7 +185,7 @@ struct convolution : public primitive_base<convolution> {
     /// then the sampling location shifts to the inner boundary of the feature map.
     bool bilinear_interpolation_pad {false};
 
-    bool transposed {false};
+    size_t data_inputs_num {1};
 
     /// @param grouped_weights_shape Defines if weights tensor has explicit group dimension.
     bool grouped_weights_shape {false};
@@ -208,7 +211,6 @@ struct convolution : public primitive_base<convolution> {
         seed = hash_combine(seed, deformable_groups);
         seed = hash_combine(seed, deformable_mode);
         seed = hash_combine(seed, bilinear_interpolation_pad);
-        seed = hash_combine(seed, transposed);
         seed = hash_combine(seed, grouped_weights_shape);
         seed = hash_combine(seed, !weights.empty());
         seed = hash_combine(seed, !bias.empty());
@@ -234,7 +236,6 @@ struct convolution : public primitive_base<convolution> {
                cmp_fields(auto_pad) &&
                cmp_fields(deformable_mode) &&
                cmp_fields(bilinear_interpolation_pad) &&
-               cmp_fields(transposed) &&
                cmp_fields(grouped_weights_shape) &&
                cmp_fields(weights.empty()) &&
                cmp_fields(bias.empty()) &&
@@ -255,7 +256,6 @@ struct convolution : public primitive_base<convolution> {
         ob << deformable_mode;
         ob << deformable_groups;
         ob << bilinear_interpolation_pad;
-        ob << transposed;
         ob << grouped_weights_shape;
         ob << weights;
         ob << bias;
@@ -275,7 +275,6 @@ struct convolution : public primitive_base<convolution> {
         ib >> deformable_mode;
         ib >> deformable_groups;
         ib >> bilinear_interpolation_pad;
-        ib >> transposed;
         ib >> grouped_weights_shape;
         ib >> *const_cast<primitive_id*>(&weights);
         ib >> *const_cast<primitive_id*>(&bias);
@@ -284,22 +283,27 @@ struct convolution : public primitive_base<convolution> {
         ib >> *const_cast<primitive_id*>(&compensation);
     }
 
-    std::vector<input_info> get_dependencies() const override {
-        std::vector<input_info> ret = {weights};
-        if (!bias.empty()) {
-            ret.push_back(bias);
-        }
-        if (!weights_zero_points.empty()) {
-            ret.push_back(weights_zero_points);
-        }
-        if (!activations_zero_points.empty()) {
-            ret.push_back(activations_zero_points);
-        }
-        if (!compensation.empty()) {
-            ret.push_back(compensation);
-        }
+protected:
+    void configure_inputs(const input_info& weights,
+                          const input_info& bias,
+                          const input_info& weights_zero_points = input_info(),
+                          const input_info& activations_zero_points = input_info(),
+                          const input_info& compensation = input_info()) {
+        data_inputs_num = new_custom_inputs.size();
 
-        return ret;
+        new_custom_inputs.push_back(weights);
+        if (!bias.is_valid()) {
+            new_custom_inputs.push_back(bias);
+        }
+        if (!weights_zero_points.is_valid()) {
+            new_custom_inputs.push_back(weights_zero_points);
+        }
+        if (!activations_zero_points.is_valid()) {
+            new_custom_inputs.push_back(activations_zero_points);
+        }
+        if (!compensation.is_valid()) {
+            new_custom_inputs.push_back(compensation);
+        }
     }
 };
 

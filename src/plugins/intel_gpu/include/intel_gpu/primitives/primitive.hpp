@@ -120,7 +120,7 @@ public:
     /// @brief Initialize fields common for all primitives.
     primitive(const primitive_type_id& type,
               const primitive_id& id,
-              const std::vector<input_info>& input,
+              const std::vector<input_info>& new_custom_inputs,
               const std::vector<padding>& output_paddings = {padding()},
               const std::vector<optional_data_type> output_data_types = {optional_data_type()},
               const size_t num_outputs = 1)
@@ -128,7 +128,7 @@ public:
           id(id),
           output_paddings(output_paddings),
           output_data_types(output_data_types),
-          input(input),
+          new_custom_inputs(new_custom_inputs),
           num_outputs(num_outputs) {
         if (output_paddings.size() < num_outputs) {
             this->output_paddings.insert(this->output_paddings.end(), num_outputs - output_paddings.size(), padding());
@@ -142,7 +142,7 @@ public:
 
     /// @brief Returns copy of all input info on which this primitive depends - inputs, weights, biases, etc.
     std::vector<input_info> dependencies() const {
-        auto result = input;
+        auto result = new_custom_inputs;
         auto deps = get_dependencies();
         for (auto& dep : deps) result.push_back(dep);
         return result;
@@ -222,7 +222,8 @@ public:
     /// @brief Requested output precision, if any.
     std::vector<optional_data_type> output_data_types;
 
-    size_t input_size() const { return input.size(); }
+    // size_t input_size() const { return input.size(); }
+    size_t new_input_size() const { return new_custom_inputs.size(); }
 
     size_t output_size() const { return num_outputs; }
 
@@ -231,7 +232,7 @@ public:
     using input_info_arr = std::vector<input_info>;
 
     /// @brief List of input info containing id and output index of input primitive.
-    input_info_arr input;
+    input_info_arr new_custom_inputs;
 
     size_t num_outputs;
 
@@ -251,7 +252,7 @@ public:
                 ob << false;
             }
         }
-        ob << input;
+        ob << new_custom_inputs;
         ob << num_outputs;
     }
 
@@ -277,7 +278,7 @@ public:
                 output_data_types.emplace_back(optional_data_type());
             }
         }
-        ib >> input;
+        ib >> new_custom_inputs;
         ib >> num_outputs;
     }
 

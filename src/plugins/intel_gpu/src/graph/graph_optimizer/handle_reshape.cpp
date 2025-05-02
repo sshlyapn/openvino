@@ -158,11 +158,11 @@ void handle_reshape::run(program& p) {
                         new_reshape->output_partial_shape = prim->output_partial_shape;
                         new_reshape->output_pattern = prim->output_pattern;
                         new_reshape->mode = prim->mode;
-                        new_reshape->input = prim->input;
+                        new_reshape->new_custom_inputs = prim->new_custom_inputs;
                         auto& new_reshape_node = p.get_or_create(new_reshape);
                         user->replace_dependency(0, input_node);
                         p.add_intermediate(new_reshape_node, *user, 0);
-                        if (new_reshape->input_size() == 2) {
+                        if (new_reshape->new_input_size() == 2) {
                             p.add_connection(prim_node.get_dependency(1), new_reshape_node);
                         }
 

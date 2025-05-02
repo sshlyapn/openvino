@@ -75,7 +75,7 @@ public:
         const auto& sort_type = primitive->sort;
         const auto& values_first = primitive->values_first;
         const auto& stable = primitive->stable;
-        const auto& outputs_num = primitive->input_size() == 3 ? 2 : static_cast<uint32_t>(primitive->output_size());
+        const auto& outputs_num = primitive->new_input_size() == 3 ? 2 : static_cast<uint32_t>(primitive->output_size());
 
         auto argm_params = get_default_params<kernel_selector::arg_max_min_params>(impl_param, is_shape_agnostic);
 
@@ -104,7 +104,7 @@ public:
             argm_params.argMaxMinSortType = kernel_selector::argm_sort::INDEX;
 
         if (outputs_num == 2) {  // for backward compatibility
-            if (primitive->input_size() != 3) {
+            if (primitive->new_input_size() != 3) {
                 argm_params.outputs.push_back(convert_data_tensor(impl_param.get_output_layout(1)));
             } else {
                 // Legacy multi-output

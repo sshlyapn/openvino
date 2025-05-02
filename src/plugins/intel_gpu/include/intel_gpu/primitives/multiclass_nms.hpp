@@ -30,7 +30,7 @@ struct multiclass_nms : public primitive_base<multiclass_nms> {
             output_selected_num = inputs[InputIdx::OutputSelectedNum].pid;
             has_roisnum = !inputs[InputIdx::RoisNum].pid.empty();
             if (inputs[InputIdx::RoisNum].pid.empty()) {
-                this->input.erase(this->input.begin() + 2);
+                this->new_custom_inputs.erase(this->new_custom_inputs.begin() + 2);
             }
         } else {
             has_roisnum = inputs.size() == 3;
@@ -99,16 +99,6 @@ struct multiclass_nms : public primitive_base<multiclass_nms> {
         ib >> attrs.background_class;
         ib >> attrs.normalized;
         ib >> attrs.nms_eta;
-    }
-
-protected:
-    std::vector<input_info> get_dependencies() const override {
-        std::vector<input_info> ret;
-        if (!output_selected_indices.empty())
-            ret.emplace_back(output_selected_indices);
-        if (!output_selected_num.empty())
-            ret.emplace_back(output_selected_num);
-        return ret;
     }
 
 private:

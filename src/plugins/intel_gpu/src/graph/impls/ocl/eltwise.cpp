@@ -41,7 +41,7 @@ protected:
 public:
     static kernel_params_t get_kernel_params(const kernel_impl_params& impl_param, bool is_shape_agnostic = false) {
         const auto& primitive = impl_param.typed_desc<eltwise>();
-        auto inputs_count = primitive->input.size();
+        auto inputs_count = primitive->new_custom_inputs.size();
 
         auto params = get_default_params<kernel_selector::eltwise_params>(impl_param, is_shape_agnostic);
         const auto mode = convert_to_eltwise_mode(primitive->mode);

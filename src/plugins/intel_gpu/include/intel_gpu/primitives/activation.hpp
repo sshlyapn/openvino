@@ -106,7 +106,7 @@ struct activation : public primitive_base<activation> {
                const input_info& input,
                const primitive_id& additional_params_input,
                activation_func activation_function)
-        : primitive_base(id, {input}),
+        : primitive_base(id, {input, additional_params_input}),
           activation_function(activation_function),
           additional_params({0, 0}),
           additional_params_input(additional_params_input) {}
@@ -155,13 +155,6 @@ struct activation : public primitive_base<activation> {
         ib >> activation_function;
         ib >> additional_params;
         ib >> additional_params_input;
-    }
-
-protected:
-    std::vector<input_info> get_dependencies() const override {
-        if (additional_params_input.empty())
-            return {};
-        return {additional_params_input};
     }
 };
 }  // namespace cldnn

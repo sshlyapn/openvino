@@ -68,7 +68,7 @@ public:
         auto params = get_default_params<kernel_selector::concatenation_params>(impl_param, is_shape_agnostic);
         auto axis = primitive->axis;
 
-        auto inputs_count = primitive->input.size();
+        auto inputs_count = primitive->new_custom_inputs.size();
         params.inputs.resize(inputs_count);
         for (size_t i = 0; i < inputs_count; ++i) {
             const layout& input_layout = impl_param.input_layouts[i];

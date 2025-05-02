@@ -79,7 +79,7 @@ void generic_test::run_single_test(bool is_caching_test) {
         topology.add(reorder("input0", input_info("input0_init"), input_mems[0]->get_layout()));
     }
 
-    if (layer_params->input[0].pid == "reorder0") {
+    if (layer_params->new_custom_inputs[0].pid == "reorder0") {
         // Add reorder layer with output padding as input to the tested layer.
         topology.add(reorder("reorder0", input_info("input0"), input_mems[0]->get_layout().with_padding(padding{ { 0, 0, 1, 3 },{ 0, 0, 5, 2 } })));
     }

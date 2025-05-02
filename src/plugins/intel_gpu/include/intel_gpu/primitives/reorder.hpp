@@ -121,7 +121,11 @@ struct reorder : public primitive_base<reorder> {
           output_format(output_layout.format),
           mean(mean),
           subtract_per_feature(0),
-          mean_mode(mode) {}
+          mean_mode(mode) {
+            if (!mean.empty()) {
+                new_custom_inputs.push_back(mean);
+            }
+        }
 
     /// @brief Constructs reorder primitive with directly provided mean subtract values.
     /// @param id This primitive id.
@@ -156,11 +160,15 @@ struct reorder : public primitive_base<reorder> {
             primitive_id const& mean,
             const reorder_mean_mode mode = reorder_mean_mode::subtract,
             const padding& output_padding = padding())
-        : primitive_base(id, {input}, 1, {optional_data_type {output_data_type}}, {output_padding}),
+        : primitive_base(id, {input, mean}, 1, {optional_data_type {output_data_type}}, {output_padding}),
           output_format(output_format),
           mean(mean),
           subtract_per_feature(0),
-          mean_mode(mode) {}
+          mean_mode(mode) {
+            if (!mean.empty()) {
+                new_custom_inputs.push_back(mean);
+            }
+        }
 
     /// @brief Constructs reorder primitive with two inputs and directly provided mean subtract values.
     /// @param id This primitive id.
@@ -192,10 +200,14 @@ struct reorder : public primitive_base<reorder> {
             const layout& output_layout,
             primitive_id const& mean,
             const reorder_mean_mode mode = reorder_mean_mode::subtract)
-        : primitive_base(id, { input, input2 }, 1, {optional_data_type{ output_layout.data_type }}, {output_layout.data_padding}),
+        : primitive_base(id, { input, input2, mean}, 1, {optional_data_type{ output_layout.data_type }}, {output_layout.data_padding}),
         output_format(output_layout.format),
         mean(mean),
-        mean_mode(mode) {}
+        mean_mode(mode) {
+            if (!mean.empty()) {
+                new_custom_inputs.push_back(mean);
+            }
+        }
 
     /// @brief Constructs weights reorder primitive.
     /// @param id This primitive id.
@@ -225,8 +237,9 @@ struct reorder : public primitive_base<reorder> {
     std::shared_ptr<WeightsReorderParams> weights_reorder_params = {};
 
     inline bool has_surface_input() const {
-        return input.size() == 1 &&
-               input_mem_type == memory_type::surface;
+        auto inputs_num = mean.empty() ? new_custom_inputs.size()
+                                       : new_custom_inputs.size() - 1;
+        return inputs_num == 1 && input_mem_type == memory_type::surface;
     }
 
     /// @brief Convert truncation Mode
@@ -296,13 +309,6 @@ struct reorder : public primitive_base<reorder> {
             weights_reorder_params->load(ib);
         }
         ib >> truncate;
-    }
-
-protected:
-    std::vector<input_info> get_dependencies() const override {
-        if (mean.empty())
-            return {};
-        return {mean};
     }
 };
 

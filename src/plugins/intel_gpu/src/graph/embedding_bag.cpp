@@ -26,7 +26,7 @@ std::vector<layout> embedding_bag_inst::calc_output_layouts(embedding_bag_node c
 
     auto& memory_deps = impl_param.memory_deps;
     std::vector<ShapeType> input_shapes;
-    for (size_t i = 0; i < desc->input_size(); i++) {
+    for (size_t i = 0; i < desc->new_input_size(); i++) {
         input_shapes.push_back(impl_param.get_input_layout(i).get<ShapeType>());
     }
 

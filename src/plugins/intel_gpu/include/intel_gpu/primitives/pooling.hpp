@@ -232,13 +232,5 @@ struct pooling : public primitive_base<pooling> {
         ib >> make_data(&index_element_type, sizeof(data_types));
         ib >> maxPoolOpset8Features;
     }
-
-protected:
-    std::vector<input_info> get_dependencies() const override {
-        std::vector<input_info> ret;
-        if (!indices_output.empty())
-            ret.push_back(indices_output);
-        return ret;
-    }
 };
 }  // namespace cldnn
