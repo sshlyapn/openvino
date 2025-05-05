@@ -2005,7 +2005,8 @@ void primitive_inst::execute() {
                 } else {
                     actual_mem = engine.allocate_memory(actual_input_layout);
                 }
-                _unfused_subgraph->set_input_data(d.first->id(), std::move(actual_mem));
+                auto input_name = d.first->id() + "." + std::to_string(d.second);
+                _unfused_subgraph->set_input_data(input_name, std::move(actual_mem));
             }
         }
         GPU_DEBUG_TRACE_DETAIL << "[Start] Executing unfused subgraph of " << id() << std::endl;

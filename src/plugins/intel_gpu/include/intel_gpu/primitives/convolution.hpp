@@ -187,15 +187,15 @@ struct convolution : public primitive_base<convolution> {
     /// @param grouped_weights_shape Defines if weights tensor has explicit group dimension.
     bool grouped_weights_shape {false};
     /// @brief Primitive id containing weights data.
-    const primitive_id weights;
+    const input_info weights;
     /// @brief Primitive id containing bias data.
-    const primitive_id bias;
+    const input_info bias;
     /// @brief Primitive id containing weights zero points.
-    const primitive_id weights_zero_points;
+    const input_info weights_zero_points;
     /// @brief Primitive id containing activations zero points.
-    const primitive_id activations_zero_points;
+    const input_info activations_zero_points;
     /// @brief Primitive id containing compensation.
-    const primitive_id compensation;
+    const input_info compensation;
 
     size_t hash() const override {
         size_t seed = primitive::hash();
@@ -277,27 +277,31 @@ struct convolution : public primitive_base<convolution> {
         ib >> bilinear_interpolation_pad;
         ib >> transposed;
         ib >> grouped_weights_shape;
-        ib >> *const_cast<primitive_id*>(&weights);
-        ib >> *const_cast<primitive_id*>(&bias);
-        ib >> *const_cast<primitive_id*>(&weights_zero_points);
-        ib >> *const_cast<primitive_id*>(&activations_zero_points);
-        ib >> *const_cast<primitive_id*>(&compensation);
+        ib >> *const_cast<input_info*>(&weights);
+        ib >> *const_cast<input_info*>(&bias);
+        ib >> *const_cast<input_info*>(&weights_zero_points);
+        ib >> *const_cast<input_info*>(&activations_zero_points);
+        ib >> *const_cast<input_info*>(&compensation);
     }
 
-    std::vector<input_info> get_dependencies() const override {
-        std::vector<input_info> ret = {weights};
-        if (!bias.empty()) {
-            ret.push_back(bias);
-        }
-        if (!weights_zero_points.empty()) {
-            ret.push_back(weights_zero_points);
-        }
-        if (!activations_zero_points.empty()) {
-            ret.push_back(activations_zero_points);
-        }
-        if (!compensation.empty()) {
-            ret.push_back(compensation);
-        }
+protected:
+    std::map<size_t, const input_info*> get_dependencies_map() const override {
+        auto ret = std::map<size_t, const input_info*>{};
+        auto idx = input.size();
+
+        ret[idx++] = &weights;
+
+        if (!bias.empty())
+            ret[idx++] = &bias;
+
+        if (!weights_zero_points.empty())
+            ret[idx++] = &weights_zero_points;
+
+        if (!activations_zero_points.empty())
+            ret[idx++] = &activations_zero_points;
+
+        if (!compensation.empty())
+            ret[idx++] = &compensation;
 
         return ret;
     }

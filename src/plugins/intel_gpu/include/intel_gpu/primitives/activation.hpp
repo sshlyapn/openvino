@@ -120,7 +120,7 @@ struct activation : public primitive_base<activation> {
     /// @brief PRelu activation slope input primitive id.
     /// Input x dimension should be equal to input feature size (one slope per channel).
     /// All other dimensions should be 1.
-    primitive_id additional_params_input;
+    input_info additional_params_input;
 
     size_t hash() const override {
         size_t seed = primitive::hash();
@@ -158,10 +158,14 @@ struct activation : public primitive_base<activation> {
     }
 
 protected:
-    std::vector<input_info> get_dependencies() const override {
-        if (additional_params_input.empty())
-            return {};
-        return {additional_params_input};
+    std::map<size_t, const input_info*> get_dependencies_map() const override {
+        auto ret = std::map<size_t, const input_info*>{};
+        auto idx = input.size();
+
+        if (additional_params_input.is_valid())
+            ret[idx++] = &additional_params_input;
+
+        return ret;
     }
 };
 }  // namespace cldnn

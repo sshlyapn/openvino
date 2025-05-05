@@ -131,7 +131,7 @@ struct pooling : public primitive_base<pooling> {
               maxPoolOpset8Features(true) {}
 
     /// @brief Primitive id which contains indices output.
-    primitive_id indices_output;
+    input_info indices_output;
     /// @brief Pooling mode.
     pooling_mode mode = pooling_mode::max;
     /// @brief Pooling kernel size.
@@ -234,10 +234,13 @@ struct pooling : public primitive_base<pooling> {
     }
 
 protected:
-    std::vector<input_info> get_dependencies() const override {
-        std::vector<input_info> ret;
-        if (!indices_output.empty())
-            ret.push_back(indices_output);
+    std::map<size_t, const input_info*> get_dependencies_map() const override {
+        auto ret = std::map<size_t, const input_info*>{};
+        auto idx = input.size();
+
+        if (indices_output.is_valid())
+            ret[idx++] = &indices_output;
+
         return ret;
     }
 };

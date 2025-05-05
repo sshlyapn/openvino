@@ -60,8 +60,8 @@ struct generate_proposals
 
     ov::op::v9::GenerateProposals::Attributes attrs;
 
-    primitive_id output_rois_scores;
-    primitive_id output_rois_num;
+    input_info output_rois_scores;
+    input_info output_rois_num;
     data_types roi_num_type = data_types::dynamic;
 
     size_t hash() const override {
@@ -124,12 +124,16 @@ struct generate_proposals
     }
 
 protected:
-    std::vector<input_info> get_dependencies() const override {
-        std::vector<input_info> ret;
-        if (!output_rois_scores.empty())
-            ret.push_back(output_rois_scores);
-        if (!output_rois_num.empty())
-            ret.push_back(output_rois_num);
+    std::map<size_t, const input_info*> get_dependencies_map() const override {
+        auto ret = std::map<size_t, const input_info*>{};
+        auto idx = input.size();
+
+        if (output_rois_scores.is_valid())
+            ret[idx++] = &output_rois_scores;
+
+        if (output_rois_num.is_valid())
+            ret[idx++] = &output_rois_num;
+
         return ret;
     }
 };

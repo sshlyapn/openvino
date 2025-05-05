@@ -146,6 +146,8 @@ void ExecutionConfig::apply_model_specific_options(const IRemoteContext* context
 
         return false;
     });
+    std::cout << "new: " << is_LLM << "\n";
+    std::cout << "old: " << ov::op::util::is_large_language_model(model) << "\n";
     apply_rt_info(context, get_rt_info(model), is_LLM, is_paged_attention_model);
 
     const auto& ops = model.get_ops();

@@ -86,8 +86,8 @@ struct experimental_detectron_detection_output : public primitive_base<experimen
           max_delta_log_wh{max_delta_log_wh},
           deltas_weights{std::move(deltas_weights)} {}
 
-    primitive_id output_classes;
-    primitive_id output_scores;
+    input_info output_classes;
+    input_info output_scores;
     float score_threshold = 0.0f;
     float nms_threshold = 0.0f;
     int num_classes = 0;
@@ -161,13 +161,15 @@ struct experimental_detectron_detection_output : public primitive_base<experimen
     }
 
 protected:
-    std::vector<input_info> get_dependencies() const override {
-        std::vector<input_info> ret;
-        if (!output_classes.empty())
-            ret.emplace_back(output_classes);
+    std::map<size_t, const input_info*> get_dependencies_map() const override {
+        auto ret = std::map<size_t, const input_info*>{};
+        auto idx = input.size();
 
-        if (!output_scores.empty())
-            ret.emplace_back(output_scores);
+        if (output_classes.is_valid())
+            ret[idx++] = &output_classes;
+
+        if (output_scores.is_valid())
+            ret[idx++] = &output_scores;
 
         return ret;
     }

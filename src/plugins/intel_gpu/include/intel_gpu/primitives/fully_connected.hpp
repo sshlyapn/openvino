@@ -143,13 +143,13 @@ struct fully_connected : public primitive_base<fully_connected> {
     }
 
     /// @brief Primitive id containing weights data.
-    primitive_id weights;
+    input_info weights;
     /// @brief Primitive id containing bias data.
-    primitive_id bias;
+    input_info bias;
 
     bool compressed_weights = false;
-    primitive_id decompression_scale = "";
-    primitive_id decompression_zero_point = "";
+    input_info decompression_scale = {};
+    input_info decompression_zero_point = {};
     bool dynamic_quantized_activation = false;
     bool dynamic_quantized_activation_zp = false;
     input_info activation_scale = {"", 0};
@@ -242,24 +242,26 @@ struct fully_connected : public primitive_base<fully_connected> {
     }
 
 protected:
-    std::vector<input_info> get_dependencies() const override {
-        std::vector<input_info> ret;
-        ret.push_back(weights);
+    std::map<size_t, const input_info*> get_dependencies_map() const override {
+        auto ret = std::map<size_t, const input_info*>{};
+        auto idx = input.size();
 
-        if (!bias.empty())
-            ret.push_back(bias);
+        ret[idx++] = &weights;
 
-        if (!decompression_scale.empty())
-            ret.push_back(decompression_scale);
+        if (bias.is_valid())
+            ret[idx++] = &bias;
 
-        if (!decompression_zero_point.empty())
-            ret.push_back(decompression_zero_point);
+        if (decompression_scale.is_valid())
+            ret[idx++] = &decompression_scale;
+
+        if (decompression_zero_point.is_valid())
+            ret[idx++] = &decompression_zero_point;
 
         if (activation_scale.is_valid())
-            ret.push_back(activation_scale);
+            ret[idx++] = &activation_scale;
 
         if (activation_zero_point.is_valid())
-            ret.push_back(activation_zero_point);
+            ret[idx++] = &activation_zero_point;
 
         return ret;
     }
