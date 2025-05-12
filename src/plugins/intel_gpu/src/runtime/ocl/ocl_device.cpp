@@ -334,8 +334,11 @@ device_info init_device_info(const cl::Device& device, const cl::Context& contex
     using namespace dnnl::impl::gpu::intel::jit;
     ngen::HW hw = ngen::HW::Unknown;
     ngen::Product product = {ngen::ProductFamily::Unknown, 0};
-    generator_t<ngen::HW::Unknown>::detectHWInfo(context.get(), device.get(), hw, product);
-    info.arch = convert_ngen_arch(hw);
+    if (context.get() != nullptr) {
+        generator_t<ngen::HW::Unknown>::detectHWInfo(context.get(), device.get(), hw, product);
+        info.arch = convert_ngen_arch(hw);
+    }
+
     // We change the value of this flag to avoid OneDNN usage for the platforms unknown to OneDNN
     // This is required to guarantee some level of forward compatibility for the new HW generations
     // as OneDNN code generators are not generic and typically requires some updates for the new architectures
@@ -381,7 +384,7 @@ memory_capabilities init_memory_caps(const cl::Device& device, const device_info
 void ocl_device::initialize_device(const cl::Device dev, const cl::Context& ctx) {
     _context = ctx;
     _device = dev;
-    _usm_helper = std::make_unique<cl::UsmHelper>(_context, _device, use_unified_shared_memory());
+    _usm_helper = std::make_unique<cl::UsmHelper>(_context, _device, use_unified_shared_memory() && ctx.get() != nullptr);
     _is_initialized = true;
 }
 
@@ -460,7 +463,10 @@ void ocl_device::initialize() {
     for (auto& device : device_map) {
         if (this->is_same(device.second)) {
             if (auto casted = downcast<ocl_device>(device.second.get())) {
-                initialize_device(casted->get_device(), casted->get_context());
+                const auto& device = casted->get_device();
+                const auto& context = casted->get_context().get() != nullptr ? casted->get_context() : cl::Context(device);
+
+                initialize_device(device, context);
                 return;
             }
         }

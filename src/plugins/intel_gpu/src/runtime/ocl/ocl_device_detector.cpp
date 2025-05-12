@@ -211,7 +211,14 @@ std::vector<device::ptr> ocl_device_detector::create_device_list() const {
             for (auto& device : devices) {
                 if (!does_device_match_config(device))
                     continue;
-                supported_devices.emplace_back(std::make_shared<ocl_device>(device, cl::Context(device), platform));
+
+                // Initialize the context only for Intel GPUs, as it might be used for device attribute configuration (arch version)
+                // in case of oneDNN usage. Otherwise, context initialization can be postponed
+                auto context = cl::Context();
+                if (device.getInfo<CL_DEVICE_VENDOR_ID>() == cldnn::INTEL_VENDOR_ID)
+                    context = cl::Context(device);
+
+                supported_devices.emplace_back(std::make_shared<ocl_device>(device, context, platform));
             }
         } catch (std::exception& ex) {
             GPU_DEBUG_LOG << "Devices query/creation failed for " << platform.getInfo<CL_PLATFORM_NAME>() << ": " << ex.what() << std::endl;
