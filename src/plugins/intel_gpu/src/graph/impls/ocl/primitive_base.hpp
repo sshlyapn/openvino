@@ -113,6 +113,7 @@ struct typed_primitive_impl_ocl : public typed_primitive_impl<PType> {
 
 protected:
     virtual kernel_arguments_data get_arguments(const typed_primitive_inst<PType>& instance) const {
+        std::cout << "Get arguments call\n";
         kernel_arguments_data args;
 
         for (size_t i = 0; i < instance.inputs_memory_count(); i++) {
@@ -258,12 +259,12 @@ protected:
             bool needs_completion_event = instance.needs_completion_event();
 
             auto& params = _kernel_data.kernels[kd_idx].params;
-            auto args = get_arguments(instance);
-            args.scalars = &params.scalars;
+            // auto args = get_arguments(instance);
+            // args.scalars = &params.scalars;
 
-            for (const auto& m : instance.get_intermediates_memories()) {
-                args.intermediates.push_back(m);
-            }
+            // for (const auto& m : instance.get_intermediates_memories()) {
+            //     args.intermediates.push_back(m);
+            // }
 
             const auto& gws = params.workGroups.global;
             const auto& lws = params.workGroups.local;
@@ -272,7 +273,7 @@ protected:
                                    << "lws=[" << lws[0] << ", " << lws[1] << ", " << lws[2] << "]"
                                    << (needs_completion_event ? " has_completion_event=true" : "") << std::endl;
 
-            auto ev = stream.enqueue_kernel(*_kernels[kd_idx], params, args, tmp_events, needs_completion_event);
+            auto ev = stream.enqueue_kernel(*_kernels[kd_idx], params, kernel_arguments_data(), tmp_events, needs_completion_event);
             if (_kernel_data.needs_sub_kernels_sync) {
                 tmp_events = {ev};
             }

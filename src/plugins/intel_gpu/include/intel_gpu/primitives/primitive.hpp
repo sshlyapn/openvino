@@ -114,6 +114,17 @@ private:
     std::unordered_map<cldnn::primitive_type_id, std::string> inverse_map;
 };
 
+class NodeFuseParams {
+public:
+    explicit NodeFuseParams(primitive_type_id type) : _type(type) {}
+    virtual ~NodeFuseParams() = default;
+    virtual primitive_type_id type() const { return _type; }
+    virtual size_t ops_count() const { return 0; }
+
+private:
+    const primitive_type_id _type;
+};
+
 /// @brief Base class of network primitive description.
 struct primitive {
 public:

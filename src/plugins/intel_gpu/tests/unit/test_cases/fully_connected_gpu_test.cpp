@@ -5849,6 +5849,8 @@ TEST(fully_connected_gpu, cm) {
         GTEST_SKIP();
     }
 
+    std::cout << "Supported!\n";
+
     // Test parameters
     const int batch_num = 2;
     const int output_f = 4;

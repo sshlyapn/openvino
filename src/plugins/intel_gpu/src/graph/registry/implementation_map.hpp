@@ -32,7 +32,6 @@ public:
 template <typename primitive_kind>
 class implementation_map {
 public:
-    using simple_factory_type = std::function<std::unique_ptr<primitive_impl>(const typed_program_node<primitive_kind>&, const kernel_impl_params&)>;
     using key_type = cldnn::key_type;
     using list_type = singleton_list<std::tuple<impl_types, shape_types, std::shared_ptr<ImplementationManager>>, primitive_kind>;
 
@@ -52,22 +51,24 @@ public:
         return nullptr;
     }
 
-    static void add(impl_types impl_type, shape_types shape_type, simple_factory_type factory,
-                    const std::vector<data_types>& types, const std::vector<format::type>& formats) {
+    template <typename FactoryType>
+    static void add(impl_types impl_type, shape_types shape_type, FactoryType factory, const std::vector<data_types>& types, const std::vector<format::type>& formats) {
         add(impl_type, shape_type, std::move(factory), combine(types, formats));
     }
 
-    static void add(impl_types impl_type, simple_factory_type factory,
-                    const std::vector<data_types>& types, const std::vector<format::type>& formats) {
+    template <typename FactoryType>
+    static void add(impl_types impl_type, FactoryType factory, const std::vector<data_types>& types, const std::vector<format::type>& formats) {
         add(impl_type, std::move(factory), combine(types, formats));
     }
 
-    static void add(impl_types impl_type, simple_factory_type factory, std::set<key_type> keys) {
+    template <typename FactoryType>
+    static void add(impl_types impl_type, FactoryType factory, std::set<key_type> keys) {
         OPENVINO_ASSERT(impl_type != impl_types::any, "[GPU] Can't register impl with type any");
         add(impl_type, shape_types::static_shape, std::move(factory), keys);
     }
 
-    static void add(impl_types impl_type, shape_types shape_type, simple_factory_type factory, std::set<key_type> keys) {
+    template <typename FactoryType>
+    static void add(impl_types impl_type, shape_types shape_type, FactoryType factory, std::set<key_type> keys) {
         OPENVINO_ASSERT(impl_type != impl_types::any, "[GPU] Can't register impl with type any");
         auto f = std::make_shared<ImplementationManagerLegacy<primitive_kind>>(factory, impl_type, shape_type, keys);
         list_type::instance().push_back({impl_type, shape_type, std::move(f)});

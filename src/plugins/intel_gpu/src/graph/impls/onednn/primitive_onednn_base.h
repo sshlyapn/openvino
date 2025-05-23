@@ -374,7 +374,7 @@ private:
 protected:
     virtual bool optimized_out(typed_primitive_inst<PType>&) const { return false; }
 
-    void configure_post_ops_arguments(typed_primitive_inst<PType>& instance, std::unordered_map<int, dnnl::memory>& args) const {
+    void configure_post_ops_arguments(typed_primitive_inst<PType>& instance, const kernel_arguments_data* kernel_args, std::unordered_map<int, dnnl::memory>& args) const {
         auto& engine = instance.get_network().get_engine();
         auto dnnl_engine = engine.get_onednn_engine();
 
@@ -407,7 +407,7 @@ protected:
                 case onednn_post_op_type::binary_max:
                 case onednn_post_op_type::binary_min:
                 {
-                    auto binary_op_mem = instance.fused_memory(memory_offset);
+                    auto binary_op_mem = get_fused_op_mem(memory_offset, instance, kernel_args);
                     dnnl::algorithm alg;
                     dnnl::memory::desc desc;
                     post_ops.get_params_binary(static_cast<int>(onednn_post_op_idx), alg, desc);
@@ -418,7 +418,7 @@ protected:
 
                 case onednn_post_op_type::binary_relu:
                 {
-                    auto binary_op_mem = instance.fused_memory(memory_offset);
+                    auto binary_op_mem = get_fused_op_mem(memory_offset, instance, kernel_args);
                     args.insert({DNNL_ARG_ATTR_MULTIPLE_POST_OP(static_cast<int>(onednn_post_op_idx)) | DNNL_ARG_WEIGHTS,
                                  binary_op_mem->get_onednn_memory(_pd.dnnl::primitive_desc_base::weights_desc(0))});
                     break;
@@ -447,63 +447,88 @@ protected:
         }
     }
 
-    virtual std::unordered_map<int, dnnl::memory> get_arguments(typed_primitive_inst<PType>& instance) const {
+    static memory::cptr get_input_mem(size_t idx, const typed_primitive_inst<PType>& instance, const kernel_arguments_data* kernel_arguments) {
+        if (kernel_arguments) {
+            const auto& inputs = kernel_arguments->inputs;
+            // OPENVINO_ASSERT(idx < inputs.size());
+
+            return inputs[idx];
+        } else {
+            return instance.input_memory_ptr(idx);
+        }
+    }
+
+    static memory::cptr get_output_mem(size_t idx, const typed_primitive_inst<PType>& instance, const kernel_arguments_data* kernel_arguments) {
+        if (kernel_arguments) {
+            const auto& outputs = kernel_arguments->outputs;
+            // OPENVINO_ASSERT(idx < outputs.size());
+
+            return outputs[idx];
+        } else {
+            return instance.output_memory_ptr(idx);
+        }
+    }
+
+    static memory::cptr get_fused_op_mem(size_t idx, const typed_primitive_inst<PType>& instance, const kernel_arguments_data* kernel_arguments) {
+        if (kernel_arguments) {
+            const auto& fused_op_inputs = kernel_arguments->fused_op_inputs;
+            // OPENVINO_ASSERT(idx < fused_op_inputs.size());
+
+            return fused_op_inputs[idx];
+        } else {
+            return instance.fused_memory(idx);
+        }
+    }
+
+    static memory::cptr get_intermediate_mem(size_t idx, const typed_primitive_inst<PType>& instance, const kernel_arguments_data* kernel_arguments) {
+        if (kernel_arguments) {
+            const auto& intermediates = kernel_arguments->intermediates;
+            // OPENVINO_ASSERT(idx < intermediates.size());
+
+            return intermediates[idx];
+        } else {
+            return instance.get_intermediates_memories()[idx];
+        }
+    }
+
+    virtual std::unordered_map<int, dnnl::memory> get_arguments_custom(typed_primitive_inst<PType>& instance, const kernel_arguments_data* kernel_arguments) const {
         std::unordered_map<int, dnnl::memory> args;
         auto& engine = instance.get_network().get_engine();
         auto dnnl_engine = engine.get_onednn_engine();
 
         {
             dnnl::memory input_mem;
-            auto& input = instance.input_memory(0);
+            const auto& input = get_input_mem(0, instance, kernel_arguments);
             auto offset = onednn::get_offset(instance.get_input_layout(0), _pd.dnnl::primitive_desc_base::src_desc(0));
             if (instance.get_input_layout(0).count() != 0) {
-                input_mem = input.get_onednn_memory(_pd.dnnl::primitive_desc_base::src_desc(0), offset);
+                input_mem = input->get_onednn_memory(_pd.dnnl::primitive_desc_base::src_desc(0), offset);
             }
             args.insert({DNNL_ARG_SRC, input_mem});
         }
 
         {
-            auto& output = instance.output_memory();
+            const auto& output = get_output_mem(0, instance, kernel_arguments);
             auto offset = onednn::get_offset(instance.get_output_layout(), _pd.dnnl::primitive_desc_base::dst_desc(0));
-            args.insert({DNNL_ARG_DST, output.get_onednn_memory(_pd.dnnl::primitive_desc_base::dst_desc(0), offset)});
+            args.insert({DNNL_ARG_DST, output->get_onednn_memory(_pd.dnnl::primitive_desc_base::dst_desc(0), offset)});
         }
 
         if (_scratchpad_md.get_size() != 0) {
             // onednn primitive can have only 1 scratchpad memory.
-            auto scratchpad = instance.get_intermediates_memories()[0];
+            const auto scratchpad = get_intermediate_mem(0, instance, kernel_arguments);
             args.insert({DNNL_ARG_SCRATCHPAD, scratchpad->get_onednn_memory(_scratchpad_md, 0)});
         }
 
-        configure_post_ops_arguments(instance, args);
+        configure_post_ops_arguments(instance, kernel_arguments, args);
 
         return args;
     }
 
+    virtual std::unordered_map<int, dnnl::memory> get_arguments(typed_primitive_inst<PType>& instance) const {
+        return get_arguments_custom(instance, nullptr);
+    }
+
     virtual std::unordered_map<int, dnnl::memory> get_arguments(typed_primitive_inst<PType>& instance, kernel_arguments_data& mem_args) const {
-        std::unordered_map<int, dnnl::memory> args;
-        auto& engine = instance.get_network().get_engine();
-        auto dnnl_engine = engine.get_onednn_engine();
-
-        OPENVINO_ASSERT(mem_args.inputs.size() == 1);
-        OPENVINO_ASSERT(mem_args.outputs.size() == 1);
-        OPENVINO_ASSERT(_scratchpad_md.get_size() == 0);
-        OPENVINO_ASSERT(instance.get_fused_primitives_onednn().empty());
-
-        {
-            auto input = mem_args.inputs[0];
-            layout l = input->get_layout();
-            auto offset = onednn::get_offset(std::move(l), _pd.dnnl::primitive_desc_base::src_desc(0));
-            args.insert({DNNL_ARG_SRC, input->get_onednn_memory(_pd.dnnl::primitive_desc_base::src_desc(0), offset)});
-        }
-
-        {
-            auto output = mem_args.outputs[0];
-            layout l = output->get_layout();
-            auto offset = onednn::get_offset(std::move(l), _pd.dnnl::primitive_desc_base::dst_desc(0));
-            args.insert({DNNL_ARG_DST, output->get_onednn_memory(_pd.dnnl::primitive_desc_base::dst_desc(0), offset)});
-        }
-
-        return args;
+        return get_arguments_custom(instance, &mem_args);
     }
 
     void init_kernels(const kernels_cache&, const kernel_impl_params&) override { }

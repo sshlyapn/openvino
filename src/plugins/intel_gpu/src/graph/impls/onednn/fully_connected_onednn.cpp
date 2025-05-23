@@ -44,16 +44,32 @@ protected:
         return std::make_unique<fully_connected_onednn>(*this);
     }
 
-    std::unordered_map<int, dnnl::memory> get_arguments(fully_connected_inst& instance) const override {
-        std::unordered_map<int, dnnl::memory> args = parent::get_arguments(instance);
+    static memory::cptr get_weights_mem(fully_connected_inst& instance, const kernel_arguments_data* kernel_arguments) {
+        if (kernel_arguments) {
+            return kernel_arguments->weights;
+        } else {
+            return instance.weights_memory();
+        }
+    }
+
+    static memory::cptr get_bias_mem(fully_connected_inst& instance, const kernel_arguments_data* kernel_arguments) {
+        if (kernel_arguments) {
+            return kernel_arguments->bias;
+        } else {
+            return instance.bias_memory();
+        }
+    }
+
+    std::unordered_map<int, dnnl::memory> get_arguments_custom(fully_connected_inst& instance, const kernel_arguments_data* kernel_arguments) const override {
+        std::unordered_map<int, dnnl::memory> args = parent::get_arguments_custom(instance, kernel_arguments);
         {
-            auto weights = instance.weights_memory();
+            auto weights = get_weights_mem(instance, kernel_arguments);
             auto offset = onednn::get_offset(instance.get_input_layout(1), _pd.dnnl::primitive_desc_base::weights_desc(0));
             args.insert({DNNL_ARG_WEIGHTS, weights->get_onednn_memory(_pd.weights_desc(0), offset)});
         }
 
         if (instance.bias_term()) {
-            auto bias = instance.bias_memory();
+            auto bias = get_bias_mem(instance, kernel_arguments);
             auto offset = onednn::get_offset(instance.get_input_layout(2), _pd.dnnl::primitive_desc_base::weights_desc(1));
             args.insert({DNNL_ARG_BIAS, bias->get_onednn_memory(_pd.weights_desc(1), offset)});
         }
@@ -67,14 +83,14 @@ protected:
 
             if (!prim->decompression_scale.empty()) {
                 auto decompression_scale_idx = idx++;
-                auto scale_mem = instance.dep_memory_ptr(decompression_scale_idx);
+                auto scale_mem = get_input_mem(decompression_scale_idx, instance, kernel_arguments);
                 dnnl::memory::desc desc = onednn::layout_to_memory_desc(scale_mem->get_layout(), dnnl::memory::format_tag::a, true);
                 args.insert({DNNL_ARG_ATTR_SCALES | DNNL_ARG_WEIGHTS, scale_mem->get_onednn_memory(desc)});
             }
 
             if (!prim->decompression_zero_point.empty()) {
                 auto decompression_zp_idx = idx++;
-                auto zp_mem = instance.dep_memory_ptr(decompression_zp_idx);
+                auto zp_mem = get_input_mem(decompression_zp_idx, instance, kernel_arguments);
                 dnnl::memory::desc desc = onednn::layout_to_memory_desc(zp_mem->get_layout(), dnnl::memory::format_tag::a, true);
                 args.insert({DNNL_ARG_ATTR_ZERO_POINTS | DNNL_ARG_WEIGHTS, zp_mem->get_onednn_memory(desc)});
             }
@@ -82,20 +98,28 @@ protected:
 
             if (is_dyn_quan_input && prim->activation_scale.is_valid()) {
                 auto activation_scale_idx = idx++;
-                auto act_scale_mem = instance.dep_memory_ptr(activation_scale_idx);
+                auto act_scale_mem = get_input_mem(activation_scale_idx, instance, kernel_arguments);
                 dnnl::memory::desc desc = onednn::layout_to_memory_desc(act_scale_mem->get_layout(), dnnl::memory::format_tag::ab, true);
                 args.insert({DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC_0, act_scale_mem->get_onednn_memory(desc)});
             }
 
             if (is_dyn_quan_input && prim->activation_zero_point.is_valid()) {
                 auto activation_zp_idx = idx++;
-                auto act_zp_mem = instance.dep_memory_ptr(activation_zp_idx);
+                auto act_zp_mem = get_input_mem(activation_zp_idx, instance, kernel_arguments);
                 dnnl::memory::desc desc = onednn::layout_to_memory_desc(act_zp_mem->get_layout(), dnnl::memory::format_tag::ab, true);
                 args.insert({DNNL_ARG_ATTR_ZERO_POINTS | DNNL_ARG_SRC_0, act_zp_mem->get_onednn_memory(desc)});
             }
         }
 
         return args;
+    }
+
+    std::unordered_map<int, dnnl::memory> get_arguments(fully_connected_inst& instance) const override {
+        return get_arguments_custom(instance, nullptr);
+    }
+
+    virtual std::unordered_map<int, dnnl::memory> get_arguments(fully_connected_inst& instance, kernel_arguments_data& mem_args) const override {
+        return get_arguments_custom(instance, &mem_args);
     }
 
     static void transform_layouts(layout& input_layout, layout& weights_layout, layout& output_layout, size_t prim_input_size) {
@@ -136,6 +160,8 @@ protected:
         auto input_layout = impl_params.get_input_layout(0);
         auto weights_layout = impl_params.get_input_layout(1);
         auto output_layout = impl_params.get_output_layout();
+
+        std::cout << "get descriptor\n";
 
         dnnl::memory::format_tag target_fmt;
         dnnl::memory::format_tag weights_fmt;
@@ -349,7 +375,8 @@ public:
 #endif
     }
 
-    static std::unique_ptr<primitive_impl> create(const fully_connected_node& arg, const kernel_impl_params& impl_params) {
+    static std::unique_ptr<primitive_impl> create(const kernel_impl_params& impl_params) {
+        std::cout << "create\n";
         auto& engine = impl_params.prog->get_engine();
         auto& config = impl_params.prog->get_config();
         auto attr = impl_params.attrs_onednn;
@@ -358,8 +385,9 @@ public:
         dnnl::memory::data_type ds_data_type = dnnl::memory::data_type::undef;
         dnnl::memory::data_type dzp_data_type = dnnl::memory::data_type::undef;
         bool is_four_bit_weight = false;
-        int idx = !arg.bias_term() ? 1 : 2;
+        int idx = prim->bias.empty() ? 1 : 2;
 
+        std::cout << "idx = prim->bias.empty() ? 1 : 2; " << prim->compressed_weights << "\n";
         // There may be a performance difference between InnerProduct and MatMul primitives in oneDNN,
         // so use MatMul only for weights compression and IP for all other cases.
         if (prim->compressed_weights) {
@@ -376,9 +404,9 @@ public:
 
             if (!prim->decompression_scale.empty()) {
                 auto decompression_scale_idx = ++idx;
-                auto scale_layout = arg.get_dependency(decompression_scale_idx).get_output_layout();
+                auto scale_layout = impl_params.get_input_layout(decompression_scale_idx);
                 ds_data_type = convert_data_type(scale_layout.data_type);
-                auto ifm = arg.get_dependency(1).get_output_layout().get_dim(1);
+                auto ifm = impl_params.get_input_layout(1).get_dim(1);
                 auto ngroups = scale_layout.get_dim(1);
                 group_size = ifm / ngroups;
                 OPENVINO_ASSERT((group_size == 1 || ngroups == 1 || group_size % 32 == 0),
@@ -394,7 +422,7 @@ public:
 
             if (!prim->decompression_zero_point.empty()) {
                 auto decompression_zp_idx = ++idx;
-                auto dzp_layout = arg.get_dependency(decompression_zp_idx).get_output_layout();
+                auto dzp_layout = impl_params.get_input_layout(decompression_zp_idx);
                 dzp_data_type = convert_data_type(dzp_layout.data_type);
 
                 if (dzp_layout.count() == 1) {
@@ -424,6 +452,8 @@ public:
                     attr->set_zero_points(DNNL_ARG_SRC, grouped, dnnl::memory::dims{1, src_group_size}, dnnl::memory::data_type::u8);
             }
 
+            std::cout << "prim_desc\n";
+
 
             auto prim_desc = get_matmul_primitive_descriptor(impl_params, impl_params.prog->get_engine(),
                                                              prim->input_size, prim->weights_rank, !prim->bias.empty(), *attr);
@@ -434,17 +464,27 @@ public:
             prim_onednn->_dzp_data_type = dzp_data_type;
             return prim_onednn;
         } else {
+            std::cout << "prim_desc\n";
             auto prim_desc = get_matmul_primitive_descriptor(impl_params, impl_params.prog->get_engine(),
                                                              prim->input_size, prim->weights_rank, !prim->bias.empty(), *attr);
 
             return std::make_unique<fully_connected_onednn>(engine, config, attr, *prim_desc);
         }
     }
+
+    static std::unique_ptr<primitive_impl> create(const fully_connected_node&, const kernel_impl_params& impl_params) {
+        return create(impl_params);
+    }
 };
 
 std::unique_ptr<primitive_impl> FullyConnectedImplementationManager::create_impl(const program_node& node, const kernel_impl_params& params) const {
     assert(node.is_type<fully_connected>());
     return onednn::fully_connected_onednn::create(static_cast<const fully_connected_node&>(node), params);
+}
+
+std::unique_ptr<primitive_impl> FullyConnectedImplementationManager::create_impl(const kernel_impl_params& params) const {
+    std::cout << "Call create_impl\n";
+    return onednn::fully_connected_onednn::create(params);
 }
 
 }  // namespace onednn

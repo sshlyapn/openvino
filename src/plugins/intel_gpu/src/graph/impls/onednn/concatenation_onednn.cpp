@@ -48,7 +48,7 @@ protected:
             args.insert({DNNL_ARG_SCRATCHPAD, scratchpad->get_onednn_memory(_scratchpad_md, 0)});
         }
 
-        configure_post_ops_arguments(instance, args);
+        configure_post_ops_arguments(instance, nullptr, args);
 
         return args;
     }

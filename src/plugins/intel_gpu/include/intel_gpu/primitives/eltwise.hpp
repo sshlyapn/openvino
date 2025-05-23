@@ -66,6 +66,8 @@ enum class eltwise_mode : int32_t {
     bitwise_xor
 };
 
+struct EltwiseFuseParams;
+
 /// @brief Performs elementwise operations (sum, subtract, max or product) on two input primitives
 /// Also supports built-in Relu @ref activation available by setting it in arguments.
 /// @notes
@@ -231,5 +233,20 @@ struct eltwise : public primitive_base<eltwise> {
         ib >> make_data(&broadcast_spec, sizeof(ov::op::AutoBroadcastSpec));
         ib >> m_pythondiv;
     }
+
+    static std::shared_ptr<EltwiseFuseParams> create_fuse_params(std::shared_ptr<primitive> desc) {
+        OPENVINO_ASSERT(desc);
+        OPENVINO_ASSERT(type_id() == desc->type);
+
+        return std::make_shared<EltwiseFuseParams>(std::dynamic_pointer_cast<eltwise>(desc));
+    }
+};
+
+class EltwiseFuseParams : public NodeFuseParams {
+public:
+    EltwiseFuseParams(std::shared_ptr<eltwise> desc) : NodeFuseParams(eltwise::type_id()), _desc(desc) {}
+    size_t ops_count() const override { return 1; }
+
+    std::shared_ptr<eltwise> _desc;
 };
 }  // namespace cldnn

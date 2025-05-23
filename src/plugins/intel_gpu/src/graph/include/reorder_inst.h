@@ -12,14 +12,6 @@
 
 namespace cldnn {
 
-class ReorderFuseParams : public NodeFuseParams {
-public:
-    ReorderFuseParams(const layout& in, const layout& out) : NodeFuseParams(reorder::type_id()), _in(in), _out(out) {}
-
-    layout _in;
-    layout _out;
-};
-
 template <>
 struct typed_program_node<reorder> : public typed_program_node_base<reorder> {
     using parent = typed_program_node_base<reorder>;
@@ -63,7 +55,7 @@ public:
     }
 
     std::shared_ptr<NodeFuseParams> get_fuse_params() const override {
-        return std::make_shared<ReorderFuseParams>(input_layout, get_output_layout());
+        return reorder::create_fuse_params(input_layout, get_output_layout());
     }
     std::vector<size_t> get_shape_infer_dependencies() const override { return {}; }
 

@@ -230,6 +230,16 @@ public:
 
         (_kernel_data.update_dispatch_data_func)(*_kernel_data.params, _kernel_data);
     }
+
+    static std::unique_ptr<primitive_impl> create(const kernel_impl_params& impl_param) {
+        auto kernel_params = get_kernel_params(static_canonicalize_shapes(impl_param));
+        kernel_params.is_shape_agnostic = impl_param.is_dynamic();
+        kernel_params.set_dynamic_shape_offsets();
+        auto& kernel_selector = kernel_selector_t::Instance();
+        auto best_kernel = kernel_selector.get_best_kernel(kernel_params);
+
+        return std::make_unique<fully_connected_impl>(best_kernel);
+    }
 };
 
 namespace detail {
@@ -237,7 +247,7 @@ namespace detail {
 attach_fully_connected_impl::attach_fully_connected_impl() {
     implementation_map<fully_connected>::add(impl_types::ocl,
                                              shape_types::dynamic_shape,
-                                             typed_primitive_impl_ocl<fully_connected>::create<fully_connected_impl>, {
+                                             fully_connected_impl::create, {
         std::make_tuple(data_types::f32, format::bfyx),
         std::make_tuple(data_types::f16, format::bfyx),
         std::make_tuple(data_types::i32, format::bfyx),
@@ -246,7 +256,7 @@ attach_fully_connected_impl::attach_fully_connected_impl() {
     });
     implementation_map<fully_connected>::add(impl_types::ocl,
                                              shape_types::static_shape,
-                                             typed_primitive_impl_ocl<fully_connected>::create<fully_connected_impl>, {
+                                             fully_connected_impl::create, {
         std::make_tuple(data_types::f32, format::yxfb),
         std::make_tuple(data_types::f16, format::yxfb),
         std::make_tuple(data_types::f32, format::bfyx),

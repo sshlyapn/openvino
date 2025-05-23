@@ -27,6 +27,8 @@
 #    include "primitive_ocl_base.hpp"
 #    include "utils/kernel_generator.hpp"
 
+#include "fully_connected_inst.h"
+
 namespace ov::intel_gpu::ocl {
 
 namespace {
@@ -640,6 +642,7 @@ public:
     };
 
     std::vector<std::vector<dnnl_weights>> _dnnl_weights;
+    std::vector<std::vector<cldnn::memory_ptr>> _cldnn_weights;
     int _hidden_size;
     int _intermediate_size;
     int _group_size;
@@ -995,7 +998,92 @@ public:
     };
     std::unordered_map<std::pair<int, int>, onednn_kernel, PairHash> _kernels;
 
-    onednn_kernel& get_kernel(int n_token, int expert_no, typed_primitive_inst<moe_expert>& instance) {
+    std::shared_ptr<kernel_impl_params> get_fc_impl_params(typed_primitive_inst<moe_expert>& instance,
+                                                           data_types act_dtype,
+                                                           data_types weight_dtype,
+                                                           int batch,
+                                                           int ic,
+                                                           int oc,
+                                                           int ic_group_size) {
+        auto fc_kernel_params = std::make_shared<kernel_impl_params>();
+        auto fc_prim = std::make_shared<fully_connected>("test_fc", input_info("input"), "weights", "", "scale", "", act_dtype, 2, 2);
+        fc_kernel_params->desc = fc_prim;
+        fc_kernel_params->unique_id = 0;
+        fc_kernel_params->input_layouts.push_back(layout{ov::PartialShape{batch, ic}, act_dtype, format::bfyx});
+        fc_kernel_params->input_layouts.push_back(layout{ov::PartialShape{oc, ic}, weight_dtype, format::bfyx});
+        fc_kernel_params->input_layouts.push_back(layout{ov::PartialShape{ic_group_size, oc}, act_dtype, format::bfyx}); /* weights scale */
+        fc_kernel_params->output_layouts.push_back(layout{ov::PartialShape{batch, oc}, act_dtype, format::bfyx});
+
+        auto sum_desc = std::make_shared<eltwise>("test_fusion", input_info("first"), input_info("second"), eltwise_mode::sum);
+        auto fused_sum_desc = cldnn::fused_primitive_desc(sum_desc);
+        fused_sum_desc.f_param = sum_desc->create_fuse_params(sum_desc);
+        fused_sum_desc.total_num_deps = 2;
+        fused_sum_desc.input_layout = fc_kernel_params->output_layouts[0];
+        fused_sum_desc.output_layout = fc_kernel_params->output_layouts[0];
+
+        // fc_kernel_params->input_layouts.push_back(layout{ov::PartialShape{batch, oc}, act_dtype, format::bfyx});
+
+        fused_sum_desc.inputs.emplace_back(FusedInputType::ORIGINAL, 0, fc_kernel_params->output_layouts[0].data_type);
+        fused_sum_desc.inputs.emplace_back(FusedInputType::EXTERNAL, 3, fc_kernel_params->output_layouts[0].data_type);
+        fused_sum_desc.outer_dep_start_idx = 2;
+        fused_sum_desc.deps.emplace_back("dummy", 0);
+
+        // fc_kernel_params->fused_desc.push_back(fused_sum_desc);
+
+        auto attrs_onednn = std::make_shared<dnnl::primitive_attr>();
+
+        std::cout << "Before create_onednn_primitive_attributes\n";
+        cldnn::program_node::create_onednn_primitive_attributes(fc_kernel_params->fused_desc,
+                                                                attrs_onednn,
+                                                                fc_kernel_params->fused_desc_onednn,
+                                                                true,
+                                                                nullptr,
+                                                                fc_kernel_params.get());
+        std::cout << "AFter create_onednn_primitive_attributes\n";
+
+        fc_kernel_params->attrs_onednn = attrs_onednn;
+        fc_kernel_params->prog = &instance.get_node().get_program();
+
+        return fc_kernel_params;
+    }
+
+
+    template <typename T>
+    struct primitive_impl_wrapper {
+        primitive_impl_wrapper(std::shared_ptr<cldnn::kernel_impl_params> fc_impl_params, cldnn::network& network) {
+            instance = std::make_shared<typed_primitive_inst<T>>(network, *fc_impl_params);
+            auto impl_manager = T::type_id()->get_best_impl(impl_types::ocl, shape_types::static_shape);
+            auto new_impl = impl_manager->create(*fc_impl_params);
+
+            if (impl_manager->get_impl_type() == impl_types::ocl) {
+                auto& kernels_cache = network.get_program()->get_kernels_cache();
+                auto kernels = kernels_cache.compile(*fc_impl_params, new_impl->get_kernels_source());
+                new_impl->set_kernels(kernels);
+                new_impl->can_share_kernels = false;
+            }
+
+            std::cout << "Impl selected? " << new_impl.get() << " manager=" << impl_manager << "\n";
+
+            instance->set_impl(std::move(new_impl));
+            impl = instance->get_impl();
+        }
+
+        void set_arguments(cldnn::kernel_arguments_data& args) {
+            std::cout << "set args call\n";
+            impl->set_arguments(*instance, args);
+        }
+
+        event::ptr execute(const std::vector<event::ptr>& events = {}) {
+            std::cout << "execute call\n";
+            return impl->execute(events, *instance);
+        }
+
+        // std::shared_ptr<cldnn::kernel_impl_params> impl_params;
+        std::shared_ptr<typed_primitive_inst<T>> instance;
+        cldnn::primitive_impl* impl;
+    };
+
+    onednn_kernel& get_kernel(int n_token, int expert_no, typed_primitive_inst<moe_expert>& instance, scratch_buffers* scratch_bufs = nullptr) {
         auto key = std::make_pair(n_token, expert_no);
         if (_kernels.count(key))
             return _kernels[key];
@@ -1010,6 +1098,56 @@ public:
         auto& dnnl_weights = _dnnl_weights[expert_no];
         onednn_kernel kernel;
         // up
+
+        auto activation_dt = instance.input_memory_ptr(0)->get_layout().data_type;
+        auto weights_dt = mlp_params.param[1].weight->get_layout().data_type;
+
+        std::cout << "Test!\n";
+
+        auto fc_impl_params = get_fc_impl_params(instance, activation_dt, weights_dt, n_token, dnnl_weights[1].ic, dnnl_weights[1].oc, dnnl_weights[1].ic_group_size);
+        // auto fc_inst = std::make_shared<fully_connected_inst>(instance.get_network(), *fc_impl_params);
+        // auto impl_manager = fully_connected::type_id()->get_best_impl(impl_types::any, shape_types::static_shape);
+        // std::cout << "Impl  manager selected=" << impl_manager << "\n";
+        // auto fc_impl = impl_manager->create(*fc_impl_params);
+        // fc_inst->set_impl(std::move(fc_impl));
+
+
+        std::cout << "Set input[0]: " << scratch_bufs->x->get_layout().to_short_string() << "\n";
+        std::cout << "Set wei[0]: " << mlp_params.param[1].weight->get_layout().to_short_string() << "\n";
+        std::cout << "Set wei_scale[0]: " << mlp_params.param[1].scale->get_layout().to_short_string() << "\n";
+        std::cout << "Set wei_zp[0]: " << mlp_params.param[1].zp->get_layout().to_short_string() << "\n";
+        std::cout << "Set out[0]: " << scratch_bufs->up->get_layout().to_short_string() << "\n";
+
+        primitive_impl_wrapper<fully_connected> test_impl(fc_impl_params, instance.get_network());
+
+
+        if (scratch_bufs) {
+            cldnn::kernel_arguments_data args;
+
+            args.inputs.push_back(scratch_bufs->x);
+            args.inputs.push_back(mlp_params.param[1].weight);
+            args.inputs.push_back(mlp_params.param[1].scale);
+            args.weights = mlp_params.param[1].weight;
+            args.outputs.push_back(scratch_bufs->up);
+
+            // args.fused_op_inputs.push_back(scratch_bufs->up);
+
+
+            // auto impl = fc_inst->get_impl();
+            // impl->set_arguments(*fc_inst, args);
+
+            // impl->execute({}, *fc_inst);
+
+            test_impl.set_arguments(args);
+            test_impl.execute();
+
+
+
+            std::cout << "Done!\n";
+
+            // fc_inst->execute();
+        }
+
         auto up_weight_layout = mlp_params.param[1].weight->get_layout();
         kernel.up = onednn_linear::create(dnn_stream.get_engine(),
                                           hidden_states_layout_dt,
@@ -1143,7 +1281,7 @@ public:
             copy_expert_mask_to_gpu(stream, expert_mask, expert_no, expert_mask_mem);
 
             auto n_token = static_cast<int>(expert_mask.batch[expert_no].size());
-            onednn_kernel& kernel = get_kernel(n_token, static_cast<int>(expert_no), instance);
+            onednn_kernel& kernel = get_kernel(n_token, static_cast<int>(expert_no), instance, &scratch);
             memory::ptr& x = scratch.x;
 
             // gather

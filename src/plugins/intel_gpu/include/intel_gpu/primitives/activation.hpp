@@ -67,6 +67,8 @@ struct activation_additional_params {
     void load(BinaryInputBuffer& ib) { ib >> a >> b; }
 };
 
+class ActivationFuseParams;
+
 /// @brief Activation using rectified linear unit or parameterized rectified linear unit.
 /// @details Can get one negative slope or negative slope per channel.
 /// @par Algorithm:
@@ -157,11 +159,26 @@ struct activation : public primitive_base<activation> {
         ib >> additional_params_input;
     }
 
+    static std::shared_ptr<ActivationFuseParams> create_fuse_params(std::shared_ptr<primitive> desc) {
+        OPENVINO_ASSERT(desc);
+        OPENVINO_ASSERT(type_id() == desc->type);
+
+        return std::make_shared<ActivationFuseParams>(std::dynamic_pointer_cast<activation>(desc));
+    }
+
 protected:
     std::vector<input_info> get_dependencies() const override {
         if (additional_params_input.empty())
             return {};
         return {additional_params_input};
     }
+};
+
+class ActivationFuseParams : public NodeFuseParams {
+public:
+    ActivationFuseParams(std::shared_ptr<activation> desc) : NodeFuseParams(activation::type_id()), _desc(desc) {}
+    size_t ops_count() const override { return 1; }
+
+    std::shared_ptr<activation> _desc;
 };
 }  // namespace cldnn

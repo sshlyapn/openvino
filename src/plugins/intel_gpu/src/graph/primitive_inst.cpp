@@ -2070,15 +2070,15 @@ void primitive_inst::configure_shape_of_dependencies() {
     }
 }
 
-primitive_inst::primitive_inst(network& network)
+primitive_inst::primitive_inst(network& network, const kernel_impl_params& impl_params)
     : _network(network)
     , _node(nullptr)
-    , _impl_params(std::make_unique<kernel_impl_params>())
+    , _impl_params(std::make_unique<kernel_impl_params>(impl_params))
     , _impl(nullptr)
     , _outputs({})
     , _reordered_weights_cache(network.get_weights_cache_capacity())
     , _mem_allocated(false)
-    , _type(nullptr) {}
+    , _type(impl_params.desc ? impl_params.desc->type : nullptr) {}
 
 primitive_inst::primitive_inst(network & network, program_node const& node, bool allocate_memory)
     : _network(network)

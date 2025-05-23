@@ -86,11 +86,20 @@ struct ImplementationManagerLegacy : public ImplementationManager {
 
     std::unique_ptr<primitive_impl> create_impl(const program_node& node, const kernel_impl_params& params) const override {
         if (m_factory) {
-            return m_factory(static_cast<const typed_program_node<primitive_kind>&>(node), params);
+            return m_factory(static_cast<const typed_program_node<primitive_kind>*>(&node), params);
         }
 
         OPENVINO_NOT_IMPLEMENTED;
     }
+
+    std::unique_ptr<primitive_impl> create_impl(const kernel_impl_params& params) const override {
+        if (m_factory) {
+            return m_factory(nullptr, params);
+        }
+
+        OPENVINO_NOT_IMPLEMENTED;
+    }
+
     bool validate_impl(const program_node& node) const override {
         return ImplementationManager::is_supported(node, m_keys, m_shape_type);
     }
@@ -103,13 +112,28 @@ struct ImplementationManagerLegacy : public ImplementationManager {
         return {};
     }
 
-    using simple_factory_type = std::function<std::unique_ptr<primitive_impl>(const typed_program_node<primitive_kind>&, const kernel_impl_params&)>;
-    ImplementationManagerLegacy(simple_factory_type factory, impl_types impl_type, shape_types shape_type, std::set<key_type> keys)
-        : ImplementationManager(impl_type, shape_type, nullptr)
-        , m_factory(factory)
-        , m_keys(keys) {
-            add_keys_with_any_layout();
-        }
+    using unified_factory_type = std::function<std::unique_ptr<primitive_impl>(const typed_program_node<primitive_kind>*, const kernel_impl_params&)>;
+    using simple_factory_type_1 = std::function<std::unique_ptr<primitive_impl>(const typed_program_node<primitive_kind>&, const kernel_impl_params&)>;
+    using simple_factory_type_2 = std::function<std::unique_ptr<primitive_impl>(const kernel_impl_params&)>;
+
+    ImplementationManagerLegacy(simple_factory_type_1 factory, impl_types impl_type, shape_types shape_type, std::set<key_type> keys)
+        : ImplementationManager(impl_type, shape_type, nullptr),
+          m_factory([factory](const typed_program_node<primitive_kind>* node, const kernel_impl_params& params) {
+              OPENVINO_ASSERT(node != nullptr, "[GPU] Manager is called without required program_node!");
+              return factory(*node, params);
+          }),
+          m_keys(keys) {
+        add_keys_with_any_layout();
+    }
+
+    ImplementationManagerLegacy(simple_factory_type_2 factory, impl_types impl_type, shape_types shape_type, std::set<key_type> keys)
+        : ImplementationManager(impl_type, shape_type, nullptr),
+          m_factory([factory](const typed_program_node<primitive_kind>* node, const kernel_impl_params& params) {
+              return factory(params);
+          }),
+          m_keys(keys) {
+        add_keys_with_any_layout();
+    }
 
     ImplementationManagerLegacy(const ImplementationManagerLegacy* other, ValidateFunc vf)
         : ImplementationManager(other->m_impl_type, other->m_shape_type, vf)
@@ -121,7 +145,7 @@ struct ImplementationManagerLegacy : public ImplementationManager {
     ImplementationManagerLegacy() = default;
 
 private:
-    simple_factory_type m_factory;
+    unified_factory_type m_factory;
     std::set<key_type> m_keys;
 
     void add_keys_with_any_layout() {

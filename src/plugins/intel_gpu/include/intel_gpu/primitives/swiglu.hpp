@@ -8,6 +8,8 @@
 
 namespace cldnn {
 
+class SwigluFuseParams;
+
 /// @brief Swish Gated Linear Unit Activation primitive
 /// @details Performs gated linear unit activation that combines swish or gelu activation function
 struct swiglu : public primitive_base<swiglu> {
@@ -76,5 +78,18 @@ struct swiglu : public primitive_base<swiglu> {
         ib >> make_data(&glu_type, sizeof(glu_type));
         ib >> split_to_glu_idx;
     }
+
+    static std::shared_ptr<SwigluFuseParams> create_fuse_params(std::shared_ptr<primitive> desc) {
+        OPENVINO_ASSERT(desc);
+        OPENVINO_ASSERT(type_id() == desc->type);
+
+        return std::make_shared<SwigluFuseParams>(std::dynamic_pointer_cast<swiglu>(desc));
+    }
+};
+
+class SwigluFuseParams : public NodeFuseParams {
+public:
+    SwigluFuseParams(std::shared_ptr<swiglu> desc) : NodeFuseParams(swiglu::type_id()), _desc(std::move(desc)) {}
+    std::shared_ptr<swiglu> _desc;
 };
 }  // namespace cldnn

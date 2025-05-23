@@ -11,14 +11,6 @@
 
 namespace cldnn {
 
-class ActivationFuseParams : public NodeFuseParams {
-public:
-    ActivationFuseParams(std::shared_ptr<activation> desc) : NodeFuseParams(activation::type_id()), _desc(desc) {}
-    size_t ops_count() const override { return 1; }
-
-    std::shared_ptr<activation> _desc;
-};
-
 template <>
 struct typed_program_node<activation> : public typed_program_node_base<activation> {
     using parent = typed_program_node_base<activation>;
@@ -37,7 +29,7 @@ public:
     bool is_parameterized() const { return !typed_desc()->additional_params_input.empty(); }
 
     std::shared_ptr<NodeFuseParams> get_fuse_params() const override {
-        return std::make_shared<ActivationFuseParams>(typed_desc());
+        return activation::create_fuse_params(typed_desc());
     }
 };
 

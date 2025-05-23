@@ -1055,7 +1055,8 @@ void program_node::load(cldnn::BinaryInputBuffer& ib) {
 
 dnnl::post_ops program_node::try_optimize_post_ops(std::vector<fused_primitive_desc_onednn>& cur_post_ops,
                                                     dnnl::post_ops& p_ops, const std::shared_ptr<dnnl::primitive_attr>& attr,
-                                                    bool& optimization_is_completed) const {
+                                                    bool& optimization_is_completed,
+                                                    const program_node* p_node) {
     // Create new dnnl::post_ops object which will be filled inside the optimization process
     dnnl::post_ops optimized_p_ops;
 
@@ -1111,7 +1112,7 @@ dnnl::post_ops program_node::try_optimize_post_ops(std::vector<fused_primitive_d
                 dnnl::memory::data_type data_type;
                 cur_p_ops.get_params_sum(idx, scale, data_type);
                 // Only conv supports data type specification in append_sum. Other primitives(deconv, fc) do not support it.
-                if (is_type<convolution>()) {
+                if (p_node->is_type<convolution>()) {
                     new_p_ops.append_sum(scale, 0/*zero_point*/, data_type);
                 } else {
                     new_p_ops.append_sum(scale);
@@ -1203,7 +1204,7 @@ dnnl::post_ops program_node::try_optimize_post_ops(std::vector<fused_primitive_d
     bool optimization_done = false;
 
     GPU_DEBUG_TRACE << "================================================" << std::endl;
-    GPU_DEBUG_TRACE << " " << id() << ", num of post_ops " << p_ops.len() << std::endl;
+    GPU_DEBUG_TRACE << " " << p_node->id() << ", num of post_ops " << p_ops.len() << std::endl;
     GPU_DEBUG_TRACE << " * p_ops: " << std::endl;
     for (int i = 0; i < p_ops.len(); i++)
         GPU_DEBUG_TRACE << "    " << i << ": " << static_cast<int>(p_ops.kind(i)) << std::endl;
@@ -1215,7 +1216,7 @@ dnnl::post_ops program_node::try_optimize_post_ops(std::vector<fused_primitive_d
     remove_optimized_prefix(cur_post_ops);
 
     GPU_DEBUG_TRACE << "remove optimized prefix ------------------------" << std::endl;
-    GPU_DEBUG_TRACE << " " << id() << ", num of post_ops " << p_ops.len() << std::endl;
+    GPU_DEBUG_TRACE << " " << p_node->id() << ", num of post_ops " << p_ops.len() << std::endl;
     GPU_DEBUG_TRACE << " * p_ops: " << std::endl;
     for (int i = 0; i < p_ops.len(); i++)
         GPU_DEBUG_TRACE << "    " << i << ": " << static_cast<int>(p_ops.kind(i)) << std::endl;
@@ -1333,7 +1334,7 @@ dnnl::post_ops program_node::try_optimize_post_ops(std::vector<fused_primitive_d
                 dnnl::memory::desc desc;
                 float alpha, beta;
 
-                cldnn::program_node& cur_node = get_dependency(cur_post_ops[cur_post_op_idx].mem_dep);
+                cldnn::program_node& cur_node = p_node->get_dependency(cur_post_ops[cur_post_op_idx].mem_dep);
 
                 p_ops.get_params_binary(cur_post_op_idx, alg, desc);
                 p_ops.get_params_eltwise(prev_post_op_idx, alg, alpha, beta);
@@ -1377,7 +1378,7 @@ dnnl::post_ops program_node::try_optimize_post_ops(std::vector<fused_primitive_d
                 dnnl::memory::desc desc;
                 float alpha, beta;
 
-                cldnn::program_node& prev_node = get_dependency(cur_post_ops[prev_post_op_idx].mem_dep);
+                cldnn::program_node& prev_node = p_node->get_dependency(cur_post_ops[prev_post_op_idx].mem_dep);
 
                 p_ops.get_params_eltwise(cur_post_op_idx, alg, alpha, beta);
                 p_ops.get_params_binary(prev_post_op_idx, alg, desc);
@@ -1420,7 +1421,7 @@ dnnl::post_ops program_node::try_optimize_post_ops(std::vector<fused_primitive_d
                 dnnl::algorithm alg;
                 float alpha, beta;
 
-                cldnn::program_node& prev_node = get_dependency(cur_post_ops[prev_post_op_idx].mem_dep);
+                cldnn::program_node& prev_node = p_node->get_dependency(cur_post_ops[prev_post_op_idx].mem_dep);
 
                 p_ops.get_params_eltwise(cur_post_op_idx, alg, alpha, beta);
 
@@ -1480,7 +1481,9 @@ void program_node::create_onednn_primitive_attributes(
         const std::vector<fused_primitive_desc>& cldnn_post_ops,
         std::shared_ptr<dnnl::primitive_attr>& attrs,
         std::vector<fused_primitive_desc_onednn>& fused_ops,
-        kernel_impl_params* impl_params = nullptr) const {
+        bool allow_new_shape_infer,
+        program_node* p_node,
+        kernel_impl_params* impl_params) {
     dnnl::post_ops post_ops;
     size_t memory_offset = 0;
 
@@ -1494,9 +1497,19 @@ void program_node::create_onednn_primitive_attributes(
     const auto& get_input_layout = [&](int32_t idx) -> cldnn::layout {
         if (impl_params != nullptr) {
             return impl_params->get_input_layout(idx);
-        } else {
-            return get_dependency(idx).get_output_layout();
+        } else if (p_node != nullptr) {
+            return p_node->get_dependency(idx).get_output_layout();
         }
+        OPENVINO_THROW("Error");
+    };
+
+    const auto& get_output_layout = [&](int32_t idx) -> cldnn::layout {
+        if (impl_params != nullptr) {
+            return impl_params->get_output_layout(idx);
+        } else if (p_node != nullptr) {
+            return p_node->get_output_layout(idx);
+        }
+        OPENVINO_THROW("Error");
     };
 
     // Add information about post-operation into the list, update indices
@@ -1521,12 +1534,18 @@ void program_node::create_onednn_primitive_attributes(
             memory_offset++;
     };
 
+    auto prim_type = cldnn::primitive_type_id();
+    if (p_node) {
+        prim_type = p_node->type();
+    } else {
+        impl_params->desc->type;
+    }
+
     int32_t num_sum_post_ops = 0;
     for (size_t idx = 0; idx < cldnn_post_ops.size(); idx++) {
         auto& desc = cldnn_post_ops[idx];
         if (desc.is_type<activation>()) {
             auto fused_desc = desc.typed_desc<activation>();
-            bool allow_new_shape_infer = get_program().is_new_shape_infer();
             if (fused_desc->activation_function == cldnn::activation_func::relu_negative_slope
                 && !fused_desc->additional_params_input.empty()) {
                 auto dep_idx = cldnn_post_ops[idx].outer_dep_start_idx;
@@ -1568,10 +1587,10 @@ void program_node::create_onednn_primitive_attributes(
             auto in = get_input_layout(dep_idx);
 
             auto set_binary_op = [&](dnnl::algorithm alg, onednn_post_op_type op_type) {
-                if (is_type<gemm>()) {
+                if (prim_type == gemm::type_id()) {
                     size_t rank = cldnn::format::dimension(in.format);
                     auto in_pshape = in.get_partial_shape();
-                    auto out_pshape = get_output_layout().get_partial_shape();
+                    auto out_pshape = get_output_layout(0).get_partial_shape();
                     size_t ones_to_add = std::max(out_pshape.size(), static_cast<size_t>(rank)) - in_pshape.size();
                     if (ones_to_add > 0) {
                         layout new_layout = in;
@@ -1588,8 +1607,11 @@ void program_node::create_onednn_primitive_attributes(
                     dnnl::memory::format_tag fmt = onednn::convert_gemm_data_format(dims, in.format);
                     post_ops.append_binary(alg, dnnl::memory::desc(dims, dt, fmt));
                     update_onednn_post_op_list(op_type, dep_idx, fmt, false, dims, dt);
-                } else if (is_type<fully_connected>()) {
-                    auto input_size = this->as<fully_connected>().get_primitive()->input_size;
+                } else if (prim_type == fully_connected::type_id()) {
+                    auto input_size = p_node ? p_node->as<fully_connected>().get_primitive()->input_size : 0;
+                    if (impl_params && impl_params->desc) {
+                        input_size = impl_params->typed_desc<fully_connected>()->input_size;
+                    }
 
                     dnnl::memory::dims dims;
                     for (size_t i = 0; i < input_size; i++) {
@@ -1609,9 +1631,12 @@ void program_node::create_onednn_primitive_attributes(
             };
 
             if (desc.typed_desc<eltwise>()->mode == eltwise_mode::sum) {
-                auto fusing_type = onednn_add_fusing_helpers::get_add_fusing_type(*this, cldnn_post_ops[idx]);
+                auto fusing_type = add_fusing_type::not_supported;
+                if (p_node)
+                    fusing_type = onednn_add_fusing_helpers::get_add_fusing_type(*p_node, cldnn_post_ops[idx]);
+
                 if (fusing_type == add_fusing_type::sum && num_sum_post_ops == 0) {
-                    if (is_type<convolution>()) {
+                    if (prim_type == convolution::type_id()) {
                         post_ops.append_sum(1.0f, 0/*zero-point*/, onednn::convert_data_type(in.data_type));
                     } else {
                         post_ops.append_sum(1.0f);
@@ -1628,7 +1653,7 @@ void program_node::create_onednn_primitive_attributes(
             } else {
                 std::stringstream error_msg;
                 error_msg << "Unsupported eltwise mode: " << static_cast<int>(desc.typed_desc<eltwise>()->mode) << ". ";
-                error_msg << desc.desc->id << " is fused node of " + id() + ".";
+                error_msg << desc.desc->id << " is fused node of " + (p_node ? p_node->id() : "") + ".";
                 OPENVINO_ASSERT(false, error_msg.str());
             }
         } else if (desc.is_type<quantize>()) {
@@ -1825,16 +1850,16 @@ void program_node::create_onednn_primitive_attributes(
     }
 
     // Trying to optimize more than 1 post-ops
-    if (fused_ops.size() > 1) {
+    if (fused_ops.size() > 1 && p_node != nullptr) {
         dnnl::post_ops optimized_post_ops = post_ops;
         bool optimization_is_finished = false;
 
         // Trying to combine multiplications and additions which are placed one after another.
         // We do it in the cycle because some optimization cases can be simplified again from time to time
         do {
-            GPU_DEBUG_IF(get_config().get_disable_onednn_post_ops_opt())
+            GPU_DEBUG_IF(p_node->get_config().get_disable_onednn_post_ops_opt())
                 break;
-            optimized_post_ops = try_optimize_post_ops(fused_ops, optimized_post_ops, attrs, optimization_is_finished);
+            optimized_post_ops = try_optimize_post_ops(fused_ops, optimized_post_ops, attrs, optimization_is_finished, p_node);
         } while (!optimization_is_finished);
 
         attrs->set_post_ops(optimized_post_ops);
@@ -1850,8 +1875,9 @@ void program_node::init_onednn_primitive_attributes() {
     std::vector<fused_primitive_desc_onednn> fused_ops;
     // Can't create onednn attirbute on dynamic shape
     if (!is_dynamic()) {
+        auto allow_new_shape_infer = get_program().is_new_shape_infer();
         const std::vector<fused_primitive_desc>& cldnn_post_ops = get_fused_primitives();
-        create_onednn_primitive_attributes(cldnn_post_ops, attrs, fused_ops, nullptr);
+        create_onednn_primitive_attributes(cldnn_post_ops, attrs, fused_ops, allow_new_shape_infer, this, nullptr);
     }
 
     add_onednn_fused_primitives(fused_ops);

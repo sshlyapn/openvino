@@ -78,6 +78,9 @@ protected:
 /// @details Corresponding values are bitwise equal before/after reorder.
 /// Also merged with subtraction layer, which can subtract, multiply or divide values based on mean_mode value, while doing reordering.
 /// NOTE THAT THIS WILL SUBTRACT THE SAME VALUES FROM EACH BATCH.
+
+class ReorderFuseParams;
+
 struct reorder : public primitive_base<reorder> {
     CLDNN_DECLARE_PRIMITIVE(reorder)
 
@@ -298,6 +301,10 @@ struct reorder : public primitive_base<reorder> {
         ib >> truncate;
     }
 
+    static std::shared_ptr<ReorderFuseParams> create_fuse_params(const layout& in, const layout& out) {
+        return std::make_shared<ReorderFuseParams>(in, out);
+    }
+
 protected:
     std::vector<input_info> get_dependencies() const override {
         if (mean.empty())
@@ -306,4 +313,11 @@ protected:
     }
 };
 
+class ReorderFuseParams : public NodeFuseParams {
+public:
+    ReorderFuseParams(const layout& in, const layout& out) : NodeFuseParams(reorder::type_id()), _in(in), _out(out) {}
+
+    layout _in;
+    layout _out;
+};
 }  // namespace cldnn

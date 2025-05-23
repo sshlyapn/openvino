@@ -169,7 +169,7 @@ class primitive_inst {
     friend class typed_primitive_inst;
 
 public:
-    primitive_inst(network& network);
+    primitive_inst(network& network, const kernel_impl_params& impl_params = {});
     virtual ~primitive_inst() = default;
 
     const std::vector<std::pair<const primitive_inst*, int32_t>>& dependencies() const {
@@ -575,8 +575,8 @@ public:
     typed_primitive_inst_base(network& network, typed_node const& node)
         : typed_primitive_inst_base(network, node, do_allocate_memory(node)) {}
 
-    typed_primitive_inst_base(network& network)
-        : primitive_inst(network), argument(nullptr) {}
+    typed_primitive_inst_base(network& network, const kernel_impl_params& impl_params = {})
+        : primitive_inst(network, impl_params), argument(nullptr) {}
 
 protected:
     typed_primitive_inst_base(network& network, typed_node const& node, bool allocate_memory)

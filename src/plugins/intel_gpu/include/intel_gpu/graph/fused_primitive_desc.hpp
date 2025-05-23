@@ -11,17 +11,6 @@
 #endif
 namespace cldnn {
 
-class NodeFuseParams {
-public:
-    explicit NodeFuseParams(primitive_type_id type) : _type(type) {}
-    virtual ~NodeFuseParams() = default;
-    virtual primitive_type_id type() const { return _type; }
-    virtual size_t ops_count() const { return 0; }
-
-private:
-    const primitive_type_id _type;
-};
-
 // Dependency(Input) type of fusing operation in fused node.
 // There are different ways to generate input var name and type by the dependency(input) type in MakeOpJitConstants in jitter
 // - ORIGINAL: The input of the operation is the fused node such as Conv
