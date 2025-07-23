@@ -33,6 +33,8 @@
 #define IMPL_TYPE_OCL_S impl_types::ocl, cldnn::shape_types::static_shape
 #define IMPL_TYPE_COMMON_D impl_types::common, cldnn::shape_types::dynamic_shape
 #define IMPL_TYPE_COMMON_S impl_types::common, cldnn::shape_types::static_shape
+#define IMPL_TYPE_JIT_D impl_types::jit, cldnn::shape_types::dynamic_shape
+#define IMPL_TYPE_JIT_S impl_types::jit, cldnn::shape_types::static_shape
 
 #define INSTANTIATE_1(prim, suffix) cldnn::implementation_map<cldnn::prim>::get(cldnn::CAT(IMPL_TYPE_, suffix))
 #define INSTANTIATE_2(prim, suffix, ...) INSTANTIATE_1(prim, suffix), INSTANTIATE_1(prim, __VA_ARGS__)
@@ -54,8 +56,10 @@
 
 #if OV_GPU_WITH_ONEDNN
 #    define OV_GPU_CREATE_INSTANCE_ONEDNN(...) EXPAND(CREATE_INSTANCE(__VA_ARGS__))
+#    define OV_GPU_CREATE_INSTANCE_JIT(...) EXPAND(CREATE_INSTANCE(__VA_ARGS__))
 #else
 #    define OV_GPU_CREATE_INSTANCE_ONEDNN(...)
+#    define OV_GPU_GET_INSTANCE_JIT(...)
 #endif
 
 #if OV_GPU_WITH_SYCL
@@ -159,6 +163,7 @@ REGISTER_IMPLS(scatter_nd_update);
 REGISTER_IMPLS(softmax);
 REGISTER_IMPLS(shape_of);
 REGISTER_IMPLS(strided_slice);
+REGISTER_IMPLS(subgraph);
 REGISTER_IMPLS(tile);
 REGISTER_IMPLS(col2im);
 

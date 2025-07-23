@@ -307,3 +307,6 @@ REGISTER_FACTORY(internal, DynamicQuantize);
 REGISTER_FACTORY(internal, PagedAttentionExtension);
 REGISTER_FACTORY(internal, LoraSubgraph);
 REGISTER_FACTORY(internal, LoraSubgraphFused);
+
+// --------------------------- Supported internal ops --------------------------- //
+REGISTER_FACTORY(snippets, Subgraph);

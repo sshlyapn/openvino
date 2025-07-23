@@ -10,7 +10,7 @@
 #include <string>
 
 namespace cldnn {
-// GPU_DEFINE_PRIMITIVE_TYPE_ID(subgraph);
+GPU_DEFINE_PRIMITIVE_TYPE_ID(subgraph);
 
 template<typename ShapeType>
 static std::vector<ShapeType> shape_infer(const std::shared_ptr<ov::snippets::op::Subgraph>& subgraph, kernel_impl_params const& impl_params) {

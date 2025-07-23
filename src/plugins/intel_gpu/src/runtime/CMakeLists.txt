@@ -65,6 +65,7 @@ target_link_libraries(${TARGET_NAME} PRIVATE
     OpenCL::OpenCL
     openvino::itt
     openvino::runtime::dev
+    openvino::snippets
   )
 
 set_target_properties(${TARGET_NAME} PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE ${ENABLE_LTO})

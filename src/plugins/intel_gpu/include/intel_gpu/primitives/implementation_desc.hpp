@@ -20,6 +20,7 @@ enum class impl_types : uint8_t {
     onednn = 1 << 3,
     sycl = 1 << 4,
     cm = 1 << 5,
+    jit = 1 << 6,
     any = 0xFF,
 };
 

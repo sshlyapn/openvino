@@ -24,6 +24,7 @@
 #include "openvino/runtime/properties.hpp"
 #include "transformations/utils/utils.hpp"
 #include "intel_gpu/op/kv_cache.hpp"
+#include "snippets/op/subgraph.hpp"
 
 
 namespace ov::intel_gpu {
@@ -55,6 +56,9 @@ bool requires_new_shape_infer(const std::shared_ptr<ov::Node>& op) {
         return true;
 
     if (ov::is_type<ov::op::internal::DynamicQuantize>(op) || ov::is_type<ov::op::internal::RMS>(op))
+        return true;
+
+    if (ov::is_type<ov::snippets::op::Subgraph>(op))
         return true;
 
     if (ov::is_type<ov::op::v5::Loop>(op)) {
