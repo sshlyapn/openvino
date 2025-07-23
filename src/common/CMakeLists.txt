@@ -6,7 +6,7 @@ add_subdirectory(itt)
 add_subdirectory(conditional_compilation)
 add_subdirectory(util)
 
-if(ENABLE_INTEL_CPU)
+if(ENABLE_INTEL_CPU OR ENABLE_INTEL_GPU)
     add_subdirectory(snippets)
 endif()
 
