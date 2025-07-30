@@ -10,7 +10,7 @@ set(TARGET_NAME "openvino_intel_gpu_jit_obj")
 
 ov_gpu_add_backend_target(
     NAME ${TARGET_NAME}
-    LINK_LIBRARIES onednn_gpu_tgt
+    LINK_LIBRARIES onednn_gpu_tgt openvino::snippets
 )
 
 ov_build_target_faster(${TARGET_NAME} PCH PCH_EXCLUDE detection_output.cpp)

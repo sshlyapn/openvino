@@ -6,6 +6,9 @@
 #include "snippets/op/subgraph.hpp"
 #include "primitive.hpp"
 
+#include "ocl/ocl_engine.hpp"
+#include "jit/gpu_generator.hpp"
+
 namespace cldnn {
 
 /// @brief Subgraph primitive
@@ -19,8 +22,26 @@ struct subgraph : public primitive_base<subgraph> {
     /// @param id This primitive id
     /// @param inputs Input primitive ids
     /// @param subgraph Original subgraph node
-    subgraph(const primitive_id& id, const std::vector<input_info>& inputs, const std::shared_ptr<ov::snippets::op::Subgraph>& subgraph)
-        : primitive_base(id, inputs), ov_subgraph(subgraph->clone()) {}
+    /// @param eng ocl engine
+    subgraph(const primitive_id& id, const std::vector<input_info>& inputs,
+             const std::shared_ptr<ov::snippets::op::Subgraph>& subgraph, const cldnn::engine& eng)
+        : primitive_base(id, inputs), ov_subgraph(subgraph->clone()) {
+        ngen::HW hw;
+        switch (eng.get_device()->get_info().arch) {
+        case gpu_arch::gen9: hw = ngen::HW::Gen9; break;
+        case gpu_arch::gen11: hw = ngen::HW::Gen11; break;
+        case gpu_arch::xe_lp: hw = ngen::HW::XeLP; break;
+        case gpu_arch::xe_hp: hw = ngen::HW::XeHP; break;
+        case gpu_arch::xe_hpg: hw = ngen::HW::XeHPG; break;
+        case gpu_arch::xe_hpc: hw = ngen::HW::XeHPC; break;
+        case gpu_arch::xe2: hw = ngen::HW::Xe2; break;
+        case gpu_arch::xe3: hw = ngen::HW::Xe3; break;
+        case gpu_arch::unknown: hw = ngen::HW::Unknown; break;
+        default:
+            OPENVINO_THROW("Unexpected arch");
+        }
+        ov_subgraph->set_generator(std::make_shared<ov::intel_gpu::jit::GPUGenerator>(hw));
+    }
 
     std::shared_ptr<ov::snippets::op::Subgraph> ov_subgraph;
 
