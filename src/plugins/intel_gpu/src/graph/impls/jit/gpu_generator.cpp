@@ -5,6 +5,10 @@
 #include "gpu_generator.hpp"
 
 #include "snippets/runtime_configurator.hpp"
+#include "emitters/jit_eltwise_emitters.hpp"
+#include "emitters/jit_snippets_emitters.hpp"
+
+#include "openvino/op/add.hpp"
 
 
 using namespace dnnl::impl::gpu::intel::jit;
@@ -13,7 +17,8 @@ namespace ov::intel_gpu::jit {
 
 #define CREATE_SNIPPETS_EMITTER(e_type, ...)                                                      \
         {[this](const snippets::lowered::ExpressionPtr& expr) -> std::shared_ptr<snippets::Emitter> { \
-             return std::make_shared<e_type>(h.get(), isa, expr, ##__VA_ARGS__);                      \
+             /*return std::make_shared<e_type>(h.get(), isa, expr, ##__VA_ARGS__);*/                  \
+             return std::make_shared<e_type>(##__VA_ARGS__);                                          \
          },                                                                                           \
          [](const std::shared_ptr<ov::Node>& n) -> std::set<std::vector<element::Type>> {             \
              return e_type::get_supported_precisions(n);                                              \
@@ -37,9 +42,9 @@ GPUTargetMachine::GPUTargetMachine(dnnl::impl::gpu::intel::jit::gpu_gen_t hw)
     }
     OPENVINO_ASSERT(m_h, "Unitialized generator");
 
-    // data movement
-    //jitters[op::v0::Parameter::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(jit_nop_emitter);
-    //jitters[op::v0::Result::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(jit_nop_emitter);
+    jitters[op::v0::Parameter::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(jit_nop_emitter);
+    jitters[op::v0::Result::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(jit_nop_emitter);
+    jitters[op::v1::Add::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(jit_add_emitter);
 }
 
 std::shared_ptr<snippets::TargetMachine> GPUTargetMachine::clone() const {
@@ -112,6 +117,10 @@ std::shared_ptr<snippets::Generator> GPUGenerator::clone() const {
     OPENVINO_ASSERT(cpu_target_machine,
                     "Failed to clone GPUGenerator: the instance contains incompatible TargetMachine type");
     return std::make_shared<GPUGenerator>(cpu_target_machine);
+}
+
+ov::snippets::RegType GPUGenerator::get_specific_op_out_reg_type(const ov::Output<ov::Node>& out) const {
+    return ov::snippets::RegType::undefined;
 }
 
 }  // namespace ov::intel_gpu::jit

@@ -18,7 +18,7 @@ static void CreateSubgraphOp(ProgramBuilder& p, const std::shared_ptr<ov::op::sn
     const auto& inputs = p.GetInputInfo(op);
     const auto& primitive_name = layer_type_name_ID(op);
 
-    auto prim = cldnn::subgraph(primitive_name, inputs, op, p.get_engine());
+    auto prim = cldnn::subgraph(primitive_name, inputs, op);
     prim.output_data_types = get_output_data_types(op);
 
     p.add_primitive(*op, prim);

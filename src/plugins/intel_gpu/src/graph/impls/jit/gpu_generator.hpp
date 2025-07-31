@@ -56,6 +56,8 @@ public:
     GPUGenerator(dnnl::impl::gpu::intel::jit::gpu_gen_t hw);
     GPUGenerator(const std::shared_ptr<GPUTargetMachine>& target);
     std::shared_ptr<Generator> clone() const override;
+
+    ov::snippets::RegType get_specific_op_out_reg_type(const ov::Output<ov::Node>& out) const override;
 };
 
 }  // namespace ov::intel_gpu::jit
