@@ -33,7 +33,7 @@ public:
     }
     int getSIMD() const override {
         return dnnl::impl::gpu::intel::jit::ngen_code_generator_t<hw>::getSIMD();
-    };
+    }
     int getGRFCount() const override {
         return dnnl::impl::gpu::intel::jit::ngen_code_generator_t<hw>::getGRFCount();
     }
