@@ -9,9 +9,11 @@
 
 namespace ov::intel_gpu::jit {
 
-class jit_add_emitter : public jit_emitter {
+template <dnnl::impl::gpu::intel::jit::gpu_gen_t hw>
+class jit_add_emitter : public jit_emitter<hw> {
 public:
-    jit_add_emitter() = default;
+    jit_add_emitter(dnnl::impl::gpu::intel::jit::ngen_code_generator_t<hw>* host,
+                    ov::element::Type exec_prc = ov::element::f32) : jit_emitter<hw>(host, exec_prc) {};
 
     static std::set<std::vector<ov::element::Type>> get_supported_precisions(
         [[maybe_unused]] const std::shared_ptr<ov::Node>& node) {

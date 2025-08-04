@@ -20,18 +20,17 @@
 namespace ov::intel_gpu::jit {
 
 class CompiledSnippetGPU : public snippets::CompiledSnippet {
-    const std::unique_ptr<const jit_snippet_base_t> h_compiled;
-
 public:
     [[nodiscard]] const uint8_t* get_code() const override;
     [[nodiscard]] size_t get_code_size() const override;
     [[nodiscard]] bool empty() const override;
-    explicit CompiledSnippetGPU(std::unique_ptr<jit_snippet_base_t> h);
+    explicit CompiledSnippetGPU() = default;
 };
 
+template <ngen::HW hw>
 class GPUTargetMachine : public ov::snippets::TargetMachine {
 public:
-    explicit GPUTargetMachine(dnnl::impl::gpu::intel::jit::gpu_gen_t hw);
+    explicit GPUTargetMachine();
 
     [[nodiscard]] bool is_supported() const override { return true; }
     [[nodiscard]] std::shared_ptr<snippets::TargetMachine> clone() const override;
@@ -47,17 +46,21 @@ public:
     snippets::CompiledSnippetPtr get_snippet() override;
 
 private:
-    dnnl::impl::gpu::intel::jit::gpu_gen_t m_hw;
-    std::unique_ptr<jit_snippet_base_t> m_h;
+    std::unique_ptr<jit_snippet_t<hw>> m_h;
 };
 
 class GPUGenerator : public ov::snippets::Generator {
 public:
     GPUGenerator(dnnl::impl::gpu::intel::jit::gpu_gen_t hw);
-    GPUGenerator(const std::shared_ptr<GPUTargetMachine>& target);
     std::shared_ptr<Generator> clone() const override;
 
     ov::snippets::RegType get_specific_op_out_reg_type(const ov::Output<ov::Node>& out) const override;
+
+private:
+    template <ngen::HW hw>
+    GPUGenerator(const std::shared_ptr<GPUTargetMachine<hw>>& target);
+
+    static std::shared_ptr<ov::snippets::TargetMachine> create_target_machine(ngen::HW hw);
 };
 
 }  // namespace ov::intel_gpu::jit

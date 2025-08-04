@@ -6,14 +6,20 @@
 
 #include "snippets/emitter.hpp"
 
+#include "graph/impls/jit/jit_generator.hpp"
+
 #include "openvino/core/type/element_type.hpp"
 #include "openvino/core/node.hpp"
 
 namespace ov::intel_gpu::jit {
 
+template <dnnl::impl::gpu::intel::jit::gpu_gen_t hw>
 class jit_emitter : public ov::snippets::Emitter {
 public:
-    jit_emitter() = default;
+    jit_emitter(dnnl::impl::gpu::intel::jit::ngen_code_generator_t<hw>* host,
+                ov::element::Type exec_prc = ov::element::f32) :
+        m_h(host),
+        m_exec_prc(exec_prc) {}
 
     /**
      * @brief Returns supported precisions.
@@ -32,6 +38,9 @@ protected:
                         const std::vector<size_t>& gpr) const override {
         OPENVINO_THROW("Unimplemented");
     }
+
+    dnnl::impl::gpu::intel::jit::ngen_code_generator_t<hw>* m_h;
+    ov::element::Type m_exec_prc;
 };
 
 }  // namespace ov::intel_gpu::jit
