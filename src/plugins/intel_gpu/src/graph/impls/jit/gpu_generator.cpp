@@ -97,13 +97,20 @@ bool CompiledSnippetGPU::empty() const {
 GPUGenerator::GPUGenerator(ngen::HW hw)
     : Generator(create_target_machine(hw)) {}
 
-template <ngen::HW hw>
-GPUGenerator::GPUGenerator(const std::shared_ptr<GPUTargetMachine<hw>>& target) : Generator(target) {}
+GPUGenerator::GPUGenerator(const std::shared_ptr<ov::snippets::TargetMachine>& target)
+    : Generator(target) {
+    OPENVINO_ASSERT(typeid(*target) == typeid(GPUTargetMachine<ngen::HW::Gen9>) ||
+                    typeid(*target) == typeid(GPUTargetMachine<ngen::HW::Gen11>) ||
+                    typeid(*target) == typeid(GPUTargetMachine<ngen::HW::Gen12LP>) ||
+                    typeid(*target) == typeid(GPUTargetMachine<ngen::HW::XeHP>) ||
+                    typeid(*target) == typeid(GPUTargetMachine<ngen::HW::XeHPG>) ||
+                    typeid(*target) == typeid(GPUTargetMachine<ngen::HW::XeHPC>) ||
+                    typeid(*target) == typeid(GPUTargetMachine<ngen::HW::Xe2>) ||
+                    typeid(*target) == typeid(GPUTargetMachine<ngen::HW::Xe3>));
+}
 
 std::shared_ptr<snippets::Generator> GPUGenerator::clone() const {
-    //const auto hw = target->get_hw();
-    //return std::make_shared<GPUGenerator>(target->clone());
-    OPENVINO_THROW("Unimplemented!");
+    return std::shared_ptr<GPUGenerator>(new GPUGenerator(target->clone()));
 }
 
 ov::snippets::RegType GPUGenerator::get_specific_op_out_reg_type(const ov::Output<ov::Node>& out) const {

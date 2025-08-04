@@ -57,8 +57,7 @@ public:
     ov::snippets::RegType get_specific_op_out_reg_type(const ov::Output<ov::Node>& out) const override;
 
 private:
-    template <ngen::HW hw>
-    GPUGenerator(const std::shared_ptr<GPUTargetMachine<hw>>& target);
+    GPUGenerator(const std::shared_ptr<ov::snippets::TargetMachine>& target);
 
     static std::shared_ptr<ov::snippets::TargetMachine> create_target_machine(ngen::HW hw);
 };
