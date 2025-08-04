@@ -44,7 +44,7 @@ void Add::SetUp() {
     auto f = ov::test::snippets::AddFunction(inputDynamicShapes);
     function = f.getOriginal();
     setInferenceType(type);
-    setIgnoreCallbackMode();
+    //setIgnoreCallbackMode();
 }
 
 std::string AddConst::getTestCaseName(testing::TestParamInfo<ov::test::snippets::AddConstParams> obj) {
