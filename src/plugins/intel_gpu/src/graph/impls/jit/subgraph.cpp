@@ -12,132 +12,60 @@
 #include "runtime/ocl/ocl_engine.hpp"
 
 #include "intel_gpu/graph/serialization/binary_buffer.hpp"
+#include "plugin/transformations/snippets/lowered/set_single_kernel_work_amount.hpp"
+
+#include "snippets/lowered/pass/optimize_domain.hpp"
+#include "snippets/utils/utils.hpp"
+#include "gpu_generator.hpp"
 
 #include <vector>
 namespace ov::intel_gpu::jit {
 
 using namespace dnnl::impl::gpu::intel::jit;
 using namespace ngen;
-
-template <HW hw>
-class VectorScaleKernelGenerator : public OpenCLCodeGenerator<hw>
-{
-protected:
-    NGEN_FORWARD_OPENCL(hw);
-
-public:
-    VectorScaleKernelGenerator() : OpenCLCodeGenerator<hw>()
-    {
-        // Define kernel interface for OpenCL.
-        newArgument("buffer", ExternalArgumentType::GlobalPtr);
-        newArgument("alpha", DataType::f);
-        requireLocalID(1);
-        requireLocalSize();
-        requireSIMD((GRF::bytes(hw) == 64) ? 16 : 8);
-        externalName("vector_scale");
-
-        finalizeInterface();
-
-        auto bufferSurface = Surface(getArgumentSurfaceIfExists("buffer"));     // Surface # for buffer.
-        auto bufferPtr = getArgument("buffer");                                 // A64 pointer for buffer.
-        auto alpha = getArgument("alpha");
-
-        auto localSize = getLocalSize(0).uw();
-        auto localID = getLocalID(0);               // Vector of local IDs.
-        auto groupID = r0.ud(1);                    // Thread group (a.k.a. workgroup) IDs are in r0.ud(1) (X) r0.ud(6) (Y) r0.ud(7) (Z)
-
-        // Local variables.
-        auto globalID = r12.ud(0);
-        auto header = r13;
-        auto data = r14;
-        auto temp = r15;
-
-        // Decide on load/store messages.
-        bool useLSC = (hw >= HW::XeHPC);
-
-        // All instructions use W (NoMask) by default.
-        setDefaultNoMask();
-
-        // Enable automatic SWSB for Gen12.
-        setDefaultAutoSWSB();
-
-        // Prologue for ATS+.
-        prologue();
-
-        // Enable IEEE denormals.
-        or_(1 | Switch, cr0[0], cr0[0], 0x4C0);
-
-        // Calculate global ID = (group ID) * (local size) + (local ID for lane 0).
-        mul(1, globalID, groupID, localSize);
-        add(1, globalID, globalID, localID[0]);
-
-        // Do 32 byte (2 OWord) block read at offset (global ID) * sizeof(float).
-        if (!useLSC) {
-            shr<uint32_t>(1, header[2], globalID, 2);
-            load(8, data, block_oword(2), bufferSurface, header);
-        } else {
-            shl(1, globalID, globalID, 2);
-            addc(1, header.ud(0), bufferPtr.ud(0), globalID);
-            mov(1, temp.ud(0), acc0.ud(0));
-            add(1, header.ud(1), bufferPtr.ud(1), temp.ud(0));
-            load(1, data, D32 | V8T, A64, header);
-        }
-
-        // Scale data.
-        mul<float>(8, data, data, alpha);
-
-        // Store updated data.
-        if (!useLSC)
-            store(8, block_oword(2), bufferSurface, header, data);
-        else
-            store(1, D32 | V8T, A64, header, data);
-
-        // End thread. Must move r0 to one of r112-r127, then call threadend.
-        mov<uint32_t>(8, r127, r0);
-        threadend(r127);
-    }
-};
-
-
 class SubgraphImpl : public primitive_impl {
     using primitive_impl::primitive_impl;
 
+    using DataFlowPasses = std::vector<ov::snippets::pass::Manager::PositionedPassBase>;
+    using ControlFlowPasses = std::vector<ov::snippets::lowered::pass::PassPipeline::PositionedPassLowered>;
+
+    std::shared_ptr<ov::snippets::op::Subgraph> m_subgraph {nullptr};
+
 public:
-    explicit SubgraphImpl(const program_node& /*node*/, const kernel_impl_params& impl_params)
-        : primitive_impl("jit::subgraph") {
-            const auto& engine = downcast<ocl::ocl_engine>(impl_params.get_program().get_engine());
+    explicit SubgraphImpl(const program_node& node, const kernel_impl_params& impl_params)
+        : primitive_impl("jit::subgraph"), m_subgraph(node.as<subgraph>().get_primitive()->ov_subgraph->clone())  {
+            m_subgraph->set_generator(
+                std::make_shared<ov::intel_gpu::jit::GPUGenerator>(ngenHW2pluginHW(impl_params.get_device_info().arch)));
 
-            HW hw = VectorScaleKernelGenerator<HW::Unknown>::detectHW(engine.get_cl_context().get(), engine.get_cl_device().get());
-            const char *gpuString = "unknown";
+            const auto in_blocked_shapes = getSnippetsBlockedShapes(impl_params);
+            const auto precisions = getIOPrecisions(impl_params);
+            m_subgraph->data_flow_transformations(in_blocked_shapes, precisions.first, precisions.second);
 
-            switch (hw) {
-                case HW::Gen9:    gpuString = "Gen9"; break;
-                case HW::Gen11:   gpuString = "Gen11"; break;
-                case HW::Gen12LP: gpuString = "Gen12LP"; break;
-                case HW::XeHP:    gpuString = "XeHP"; break;
-                case HW::XeHPG:   gpuString = "XeHPG"; break;
-                case HW::XeHPC:   gpuString = "XeHPC"; break;
-                case HW::Xe2:     gpuString = "Xe2"; break;
-                case HW::Xe3:     gpuString = "Xe3"; break;
-                default:          OPENVINO_THROW("[GPU] Unsupported architecture");
-            }
+            const auto control_flow_config = std::make_shared<ov::snippets::lowered::pass::PassConfig>();
+            control_flow_config->disable<ov::snippets::lowered::pass::OptimizeDomain>();
+            m_subgraph->set_tile_rank(1UL);
 
-            std::cout << "GPU arch: " << gpuString << "\n";
-
-            // Create appropriate kernel generator object for the detected HW, and get a cl_kernel.
-            // switch (hw) {
-            //     case HW::Gen9:    VectorScaleKernelGenerator<HW::Gen9>().getKernel(engine.get_cl_context().get(), engine.get_cl_device().get());
-            //     case HW::Gen11:   VectorScaleKernelGenerator<HW::Gen11>().getKernel(engine.get_cl_context().get(), engine.get_cl_device().get());
-            //     case HW::Gen12LP: VectorScaleKernelGenerator<HW::Gen12LP>().getKernel(engine.get_cl_context().get(), engine.get_cl_device().get());
-            //     case HW::XeHP:    VectorScaleKernelGenerator<HW::XeHP>().getKernel(engine.get_cl_context().get(), engine.get_cl_device().get());
-            //     case HW::XeHPG:   VectorScaleKernelGenerator<HW::XeHPG>().getKernel(engine.get_cl_context().get(), engine.get_cl_device().get());
-            //     case HW::XeHPC:   VectorScaleKernelGenerator<HW::XeHPC>().getKernel(engine.get_cl_context().get(), engine.get_cl_device().get());
-            //     case HW::Xe2:     VectorScaleKernelGenerator<HW::Xe2>().getKernel(engine.get_cl_context().get(), engine.get_cl_device().get());
-            //     case HW::Xe3:     VectorScaleKernelGenerator<HW::Xe3>().getKernel(engine.get_cl_context().get(), engine.get_cl_device().get());
-            //     default:          OPENVINO_THROW("[GPU] Unsupported architecture");;
-            // }
-
+            m_subgraph->control_flow_transformations(0,   // unused
+                                                     256, // unused
+                                                     std::make_shared<ov::snippets::IShapeInferSnippetsFactory>(),
+                                                     control_flow_config,
+                                                     getControlFlowPasses());
         }
+    
+    ControlFlowPasses getControlFlowPasses() const {
+        using PassPosition = ov::snippets::pass::PassPosition;
+        using Place = PassPosition::Place;
+
+        ControlFlowPasses backend_passes;
+#define SNIPPETS_REGISTER_PASS_ABSOLUTE(PASS_PLACE, PASS, ...)             \
+        backend_passes.emplace_back(PassPosition(PASS_PLACE), std::make_shared<PASS>(__VA_ARGS__))
+
+
+        SNIPPETS_REGISTER_PASS_ABSOLUTE(Place::PipelineStart,
+                                        ov::intel_gpu::pass::SetSingleKernelWorkAmount);
+#undef SNIPPETS_REGISTER_PASS_ABSOLUTE
+        return backend_passes;
+    }
 
     SubgraphImpl() : primitive_impl() {}
 
@@ -159,6 +87,47 @@ public:
     }
 
     void update(primitive_inst& inst, const kernel_impl_params& impl_param) override { }
+
+private:
+    static ngen::HW ngenHW2pluginHW(gpu_arch arch) {
+        switch (arch) {
+        case gpu_arch::gen9: return ngen::HW::Gen9;
+        case gpu_arch::gen11: return ngen::HW::Gen11;
+        case gpu_arch::xe_lp: return ngen::HW::XeLP;
+        case gpu_arch::xe_hp: return ngen::HW::XeHP;
+        case gpu_arch::xe_hpg: return ngen::HW::XeHPG;
+        case gpu_arch::xe_hpc: return ngen::HW::XeHPC;
+        case gpu_arch::xe2: return ngen::HW::Xe2;
+        case gpu_arch::xe3: return ngen::HW::Xe3;
+        case gpu_arch::unknown: return ngen::HW::Unknown;
+        default:
+            OPENVINO_THROW("Unexpected arch");
+        }
+    }
+
+    static ov::snippets::op::Subgraph::BlockedShapeVector getSnippetsBlockedShapes(const kernel_impl_params& impl_params) {
+        ov::snippets::op::Subgraph::BlockedShapeVector in_blocked_shapes(impl_params.input_layouts.size());
+        for (size_t i = 0; i < in_blocked_shapes.size(); i++) {
+            // support only planar shapes
+            const auto blocked_dims = ov::snippets::utils::pshape_to_vdims(impl_params.input_layouts[i].get_partial_shape());
+            const auto blocked_layout = ov::snippets::utils::get_planar_layout(blocked_dims.size());
+            in_blocked_shapes[i] = {blocked_dims, blocked_layout};
+        }
+        return in_blocked_shapes;
+    }
+
+    static std::pair<std::vector<ov::element::Type>, std::vector<ov::element::Type>> getIOPrecisions(const kernel_impl_params& impl_params) {
+        std::pair<std::vector<ov::element::Type>, std::vector<ov::element::Type>> prc;
+        prc.first.reserve(impl_params.input_layouts.size());
+        prc.second.reserve(impl_params.output_layouts.size());
+        for (const auto& in : impl_params.input_layouts) {
+            prc.first.push_back(in.data_type);
+        }
+        for (const auto& out : impl_params.output_layouts) {
+            prc.second.push_back(out.data_type);
+        }
+        return prc;
+    }
 };
 
 std::unique_ptr<primitive_impl> Subgraph::create_impl(const program_node& node, const RuntimeParams& params) const {

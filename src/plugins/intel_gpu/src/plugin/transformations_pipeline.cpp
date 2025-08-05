@@ -1296,8 +1296,7 @@ void TransformationsPipeline::apply(std::shared_ptr<ov::Model> func) {
     }
 
     // TODO: Move to the right place
-    {
-        //ov::serialize(func, "pre_snippets.xml");
+    if (config.get_snippets_mode() != ov::intel_gpu::SnippetsMode::DISABLE) {
         ov::pass::Manager manager("GPU:Snippets");
         manager.set_per_pass_validation(false);
 
@@ -1333,7 +1332,6 @@ void TransformationsPipeline::apply(std::shared_ptr<ov::Model> func) {
             });
 
         manager.run_passes(func);
-        //ov::serialize(func, "post_snippets.xml");
     }
 }
 }  // namespace ov::intel_gpu

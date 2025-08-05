@@ -6,6 +6,8 @@
 #include "snippets/op/subgraph.hpp"
 #include "primitive.hpp"
 
+#include "ocl/ocl_engine.hpp"
+
 namespace cldnn {
 
 /// @brief Subgraph primitive
@@ -19,7 +21,8 @@ struct subgraph : public primitive_base<subgraph> {
     /// @param id This primitive id
     /// @param inputs Input primitive ids
     /// @param subgraph Original subgraph node
-    subgraph(const primitive_id& id, const std::vector<input_info>& inputs, const std::shared_ptr<ov::snippets::op::Subgraph>& subgraph)
+    subgraph(const primitive_id& id, const std::vector<input_info>& inputs,
+             const std::shared_ptr<ov::snippets::op::Subgraph>& subgraph)
         : primitive_base(id, inputs), ov_subgraph(subgraph->clone()) {}
 
     std::shared_ptr<ov::snippets::op::Subgraph> ov_subgraph;
