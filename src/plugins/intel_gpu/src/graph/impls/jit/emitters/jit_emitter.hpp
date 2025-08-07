@@ -79,6 +79,6 @@ protected:
     TEMPLATE_INSTANCE(emitter, ngen::HW::XeHPC)   \
     TEMPLATE_INSTANCE(emitter, ngen::HW::Xe2)     \
     TEMPLATE_INSTANCE(emitter, ngen::HW::Xe3)
- 
+
 
 }  // namespace ov::intel_gpu::jit

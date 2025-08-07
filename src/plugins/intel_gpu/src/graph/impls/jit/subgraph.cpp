@@ -35,7 +35,7 @@ public:
     explicit SubgraphImpl(const program_node& node, const kernel_impl_params& impl_params)
         : primitive_impl("jit::subgraph"), m_subgraph(node.as<subgraph>().get_primitive()->ov_subgraph->clone())  {
             m_subgraph->set_generator(
-                std::make_shared<ov::intel_gpu::jit::GPUGenerator>(ngenHW2pluginHW(impl_params.get_device_info().arch)));
+                std::make_shared<ov::intel_gpu::jit::GPUGenerator>(impl_params.get_program().get_engine()));
 
             const auto in_blocked_shapes = getSnippetsBlockedShapes(impl_params);
             const auto precisions = getIOPrecisions(impl_params);
@@ -51,9 +51,36 @@ public:
                                                      control_flow_config,
                                                      getControlFlowPasses());
 
-            auto snippet = m_subgraph->generate(nullptr);
+            auto result = m_subgraph->generate(nullptr);
+
+            auto gpu_snippets = std::dynamic_pointer_cast<CompiledSnippetGPU>(result.lowering_result.compiled_snippet);
+            ocl_kernel = gpu_snippets->kernel;
+            kd = gpu_snippets->kernels_data;
+
+            update_dispatch_data(impl_params);
+            configure_arguments(impl_params);
         }
-    
+
+    void update_dispatch_data(const kernel_impl_params& impl_params) {
+        const auto& runtime_config = m_subgraph->update_runtime_config();
+        const auto& master_shape = runtime_config->master_shape;
+        const auto total_elements_num = std::accumulate(master_shape.begin(), master_shape.end(), static_cast<size_t>(1), std::multiplies<size_t>());
+        const auto simd = 8;
+
+        kd.params.workGroups.global = {total_elements_num, 1, 1};
+        kd.params.workGroups.local = {simd, 1, 1};
+    }
+
+    void configure_arguments(const kernel_impl_params& impl_params) {
+        for (uint32_t i = 0; i < impl_params.input_layouts.size(); i++) {
+            kd.params.arguments.push_back({cldnn::argument_desc::Types::INPUT, i});
+        }
+
+        for (uint32_t i = 0; i < impl_params.output_layouts.size(); i++) {
+            kd.params.arguments.push_back({cldnn::argument_desc::Types::OUTPUT, i});
+        }
+    }
+
     ControlFlowPasses getControlFlowPasses() const {
         using PassPosition = ov::snippets::pass::PassPosition;
         using Place = PassPosition::Place;
@@ -77,35 +104,77 @@ public:
         return std::make_unique<SubgraphImpl>(*this);
     }
 
+    [[nodiscard]] virtual cldnn::kernel_arguments_data get_arguments(const cldnn::primitive_inst& instance) const {
+        cldnn::kernel_arguments_data args;
+
+        for (size_t i = 0; i < instance.inputs_memory_count(); i++) {
+            args.inputs.push_back(instance.input_memory_ptr(i));
+        }
+
+        if (instance.has_fused_primitives()) {
+            size_t count = instance.get_fused_mem_count();
+            for (size_t i = 0; i < count; i++) {
+                args.fused_op_inputs.push_back(instance.fused_memory(i));
+            }
+        }
+
+        for (size_t i = 0; i < instance.outputs_memory_count(); i++) {
+            args.outputs.push_back(instance.output_memory_ptr(i));
+        }
+
+        args.shape_info = instance.shape_info_memory_ptr();
+
+        auto intermediates = instance.get_intermediates_memories();
+        args.intermediates = {intermediates.begin(), intermediates.end()};
+
+        return args;
+    }
+
     void init_kernels(const kernels_cache&, const kernel_impl_params&) override {}
-    void set_arguments(primitive_inst& /*instance*/) override {}
+
+    void set_arguments(primitive_inst& instance) override {
+        auto& stream = instance.get_network().get_stream();
+
+        auto args_data = get_arguments(instance);
+
+        // Update scalars pointer
+        args_data.scalars = &kd.params.scalars;
+
+        for (const auto arg : kd.params.arguments) {
+            GPU_DEBUG_TRACE_DETAIL << "Argument: type=" << static_cast<int>(arg.t) << " idx=" << arg.index << "\n";
+        }
+
+        stream.set_arguments(*ocl_kernel, kd.params, args_data);
+    }
+
     void set_arguments(primitive_inst& /*instance*/, kernel_arguments_data& /*args*/) override {}
+
     std::vector<BufferDescriptor> get_internal_buffer_descs(const kernel_impl_params&) const override { return {}; }
 
     event::ptr execute(const std::vector<event::ptr>& events, primitive_inst& instance) override {
         auto& stream = instance.get_network().get_stream();
+        if (instance.can_be_optimized()) {
+            return stream.aggregate_events(events, false, instance.is_output());
+        }
 
-        return stream.aggregate_events(events);
+        // If any user of the desc's users is CPU implementation or network's output, set desc as a output event (event
+        // won't be nullptr)
+        bool needs_completion_event = instance.needs_completion_event();
+
+        auto& params = kd.params;
+
+        const auto& gws = params.workGroups.global;
+        const auto& lws = params.workGroups.local;
+
+        GPU_DEBUG_TRACE_DETAIL << "Enqueue jit kernel : gws=[" << gws[0] << ", " << gws[1] << ", " << gws[2] << "] " << "lws=["
+                               << lws[0] << ", " << lws[1] << ", " << lws[2] << "]" << (needs_completion_event ? " has_completion_event=true" : "") << '\n';
+
+        return stream.enqueue_kernel(*ocl_kernel, params, {}, events, needs_completion_event);
     }
 
     void update(primitive_inst& inst, const kernel_impl_params& impl_param) override { }
 
 private:
-    static ngen::HW ngenHW2pluginHW(gpu_arch arch) {
-        switch (arch) {
-        case gpu_arch::gen9: return ngen::HW::Gen9;
-        case gpu_arch::gen11: return ngen::HW::Gen11;
-        case gpu_arch::xe_lp: return ngen::HW::XeLP;
-        case gpu_arch::xe_hp: return ngen::HW::XeHP;
-        case gpu_arch::xe_hpg: return ngen::HW::XeHPG;
-        case gpu_arch::xe_hpc: return ngen::HW::XeHPC;
-        case gpu_arch::xe2: return ngen::HW::Xe2;
-        case gpu_arch::xe3: return ngen::HW::Xe3;
-        case gpu_arch::unknown: return ngen::HW::Unknown;
-        default:
-            OPENVINO_THROW("Unexpected arch");
-        }
-    }
 
     static ov::snippets::op::Subgraph::BlockedShapeVector getSnippetsBlockedShapes(const kernel_impl_params& impl_params) {
         ov::snippets::op::Subgraph::BlockedShapeVector in_blocked_shapes(impl_params.input_layouts.size());
@@ -130,6 +199,9 @@ private:
         }
         return prc;
     }
+
+    KernelData kd{};
+    ocl::ocl_kernel::ptr ocl_kernel{nullptr};
 };
 
 std::unique_ptr<primitive_impl> Subgraph::create_impl(const program_node& node, const RuntimeParams& params) const {
