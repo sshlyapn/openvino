@@ -5,10 +5,15 @@
 #include "gpu_generator.hpp"
 
 #include "snippets/runtime_configurator.hpp"
+#include "snippets/op/load.hpp"
+#include "snippets/op/kernel.hpp"
+#include "snippets/op/store.hpp"
 #include "emitters/jit_eltwise_emitters.hpp"
+#include "emitters/jit_kernel_emitter.hpp"
 #include "emitters/jit_snippets_emitters.hpp"
 
 #include "openvino/op/add.hpp"
+
 
 
 using namespace dnnl::impl::gpu::intel::jit;
@@ -17,7 +22,7 @@ namespace ov::intel_gpu::jit {
 
 #define CREATE_SNIPPETS_EMITTER(e_type, ...)                                                          \
         {[this](const snippets::lowered::ExpressionPtr& expr) -> std::shared_ptr<snippets::Emitter> { \
-             return std::make_shared<e_type<hw>>(m_h.get(), ##__VA_ARGS__);                           \
+             return std::make_shared<e_type<hw>>(m_h.get(), expr, ##__VA_ARGS__);                     \
          },                                                                                           \
          [](const std::shared_ptr<ov::Node>& n) -> std::set<std::vector<element::Type>> {             \
              return e_type<hw>::get_supported_precisions(n);                                          \
@@ -29,6 +34,11 @@ GPUTargetMachine<hw>::GPUTargetMachine()
       m_h(std::make_unique<jit_snippet_t<hw>>()) {
     jitters[op::v0::Parameter::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(jit_nop_emitter);
     jitters[op::v0::Result::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(jit_nop_emitter);
+
+    jitters[ov::snippets::op::KernelStatic::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(jit_kernel_emitter);
+    jitters[ov::snippets::op::Load::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(jit_nop_emitter);
+    jitters[ov::snippets::op::Store::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(jit_nop_emitter);
+
     jitters[op::v1::Add::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(jit_add_emitter);
 }
 
@@ -47,20 +57,35 @@ size_t GPUTargetMachine<hw>::get_lanes() const {
 
 template <ngen::HW hw>
 std::vector<snippets::Reg> GPUTargetMachine<hw>::get_abi_arg_regs() const {
-    OPENVINO_THROW("Unimplemented!");
-    return {};
+    // OPENVINO_THROW("Unimplemented!");
+    // TODO: REWRIE THIS PART, THIS IS TEMPORARY SOLUTION
+    std::vector<snippets::Reg> regs(10);
+    for (size_t i = 0; i < regs.size(); ++i) {
+        regs[i] = {ov::snippets::RegType::vec, 10 + i};
+    }
+    return regs;
 }
 
 template <ngen::HW hw>
 std::vector<snippets::Reg> GPUTargetMachine<hw>::get_gp_reg_pool() const {
-    OPENVINO_THROW("Unimplemented!");
-    return {};
+    // OPENVINO_THROW("Unimplemented!");
+    // TODO: REWRIE THIS PART, THIS IS TEMPORARY SOLUTION
+    std::vector<snippets::Reg> regs(30);
+    for (size_t i = 0; i < regs.size(); ++i) {
+        regs[i] = {ov::snippets::RegType::vec, 20 + i};
+    }
+    return regs;
 }
 
 template <ngen::HW hw>
 std::vector<snippets::Reg> GPUTargetMachine<hw>::get_vec_reg_pool() const {
-    OPENVINO_THROW("Unimplemented!");
-    return {};
+    // OPENVINO_THROW("Unimplemented!");
+    // TODO: REWRIE THIS PART, THIS IS TEMPORARY SOLUTION
+    std::vector<snippets::Reg> regs(30);
+    for (size_t i = 0; i < regs.size(); ++i) {
+        regs[i] = {ov::snippets::RegType::vec, 50 + i};
+    }
+    return regs;
 }
 
 template <ngen::HW hw>
