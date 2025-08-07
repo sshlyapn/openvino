@@ -22,9 +22,10 @@ void SnippetsTestsCommon::validateNumSubgraphs() {
         auto layer_type = op->get_rt_info().at(ov::exec_model_info::LAYER_TYPE).as<std::string>();
         // todo: Ignore reorders only after (Const or Inputs) or before outputs.
         //  Alternatively, force plain layouts for convolutions, matmuls, FCs, etc., so reorders won't be inserted.
-        if (layer_type == "Const" ||
-            layer_type == "Input" ||
-            layer_type == "Output")
+        if (layer_type == "Const"  ||
+            layer_type == "Input"  ||
+            layer_type == "Output" ||
+            layer_type == "Result")
             continue;
         auto &rt = op->get_rt_info();
         const auto rinfo = rt.find("layerType");

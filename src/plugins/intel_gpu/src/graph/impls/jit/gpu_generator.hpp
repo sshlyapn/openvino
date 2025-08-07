@@ -17,6 +17,13 @@
 #include "snippets/generator.hpp"
 #include "snippets/target_machine.hpp"
 
+#include "runtime/ocl/ocl_device.hpp"
+#include "runtime/ocl/ocl_kernel.hpp"
+#include "common_utils/kernel_generator_base.hpp"
+
+#include "intel_gpu/runtime/device_info.hpp"
+#include "intel_gpu/runtime/utils.hpp"
+
 namespace ov::intel_gpu::jit {
 
 class CompiledSnippetGPU : public snippets::CompiledSnippet {
@@ -25,12 +32,15 @@ public:
     [[nodiscard]] size_t get_code_size() const override;
     [[nodiscard]] bool empty() const override;
     explicit CompiledSnippetGPU() = default;
+
+    std::shared_ptr<cldnn::ocl::ocl_kernel> kernel{nullptr};
+    ov::intel_gpu::KernelData kernels_data{};
 };
 
 template <ngen::HW hw>
 class GPUTargetMachine : public ov::snippets::TargetMachine {
 public:
-    explicit GPUTargetMachine();
+    explicit GPUTargetMachine(cldnn::engine& engine);
 
     [[nodiscard]] bool is_supported() const override { return true; }
     [[nodiscard]] std::shared_ptr<snippets::TargetMachine> clone() const override;
@@ -47,11 +57,12 @@ public:
 
 private:
     std::unique_ptr<jit_snippet_t<hw>> m_h;
+    cldnn::engine& engine;
 };
 
 class GPUGenerator : public ov::snippets::Generator {
 public:
-    GPUGenerator(dnnl::impl::gpu::intel::jit::gpu_gen_t hw);
+    GPUGenerator(cldnn::engine& engine);
     std::shared_ptr<Generator> clone() const override;
 
     ov::snippets::RegType get_specific_op_out_reg_type(const ov::Output<ov::Node>& out) const override;
@@ -59,7 +70,7 @@ public:
 private:
     GPUGenerator(const std::shared_ptr<ov::snippets::TargetMachine>& target);
 
-    static std::shared_ptr<ov::snippets::TargetMachine> create_target_machine(ngen::HW hw);
+    static std::shared_ptr<ov::snippets::TargetMachine> create_target_machine(cldnn::engine& engine);
 };
 
 }  // namespace ov::intel_gpu::jit

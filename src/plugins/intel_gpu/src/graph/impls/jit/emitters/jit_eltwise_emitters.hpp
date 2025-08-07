@@ -26,9 +26,7 @@ public:
     size_t get_inputs_count() const override { return 2; };
 
 protected:
-    void emit_impl(const std::vector<size_t>& in_idxs, const std::vector<size_t>& out_idxs) const override { 
-        OPENVINO_THROW("Unimplemented");
-    }
+    void emit_impl(const std::vector<size_t>& in_idxs, const std::vector<size_t>& out_idxs) const override;
 };
 
 }  // namespace ov::intel_gpu::jit

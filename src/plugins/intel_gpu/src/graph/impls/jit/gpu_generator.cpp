@@ -4,6 +4,8 @@
 
 #include "gpu_generator.hpp"
 
+#include "snippets/lowered/port_connector.hpp"
+#include "snippets/lowered/reg_manager.hpp"
 #include "snippets/runtime_configurator.hpp"
 #include "snippets/op/load.hpp"
 #include "snippets/op/kernel.hpp"
@@ -20,6 +22,22 @@ using namespace dnnl::impl::gpu::intel::jit;
 
 namespace ov::intel_gpu::jit {
 
+static ngen::HW pluginHW2ngen(cldnn::gpu_arch arch) {
+    switch (arch) {
+    case cldnn::gpu_arch::gen9: return ngen::HW::Gen9;
+    case cldnn::gpu_arch::gen11: return ngen::HW::Gen11;
+    case cldnn::gpu_arch::xe_lp: return ngen::HW::XeLP;
+    case cldnn::gpu_arch::xe_hp: return ngen::HW::XeHP;
+    case cldnn::gpu_arch::xe_hpg: return ngen::HW::XeHPG;
+    case cldnn::gpu_arch::xe_hpc: return ngen::HW::XeHPC;
+    case cldnn::gpu_arch::xe2: return ngen::HW::Xe2;
+    case cldnn::gpu_arch::xe3: return ngen::HW::Xe3;
+    case cldnn::gpu_arch::unknown: return ngen::HW::Unknown;
+    default:
+        OPENVINO_THROW("[GPU] Unexpected GPU arch");
+    }
+}
+
 #define CREATE_SNIPPETS_EMITTER(e_type, ...)                                                          \
         {[this](const snippets::lowered::ExpressionPtr& expr) -> std::shared_ptr<snippets::Emitter> { \
              return std::make_shared<e_type<hw>>(m_h.get(), expr, ##__VA_ARGS__);                     \
@@ -29,9 +47,10 @@ namespace ov::intel_gpu::jit {
          }}
 
 template <ngen::HW hw>
-GPUTargetMachine<hw>::GPUTargetMachine()
+GPUTargetMachine<hw>::GPUTargetMachine(cldnn::engine& engine)
     : TargetMachine(std::make_shared<ov::snippets::RuntimeConfigurator>(std::make_shared<ov::snippets::RuntimeConfig>())),
-      m_h(std::make_unique<jit_snippet_t<hw>>()) {
+      m_h(std::make_unique<jit_snippet_t<hw>>()),
+      engine(engine) {
     jitters[op::v0::Parameter::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(jit_nop_emitter);
     jitters[op::v0::Result::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(jit_nop_emitter);
 
@@ -44,7 +63,7 @@ GPUTargetMachine<hw>::GPUTargetMachine()
 
 template <ngen::HW hw>
 std::shared_ptr<snippets::TargetMachine> GPUTargetMachine<hw>::clone() const {
-    const auto cloned = std::make_shared<GPUTargetMachine<hw>>();
+    const auto cloned = std::make_shared<GPUTargetMachine<hw>>(engine);
     cloned->configurator = std::make_shared<ov::snippets::RuntimeConfigurator>(*configurator);
     return cloned;
 }
@@ -95,14 +114,17 @@ ngen::HW GPUTargetMachine<hw>::get_hw() const {
 
 template <ngen::HW hw>
 snippets::CompiledSnippetPtr GPUTargetMachine<hw>::get_snippet() {
-    // OPENVINO_ASSERT(h->create_kernel() == dnnl::impl::status::success, "Failed to create jit_kernel in get_snippet()");
-    // const auto& result =
-    //     std::make_shared<CompiledSnippetGPU>(std::unique_ptr<dnnl::impl::cpu::x64::jit_generator_t>(h.release()));
-    // // Note that we reset all the generated code, since it was copied into CompiledSnippetGPU
-    // h = std::make_unique<jit_snippet>();
-    // return result;
-    OPENVINO_THROW("Unimplemented!");
-    return nullptr;
+    auto compiled_snippets = std::make_shared<CompiledSnippetGPU>();
+
+    const auto& ocl_engine = cldnn::downcast<cldnn::ocl::ocl_engine>(engine);
+    const auto& ocl_device = cldnn::downcast<cldnn::ocl::ocl_device>(*engine.get_device());
+
+    auto cl_kernel = cl::Kernel(m_h->getKernel(ocl_engine.get_cl_context().get(), ocl_device.get_device().get()));
+
+    compiled_snippets->kernel = std::make_shared<cldnn::ocl::ocl_kernel>(cldnn::ocl::ocl_kernel_type(cl_kernel, ocl_device.get_usm_helper()),
+                                                                         cl_kernel.getInfo<CL_KERNEL_FUNCTION_NAME>());
+
+    return compiled_snippets;
 }
 
 const uint8_t* CompiledSnippetGPU::get_code() const {
@@ -119,8 +141,8 @@ bool CompiledSnippetGPU::empty() const {
     return get_code_size() == 0;
 }
 
-GPUGenerator::GPUGenerator(ngen::HW hw)
-    : Generator(create_target_machine(hw)) {}
+GPUGenerator::GPUGenerator(cldnn::engine& engine)
+    : Generator(create_target_machine(engine)) {}
 
 GPUGenerator::GPUGenerator(const std::shared_ptr<ov::snippets::TargetMachine>& target)
     : Generator(target) {
@@ -142,16 +164,17 @@ ov::snippets::RegType GPUGenerator::get_specific_op_out_reg_type(const ov::Outpu
     return ov::snippets::RegType::undefined;
 }
 
-std::shared_ptr<ov::snippets::TargetMachine> GPUGenerator::create_target_machine(ngen::HW hw) {
+std::shared_ptr<ov::snippets::TargetMachine> GPUGenerator::create_target_machine(cldnn::engine& engine) {
+    auto hw = pluginHW2ngen(engine.get_device_info().arch);
     switch (hw) {
-    case ngen::HW::Gen9:    return std::make_unique<GPUTargetMachine<ngen::HW::Gen9>>();
-    case ngen::HW::Gen11:   return std::make_unique<GPUTargetMachine<ngen::HW::Gen11>>();
-    case ngen::HW::Gen12LP: return std::make_unique<GPUTargetMachine<ngen::HW::Gen12LP>>();
-    case ngen::HW::XeHP:    return std::make_unique<GPUTargetMachine<ngen::HW::XeHP>>();
-    case ngen::HW::XeHPG:   return std::make_unique<GPUTargetMachine<ngen::HW::XeHPG>>();
-    case ngen::HW::XeHPC:   return std::make_unique<GPUTargetMachine<ngen::HW::XeHPC>>();
-    case ngen::HW::Xe2:     return std::make_unique<GPUTargetMachine<ngen::HW::Xe2>>();
-    case ngen::HW::Xe3:     return std::make_unique<GPUTargetMachine<ngen::HW::Xe3>>();
+    case ngen::HW::Gen9:    return std::make_unique<GPUTargetMachine<ngen::HW::Gen9>>(engine);
+    case ngen::HW::Gen11:   return std::make_unique<GPUTargetMachine<ngen::HW::Gen11>>(engine);
+    case ngen::HW::Gen12LP: return std::make_unique<GPUTargetMachine<ngen::HW::Gen12LP>>(engine);
+    case ngen::HW::XeHP:    return std::make_unique<GPUTargetMachine<ngen::HW::XeHP>>(engine);
+    case ngen::HW::XeHPG:   return std::make_unique<GPUTargetMachine<ngen::HW::XeHPG>>(engine);
+    case ngen::HW::XeHPC:   return std::make_unique<GPUTargetMachine<ngen::HW::XeHPC>>(engine);
+    case ngen::HW::Xe2:     return std::make_unique<GPUTargetMachine<ngen::HW::Xe2>>(engine);
+    case ngen::HW::Xe3:     return std::make_unique<GPUTargetMachine<ngen::HW::Xe3>>(engine);
     default:
         OPENVINO_THROW("Unknown GPU hardware!");
     }

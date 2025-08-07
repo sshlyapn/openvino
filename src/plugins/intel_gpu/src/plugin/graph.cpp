@@ -285,6 +285,7 @@ std::shared_ptr<ov::Model> Graph::get_runtime_model(std::vector<cldnn::primitive
                 { "reduce_log_sum", "ReduceLogSum" },
                 { "reduce_log_sum_exp", "ReduceLogSumExp" },
                 { "space_to_depth", "SpaceToDepth" },
+                { "subgraph", "Subgraph" },
         };
 
         if (type_n2l.find(cldnn_name) != type_n2l.end())
