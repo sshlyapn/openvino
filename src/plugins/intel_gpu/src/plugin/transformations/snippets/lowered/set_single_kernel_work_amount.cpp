@@ -48,10 +48,8 @@ bool SetSingleKernelWorkAmount::run(snippets::lowered::LinearIR& linear_ir) {
 
     auto CollapseDims = [](ov::snippets::VectorDims& dims) {
         OPENVINO_ASSERT(dims.size() >= 2, "CollapseDims can't process shape with less than two dims");
-        const auto full_wa_idx = dims.size() - 2;
-        dims[full_wa_idx] *= dims[dims.size() - 1];
-        dims[dims.size() - 1] = 1;
-        for (size_t i = 0; i < full_wa_idx; i++) {
+        const auto full_wa_idx = 0;
+        for (size_t i = full_wa_idx + 1; i < dims.size(); ++i) {
             dims[full_wa_idx] *= dims[i];
             dims[i] = 1;
         }

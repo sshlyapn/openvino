@@ -19,6 +19,8 @@ class jit_snippet_t : public ngen::OpenCLCodeGenerator<hw> {
 public:
     jit_snippet_t()
         : ngen::OpenCLCodeGenerator<hw>(0, {GENERATOR_NAME, GENERATOR_LINE, false}) {};
+
+    NGEN_FORWARD_OPENCL(hw);
 };
 
 }  // namespace ov::intel_gpu::jit

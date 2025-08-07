@@ -50,6 +50,8 @@ public:
                                                      std::make_shared<ov::snippets::IShapeInferSnippetsFactory>(),
                                                      control_flow_config,
                                                      getControlFlowPasses());
+
+            auto snippet = m_subgraph->generate(nullptr);
         }
     
     ControlFlowPasses getControlFlowPasses() const {
